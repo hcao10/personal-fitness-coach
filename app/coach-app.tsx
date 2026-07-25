@@ -1,9 +1,9 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { defaultProfile, generatePlan, type Activity, type Equipment, type Experience, type Goal, type Profile } from "./lib/coach";
-import { AUTH_PROVIDERS, beginCmineLogin, getCmineUser, signOutCmine, type CmineUser } from "./lib/auth";
+import { useEffect, useRef, useState } from "react";
+import { defaultProfile, generatePlan, type Activity, type CoachPlan, type Equipment, type Experience, type Goal, type Profile } from "./lib/coach";
+import { AUTH_PROVIDERS, beginCmineLogin, getCmineSession, signOutCmine, type CmineUser } from "./lib/auth";
 import { copy, languageOptions, type DisplayLanguage, type Locale } from "./lib/i18n";
 
 const goalOptions: { value: Goal; zh: string; en: string }[] = [
@@ -24,14 +24,16 @@ export default function CoachApp() {
   const lang: DisplayLanguage = locale === "zh" ? "zh" : "en";
   const t = copy[lang];
   const [profile, setProfile] = useState<Profile>(defaultProfile);
-  const plan = useMemo(() => generatePlan(profile), [profile]);
+  const [plan, setPlan] = useState<CoachPlan>(() => generatePlan(defaultProfile));
+  const [planSource, setPlanSource] = useState<"rules_preview" | "rules_fallback" | "llm">("rules_preview");
+  const [generating, setGenerating] = useState(false);
   const [activeDay, setActiveDay] = useState(0);
   const [accepted, setAccepted] = useState<boolean | null>(null);
   const [healthCheck, setHealthCheck] = useState(false);
   const [estimateCheck, setEstimateCheck] = useState(false);
   const [completed, setCompleted] = useState<Set<string>>(new Set());
   const [expandedExercise, setExpandedExercise] = useState<string | null>(null);
-  const [points, setPoints] = useState(120);
+  const [points, setPoints] = useState(0);
   const [loginOpen, setLoginOpen] = useState(false);
   const [adOpen, setAdOpen] = useState(false);
   const [adClaimed, setAdClaimed] = useState(false);
@@ -42,7 +44,9 @@ export default function CoachApp() {
   useEffect(() => {
     queueMicrotask(() => {
       setAccepted(localStorage.getItem("cmine_fit_disclaimer_v1") === "accepted" || localStorage.getItem("forma_disclaimer_v1") === "accepted");
-      setUser(getCmineUser());
+      void getCmineSession().then((session) => { setUser(session.user); setPoints(session.points); });
+      const authError = new URLSearchParams(window.location.search).get("auth_error");
+      if (authError) setToast(authError);
     });
   }, []);
   useEffect(() => {
@@ -51,10 +55,36 @@ export default function CoachApp() {
     return () => window.clearTimeout(timeout);
   }, [toast]);
 
-  const patchProfile = <K extends keyof Profile>(key: K, value: Profile[K]) => setProfile((current) => ({ ...current, [key]: value }));
-  const buildPlan = () => {
-    setActiveDay(Math.max(0, plan.schedule.findIndex((day) => !day.restDay)));
-    window.setTimeout(() => planRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 40);
+  const patchProfile = <K extends keyof Profile>(key: K, value: Profile[K]) => {
+    const next = { ...profile, [key]: value };
+    setProfile(next);
+    setPlan(generatePlan(next));
+    setPlanSource("rules_preview");
+  };
+  const buildPlan = async () => {
+    setGenerating(true);
+    try {
+      const response = await fetch("/api/plans", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ profile, consent: accepted === true }) });
+      const result = await response.json() as { plan?: CoachPlan; fallbackPlan?: CoachPlan; source?: "llm"; message?: string };
+      if (response.ok && result.plan) {
+        setPlan(result.plan);
+        setPlanSource("llm");
+        setToast(lang === "zh" ? "AI 已完成个性化计划，并通过规则校验" : "Your AI plan passed the safety checks");
+      } else {
+        if (result.fallbackPlan) setPlan(result.fallbackPlan);
+        setPlanSource("rules_fallback");
+        setToast(result.message || (lang === "zh" ? "AI 暂不可用，已保留规则安全预览" : "AI unavailable; safe rules preview kept"));
+      }
+    } catch {
+      setPlan(generatePlan(profile));
+      setPlanSource("rules_fallback");
+      setToast(lang === "zh" ? "无法连接 AI 服务，已保留规则安全预览" : "Could not reach AI; safe rules preview kept");
+    } finally {
+      setGenerating(false);
+      const firstTrainingDay = plan.schedule.findIndex((day) => !day.restDay);
+      setActiveDay(Math.max(0, firstTrainingDay));
+      window.setTimeout(() => planRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 40);
+    }
   };
   const completeExercise = (key: string) => {
     if (completed.has(key)) return;
@@ -67,6 +97,8 @@ export default function CoachApp() {
   };
   const currentDay = plan.schedule[activeDay] || plan.schedule[0];
   const goalLabel = goalOptions.find((goal) => goal.value === profile.goal)?.[lang] || "";
+  const coachNotes = plan.insights?.coachNotes[lang] || [t.note1, t.note2, t.note3];
+  const dietGuidance = plan.insights?.dietGuidance[lang] || [t.diet1, t.diet2, t.diet3];
 
   return (
     <main>
@@ -81,7 +113,7 @@ export default function CoachApp() {
           </label>
           <button className="points-pill" onClick={() => setAdOpen(true)} aria-label={t.watchAd}><span>◆</span> {points}</button>
           {user ? (
-            <button className="avatar-button" onClick={() => { signOutCmine(); setUser(null); }}><span>{(user.name || user.email || "C").slice(0, 1).toUpperCase()}</span><em>{t.logout}</em></button>
+            <button className="avatar-button" onClick={async () => { await signOutCmine(); setUser(null); setPoints(0); }}><span>{(user.name || user.email || "C").slice(0, 1).toUpperCase()}</span><em>{t.logout}</em></button>
           ) : <button className="login-button" onClick={() => setLoginOpen(true)}>{t.login} <span>↗</span></button>}
         </div>
       </header>
@@ -98,12 +130,12 @@ export default function CoachApp() {
           </div>
         </div>
         <div className="signal-card" aria-label={t.estimate}>
-          <div className="signal-top"><span>{t.estimate}</span><i>{plan.confidence === "high" ? "HIGH FIT" : "REVIEW"}</i></div>
+          <div className="signal-top"><span>{t.estimate}</span><i>{planSource === "llm" ? "LLM COACHED" : planSource === "rules_fallback" ? "SAFE FALLBACK" : "RULE PREVIEW"}</i></div>
           <div className="calorie-orbit"><div><b>{plan.calories.toLocaleString()}</b><span>{t.kcal} / day</span></div></div>
           <div className="signal-stats">
             <div><b>{plan.protein}g</b><span>{t.protein}</span></div><div><b>{profile.days}×</b><span>{t.weekPlan}</span></div><div><b>{plan.weeks}</b><span>{t.daysUnit}</span></div>
           </div>
-          <p><span>AI</span>{lang === "zh" ? "已根据目标自动调整训练量与热量建议" : "Training volume and calories adapt to your goal"}</p>
+          <p><span>{planSource === "llm" ? "AI" : "R"}</span>{planSource === "llm" ? (lang === "zh" ? "LLM 已参与本周动作编排与教练建议" : "The LLM personalized this week and the coaching notes") : (lang === "zh" ? "当前为规则安全预览；点击生成后调用 LLM" : "Rules preview; Generate calls the LLM")}</p>
         </div>
       </section>
 
@@ -154,8 +186,8 @@ export default function CoachApp() {
               <div className="days-control"><FieldLabel>{lang === "zh" ? "每周训练几天" : "Training days per week"}</FieldLabel><div>{[2, 3, 4, 5, 6].map((day) => <button key={day} className={profile.days === day ? "active" : ""} onClick={() => patchProfile("days", day)}>{day}</button>)}</div></div>
               <label className="full-field"><FieldLabel>{lang === "zh" ? "伤病、疼痛或需要避开的动作（选填）" : "Injuries, pain or movements to avoid (optional)"}</FieldLabel><input value={profile.limitations} onChange={(e) => patchProfile("limitations", e.target.value)} placeholder={lang === "zh" ? "例如：右膝旧伤，避免跳跃" : "e.g. old right knee injury; avoid jumping"} /></label>
             </div>
-            <button className="primary-cta" onClick={buildPlan}><span>{t.generate}</span><b>→</b></button>
-            <p className="privacy-line">◉ {lang === "zh" ? "当前演示仅在设备上计算，不上传身体数据" : "This demo calculates on-device and does not upload body data"}</p>
+            <button className="primary-cta" onClick={buildPlan} disabled={generating}><span>{generating ? (lang === "zh" ? "AI 正在规划…" : "AI is planning…") : t.generate}</span><b>{generating ? "···" : "→"}</b></button>
+            <p className="privacy-line">◉ {lang === "zh" ? "生成时会将本页训练资料发送给服务端；登录后保存计划历史" : "Generation sends this profile to the server; signed-in users keep plan history"}</p>
           </div>
 
           <aside className="preview-card">
@@ -167,13 +199,13 @@ export default function CoachApp() {
               <div><span>{t.weekPlan}<small>{profile.days} {lang === "zh" ? "个训练日" : "training days"}</small></span><b>{Math.round(plan.schedule.reduce((sum, day) => sum + day.duration, 0) / 60)}<em> h</em></b></div>
             </div>
             <div className="week-strip">{plan.schedule.map((day, index) => <div key={index} className={day.restDay ? "" : "training"}><span>{dayNames[lang][index]}</span><b>{day.restDay ? "·" : "●"}</b></div>)}</div>
-            <div className="preview-note"><span>↗</span><p>{lang === "zh" ? "为了「" + goalLabel + "」，计划优先安排复合动作，再补目标部位。" : "The plan leads with compound movements, then adds focused work for your goal."}</p></div>
+            <div className="preview-note"><span>↗</span><p>{plan.insights?.summary[lang] || (lang === "zh" ? "为了「" + goalLabel + "」，规则预览优先安排复合动作，再补目标部位。" : "The rules preview leads with compound movements, then adds focused work.")}</p></div>
           </aside>
         </div>
       </section>
 
       <section className="plan-section" id="plan" ref={planRef}>
-        <div className="section-heading light"><p>02 / YOUR PLAN</p><div><h2>{t.planTitle}</h2><span>{t.planSub}</span></div></div>
+        <div className="section-heading light"><p>02 / YOUR PLAN</p><div><h2>{t.planTitle}</h2><span>{t.planSub}</span></div></div><div className={`plan-source-pill ${planSource}`}>{planSource === "llm" ? (lang === "zh" ? "LLM 个性化计划 · 已通过规则校验" : "LLM PERSONALIZED · RULE CHECKED") : planSource === "rules_fallback" ? (lang === "zh" ? "AI 暂不可用 · 安全规则兜底" : "AI UNAVAILABLE · SAFE RULES FALLBACK") : (lang === "zh" ? "规则实时预览 · 尚未调用 LLM" : "LIVE RULES PREVIEW · LLM NOT CALLED")}</div>
         <div className="nutrition-grid">
           <article className="nutrition-main">
             <div className="card-kicker">{t.nutrition}</div>
@@ -216,8 +248,8 @@ export default function CoachApp() {
             )}
           </div>
           <aside className="coach-sidebar">
-            <article className="notes-card"><div className="card-kicker">{t.coachNotes}</div>{[t.note1, t.note2, t.note3].map((note, index) => <div key={note}><span>{index + 1}</span><p>{note}</p></div>)}</article>
-            <article className="diet-card"><div className="card-kicker">{t.dietTitle}</div><ul><li>{t.diet1}</li><li>{t.diet2}</li><li>{t.diet3}</li></ul></article>
+            <article className="notes-card"><div className="card-kicker">{t.coachNotes}</div>{coachNotes.map((note, index) => <div key={note}><span>{index + 1}</span><p>{note}</p></div>)}</article>
+            <article className="diet-card"><div className="card-kicker">{t.dietTitle}</div><ul>{dietGuidance.map((item) => <li key={item}>{item}</li>)}</ul></article>
           </aside>
         </div>
       </section>
@@ -240,7 +272,7 @@ export default function CoachApp() {
           <div className="modal-stripe"><span>SAFETY FIRST</span><b>01 / 03</b></div><h2 id="disclaimer-title">{t.disclaimerTitle}</h2><p className="disclaimer-intro">{t.disclaimerIntro}</p>
           <label className={healthCheck ? "checked" : ""}><input type="checkbox" checked={healthCheck} onChange={(e) => setHealthCheck(e.target.checked)} /><span>{healthCheck ? "✓" : ""}</span><p>{t.disclaimerHealth}</p></label>
           <label className={estimateCheck ? "checked" : ""}><input type="checkbox" checked={estimateCheck} onChange={(e) => setEstimateCheck(e.target.checked)} /><span>{estimateCheck ? "✓" : ""}</span><p>{t.disclaimerEstimate}</p></label>
-          <button className="primary-cta" disabled={!healthCheck || !estimateCheck} onClick={() => { localStorage.setItem("cmine_fit_disclaimer_v1", "accepted"); setAccepted(true); }}><span>{t.accept}</span><b>→</b></button>
+          <button className="primary-cta" disabled={!healthCheck || !estimateCheck} onClick={() => { localStorage.setItem("cmine_fit_disclaimer_v1", "accepted"); setAccepted(true); void fetch("/api/consents", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ locale: lang }) }); }}><span>{t.accept}</span><b>→</b></button>
           <small>{lang === "zh" ? "继续即表示你已阅读并接受《健康免责声明》与《隐私说明》。" : "Continuing means you accept the health disclaimer and privacy notice."}</small>
         </div>
       </div>}
@@ -253,7 +285,7 @@ export default function CoachApp() {
 
       {adOpen && <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setAdOpen(false)} role="dialog" aria-modal="true">
         <div className="small-modal ad-modal"><button className="modal-close" onClick={() => setAdOpen(false)}>×</button><span className="modal-icon">◆</span><h2>{t.adTitle}</h2><p>{t.adText}</p><div className="ad-reward"><b>+20</b><span>{t.points}</span></div>
-          <button className="primary-cta" disabled={adClaimed} onClick={() => { setPoints((value) => value + 20); setAdClaimed(true); setToast(lang === "zh" ? "20 积分已到账" : "20 points added"); window.setTimeout(() => setAdOpen(false), 650); }}><span>{adClaimed ? t.completed : t.playAd}</span><b>▶</b></button>
+          <button className="primary-cta" disabled={adClaimed} onClick={async () => { const response = await fetch("/api/points/claim-ad", { method: "POST" }); const result = await response.json() as { message?: string }; setAdClaimed(response.ok); setToast(result.message || (lang === "zh" ? "奖励广告暂不可用" : "Reward ads are not available yet")); window.setTimeout(() => setAdOpen(false), 900); }}><span>{adClaimed ? t.completed : t.playAd}</span><b>▶</b></button>
         </div>
       </div>}
       {toast && <div className="toast" role="status"><span>✓</span>{toast}</div>}

@@ -16,3 +16,4 @@ dist/
 .env.local
 
 tsconfig.tsbuildinfo
+.openai/*.tar.gz

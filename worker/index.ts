@@ -1,36 +1,24 @@
-﻿/** Cloudflare Worker entry point for the vinext-starter template. */
+/** Cloudflare Worker entry point for Cmine Fit. */
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
-
-interface Fetcher {
-  fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
-}
-
-interface Env {
-  ASSETS: Fetcher;
-  IMAGES: {
-    input(stream: ReadableStream): {
-      transform(options: Record<string, unknown>): {
-        output(options: { format: string; quality: number }): Promise<{ response(): Response }>;
-      };
-    };
-  };
-}
+import { handleApi } from "./api";
+import type { WorkerEnv } from "./platform";
 
 interface ExecutionContext {
   waitUntil(promise: Promise<unknown>): void;
   passThroughOnException(): void;
 }
 
-// Image security config. SVG sources with .svg extension auto-skip the
-// optimization endpoint on the client side (served directly, no proxy).
-// To route SVGs through the optimizer (with security headers), set
-// dangerouslyAllowSVG: true in next.config.js and uncomment below:
-// const imageConfig: ImageConfig = { dangerouslyAllowSVG: true };
-
 const worker = {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: WorkerEnv, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    try {
+      const apiResponse = await handleApi(request, env);
+      if (apiResponse) return apiResponse;
+    } catch (error) {
+      console.error("api_unhandled_error", error instanceof Error ? error.message : "unknown");
+      return Response.json({ error: "INTERNAL_ERROR", message: "服务端暂时无法完成请求。" }, { status: 500, headers: { "cache-control": "no-store" } });
+    }
 
     if (url.pathname === "/_vinext/image") {
       const allowedWidths = [...DEFAULT_DEVICE_SIZES, ...DEFAULT_IMAGE_SIZES];
@@ -42,10 +30,8 @@ const worker = {
         },
       }, allowedWidths);
     }
-
     return handler.fetch(request, env, ctx);
   },
 };
 
 export default worker;
-

@@ -40,9 +40,14 @@ export type CoachPlan = {
   bmr: number; tdee: number; calories: number; calorieDelta: number; bmi: number;
   weeks: number; protein: number; carbs: number; fat: number;
   schedule: WorkoutDay[]; confidence: "high" | "medium";
+  insights?: {
+    summary: { zh: string; en: string };
+    coachNotes: { zh: string[]; en: string[] };
+    dietGuidance: { zh: string[]; en: string[] };
+  };
 };
 
-const EXERCISES: Record<string, Exercise> = {
+export const EXERCISES: Record<string, Exercise> = {
   bench: { id: "bench", name: { zh: "杠铃卧推", en: "Barbell bench press" }, target: { zh: "胸肌 · 肱三头肌", en: "Chest · Triceps" }, cue: { zh: "肩胛骨向后下方收紧，杠铃落在胸骨下缘。", en: "Set the shoulder blades, then lower the bar toward the lower sternum." }, asset: "0025-EIeI8Vf", equipment: "barbell" },
   squat: { id: "squat", name: { zh: "杠铃深蹲", en: "Barbell full squat" }, target: { zh: "臀腿 · 核心", en: "Glutes · Legs · Core" }, cue: { zh: "膝盖跟随脚尖方向，躯干保持稳定。", en: "Track knees over toes and keep the torso braced." }, asset: "0043-qXTaZnJ", equipment: "barbell" },
   deadlift: { id: "deadlift", name: { zh: "罗马尼亚硬拉", en: "Romanian deadlift" }, target: { zh: "臀肌 · 腘绳肌", en: "Glutes · Hamstrings" }, cue: { zh: "髋部后移，背部保持中立，感受腿后侧拉伸。", en: "Push the hips back with a neutral spine and load the hamstrings." }, asset: "0085-wQ2c4XD", equipment: "barbell" },
@@ -113,14 +118,14 @@ const sessionLibraries: Record<Goal, SessionSeed[]> = {
   ],
 };
 
-function equipmentAllowed(exercise: Exercise, equipment: Equipment): boolean {
+export function isExerciseAllowed(exercise: Exercise, equipment: Equipment): boolean {
   if (equipment === "gym") return true;
   if (equipment === "dumbbell") return exercise.equipment === "dumbbell" || exercise.equipment === "bodyweight";
   return exercise.equipment === "bodyweight";
 }
 
 function adaptExercise(exercise: Exercise, equipment: Equipment): Exercise {
-  if (equipmentAllowed(exercise, equipment)) return exercise;
+  if (isExerciseAllowed(exercise, equipment)) return exercise;
   if (equipment === "bodyweight") return EXERCISES.closePushup;
   if (["squat", "deadlift", "lunge"].includes(exercise.id)) return EXERCISES.dumbbellDeadlift;
   if (["row", "pulldown", "pullup"].includes(exercise.id)) return EXERCISES.dumbbellRow;
