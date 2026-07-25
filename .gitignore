@@ -6,3 +6,13 @@ __pycache__/
 
 # Claude Code local settings (do not publish)
 .claude/
+
+# Web application build/runtime
+node_modules/
+dist/
+.next/
+.wrangler/
+.env
+.env.local
+
+tsconfig.tsbuildinfo
