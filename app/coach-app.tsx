@@ -41,7 +41,7 @@ export default function CoachApp() {
 
   useEffect(() => {
     queueMicrotask(() => {
-      setAccepted(localStorage.getItem("forma_disclaimer_v1") === "accepted");
+      setAccepted(localStorage.getItem("cmine_fit_disclaimer_v1") === "accepted" || localStorage.getItem("forma_disclaimer_v1") === "accepted");
       setUser(getCmineUser());
     });
   }, []);
@@ -71,8 +71,8 @@ export default function CoachApp() {
   return (
     <main>
       <header className="topbar">
-        <a className="brand" href="#top" aria-label="FORMA Coach home"><span className="brand-mark">F</span><span>FORMA <b>COACH</b></span></a>
-        <nav className="topnav" aria-label="Primary navigation"><a href="#coach">{t.navCoach}</a><a href="#library">{t.navLibrary}</a><a href="#editions">{t.navAbout}</a></nav>
+        <a className="brand" href="#top" aria-label="Cmine Fit home"><span className="brand-mark">C</span><span>CMINE <b>FIT</b></span></a>
+        <nav className="topnav" aria-label="Primary navigation"><a href="#coach">{t.navCoach}</a><a href="#library">{t.navLibrary}</a><a href="#editions">{t.navAbout}</a><a href="/admin">{t.navAdmin}</a></nav>
         <div className="header-actions">
           <label className="language-select"><span className="sr-only">Language</span>
             <select value={locale} onChange={(event) => setLocale(event.target.value as Locale)}>
@@ -88,13 +88,13 @@ export default function CoachApp() {
 
       <section className="hero" id="top">
         <div className="hero-copy">
-          <div className="edition-pills"><span>{t.openCore}</span><i>+</i><span>{t.proEdition}</span></div>
+          <div className="edition-pills"><span>{t.aspiration}</span><i>+</i><span>{t.expertPlan}</span></div>
           <p className="eyebrow"><span /> {t.eyebrow}</p>
-          <h1>{t.titleA}<br /><em>{t.titleB}</em></h1>
+          <h1><s>{t.titleA}</s><br /><em>{t.titleB}</em></h1>
           <p className="hero-subtitle">{t.subtitle}</p>
           <div className="trust-row">
             <div className="face-stack" aria-hidden="true"><span>J</span><span>M</span><span>A</span></div>
-            <div><b>4.9</b><span>★★★★★</span><small>{t.socialProof}</small></div>
+            <div><b>1:1</b><span>{lang === "zh" ? "贴合你" : "PERSONAL"}</span><small>{t.socialProof}</small></div>
           </div>
         </div>
         <div className="signal-card" aria-label={t.estimate}>
@@ -223,24 +223,24 @@ export default function CoachApp() {
       </section>
 
       <section className="edition-section" id="editions">
-        <div className="section-heading"><p>04 / PRODUCT</p><div><h2>{t.editions}</h2><span>OPEN SOURCE → HOSTED PRO</span></div></div>
+        <div className="section-heading"><p>04 / YOUR WAY</p><div><h2>{t.editions}</h2><span>{lang === "zh" ? "自主掌控 → 长期专业陪伴" : "YOUR CONTROL → LONG-TERM GUIDANCE"}</span></div></div>
         <div className="edition-grid">
-          <article className="open-edition"><div className="edition-tag">{t.openCore}</div><h3>{t.openTitle}</h3><p>{t.openText}</p><div className="feature-cloud"><span>Self-host</span><span>Local LLM</span><span>MIT core</span><span>9 languages</span></div><a href="https://github.com/hcao10/personal-fitness-coach" target="_blank" rel="noreferrer">{t.viewSource} <b>↗</b></a></article>
+          <article className="open-edition"><div className="edition-tag">{t.openCore}</div><h3>{t.openTitle}</h3><p>{t.openText}</p><div className="feature-cloud"><span>{lang === "zh" ? "自由部署" : "Self-host"}</span><span>{lang === "zh" ? "本地模型" : "Local AI"}</span><span>{lang === "zh" ? "透明可控" : "Transparent core"}</span><span>{lang === "zh" ? "9 种语言" : "9 languages"}</span></div><a href="https://github.com/hcao10/personal-fitness-coach" target="_blank" rel="noreferrer">{t.viewSource} <b>↗</b></a></article>
           <article className="pro-edition"><div className="edition-tag">{t.proEdition}</div><h3>{t.proTitle}</h3><p>{t.proText}</p>
-            <div className="pro-diagram"><div><span>01</span><b>Cmine ID</b><small>IDENTITY</small></div><i>→</i><div><span>02</span><b>AI Coach</b><small>PERSONALIZATION</small></div><i>→</i><div><span>03</span><b>Points</b><small>RETENTION</small></div></div>
+            <div className="pro-diagram"><div><span>01</span><b>{lang === "zh" ? "训练档案" : "Training record"}</b><small>CONTINUITY</small></div><i>→</i><div><span>02</span><b>{lang === "zh" ? "智能规划" : "Smart planning"}</b><small>PERSONALIZATION</small></div><i>→</i><div><span>03</span><b>{lang === "zh" ? "持续调整" : "Ongoing refinement"}</b><small>PROGRESS</small></div></div>
             <button onClick={() => setLoginOpen(true)}>{t.upgrade} <b>→</b></button>
           </article>
         </div>
       </section>
 
-      <footer><a className="brand" href="#top"><span className="brand-mark">F</span><span>FORMA <b>COACH</b></span></a><p>{t.footerNote}</p><span>© 2026 FORMA · Exercise media © Gym visual</span></footer>
+      <footer><a className="brand" href="#top"><span className="brand-mark">C</span><span>CMINE <b>FIT</b></span></a><p>{t.footerNote}</p><span>© 2026 Cmine Fit · Exercise media © Gym visual · <a className="admin-link" href="/admin">{t.navAdmin}</a></span></footer>
 
       {accepted === false && <div className="modal-backdrop safety-backdrop" role="dialog" aria-modal="true" aria-labelledby="disclaimer-title">
         <div className="safety-modal">
           <div className="modal-stripe"><span>SAFETY FIRST</span><b>01 / 03</b></div><h2 id="disclaimer-title">{t.disclaimerTitle}</h2><p className="disclaimer-intro">{t.disclaimerIntro}</p>
           <label className={healthCheck ? "checked" : ""}><input type="checkbox" checked={healthCheck} onChange={(e) => setHealthCheck(e.target.checked)} /><span>{healthCheck ? "✓" : ""}</span><p>{t.disclaimerHealth}</p></label>
           <label className={estimateCheck ? "checked" : ""}><input type="checkbox" checked={estimateCheck} onChange={(e) => setEstimateCheck(e.target.checked)} /><span>{estimateCheck ? "✓" : ""}</span><p>{t.disclaimerEstimate}</p></label>
-          <button className="primary-cta" disabled={!healthCheck || !estimateCheck} onClick={() => { localStorage.setItem("forma_disclaimer_v1", "accepted"); setAccepted(true); }}><span>{t.accept}</span><b>→</b></button>
+          <button className="primary-cta" disabled={!healthCheck || !estimateCheck} onClick={() => { localStorage.setItem("cmine_fit_disclaimer_v1", "accepted"); setAccepted(true); }}><span>{t.accept}</span><b>→</b></button>
           <small>{lang === "zh" ? "继续即表示你已阅读并接受《健康免责声明》与《隐私说明》。" : "Continuing means you accept the health disclaimer and privacy notice."}</small>
         </div>
       </div>}

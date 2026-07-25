@@ -28,5 +28,5 @@ export default function CmineCallbackPage() {
     });
     return () => { active = false; };
   }, []);
-  return <main className="callback-page"><div className="callback-card"><span className="brand-mark">F</span><p>{message}</p><Link href="/">返回 FORMA Coach</Link></div></main>;
+  return <main className="callback-page"><div className="callback-card"><span className="brand-mark">C</span><p>{message}</p><Link href="/">返回 Cmine Fit</Link></div></main>;
 }

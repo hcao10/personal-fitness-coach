@@ -8,20 +8,20 @@ export async function generateMetadata(): Promise<Metadata> {
   const protocol = requestHeaders.get("x-forwarded-proto") || (host.startsWith("localhost") ? "http" : "https");
   const imageUrl = new URL("/og.png", protocol + "://" + host);
   return {
-    title: "FORMA Coach — 你的 AI 私人健身教练",
+    title: "Cmine Fit — 懂训练，更懂你",
     description: "从身体数据、训练目标和现实条件出发，生成能坚持的一周训练与饮食建议。",
-    applicationName: "FORMA Coach",
+    applicationName: "Cmine Fit",
     keywords: ["AI fitness coach", "健身计划", "训练计划", "BMR", "open source fitness"],
     openGraph: {
-      title: "FORMA Coach — 你的 AI 私人健身教练",
-      description: "把‘想练得更好’翻译成今天该做什么。",
+      title: "Cmine Fit — 懂训练，更懂你",
+      description: "你今日的详细训练计划和注意事项，从这里开始。",
       type: "website",
-      images: [{ url: imageUrl, width: 1680, height: 945, alt: "FORMA Coach social preview" }],
+      images: [{ url: imageUrl, width: 1672, height: 941, alt: "Cmine Fit social preview" }],
     },
     twitter: {
       card: "summary_large_image",
-      title: "FORMA Coach — 你的 AI 私人健身教练",
-      description: "把‘想练得更好’翻译成今天该做什么。",
+      title: "Cmine Fit — 懂训练，更懂你",
+      description: "你今日的详细训练计划和注意事项，从这里开始。",
       images: [imageUrl],
     },
   };

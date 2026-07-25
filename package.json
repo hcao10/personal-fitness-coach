@@ -1,5 +1,5 @@
 {
-  "name": "forma-ai-fitness-coach",
+  "name": "cmine-fit",
   "version": "0.2.0",
   "private": true,
   "engines": {
@@ -38,5 +38,5 @@
     "wrangler": "4.92.0"
   },
   "type": "module",
-  "description": "A multilingual, deployable AI fitness coach foundation with open-source and hosted editions."
+  "description": "A multilingual AI fitness coach for self-directed plans and long-term professional guidance."
 }
