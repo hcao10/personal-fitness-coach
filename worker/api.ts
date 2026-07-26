@@ -1,5 +1,5 @@
 import { generatePlan, type Activity, type Equipment, type Experience, type Goal, type Profile, type Sex } from "../app/lib/coach";
-import { adminSummary, createSession, deleteSession, getSessionUser, pointsForUser, recordConsent, savePlan, upsertCmineUser } from "./db";
+import { adminSummary, createSession, deleteSession, getSessionUser, pointsForUser, recordConsent, recordWorkoutCompletion, savePlan, upsertCmineUser } from "./db";
 import { generateLlmPlan } from "./llm";
 import type { WorkerEnv } from "./platform";
 import { cookie, parseCookies, randomToken, safeReturnPath, sha256, signPayload, verifyPayload } from "./security";
@@ -79,7 +79,7 @@ async function planRequest(request: Request, env: WorkerEnv): Promise<Response> 
   if (!profile) return json({ error: "INVALID_PROFILE", message: "训练档案不完整或超出安全范围。" }, 400);
   if (body?.consent !== true) return json({ error: "CONSENT_REQUIRED", message: "生成前需要确认健康免责声明与数据处理说明。" }, 412);
   const fallbackPlan = generatePlan(profile);
-  if (!env.OPENAI_API_KEY) return json({ error: "AI_NOT_CONFIGURED", message: "LLM 连接尚未配置；当前展示的是规则安全预览。", fallbackPlan }, 503);
+  if (!env.OPENAI_API_KEY) return json({ error: "AI_NOT_CONFIGURED", message: "AI 教练暂时离线，计划没有生成。", fallbackPlan }, 503);
   try {
     const result = await generateLlmPlan(env, profile);
     const user = await getSessionUser(request, env);
@@ -88,14 +88,14 @@ async function planRequest(request: Request, env: WorkerEnv): Promise<Response> 
   } catch (error) {
     const message = error instanceof Error ? error.message : "AI_UNKNOWN_ERROR";
     console.error("plan_generation_failed", message.split(":").slice(0, 2).join(":"));
-    return json({ error: "AI_GENERATION_FAILED", message: "AI 计划生成未通过安全校验，已保留规则预览，请稍后重试。", fallbackPlan }, 502);
+    return json({ error: "AI_GENERATION_FAILED", message: "这次计划没有通过安全校验，请稍后重新生成。", fallbackPlan }, 502);
   }
 }
 
 export async function handleApi(request: Request, env: WorkerEnv): Promise<Response | null> {
   const url = new URL(request.url);
   if (!url.pathname.startsWith("/api/")) return null;
-  if (request.method === "GET" && url.pathname === "/api/health") return json({ ok: true, database: Boolean(env.DB), llm: Boolean(env.OPENAI_API_KEY), cmine: Boolean(env.CMINE_CLIENT_ID && env.SESSION_SECRET), model: env.OPENAI_MODEL || "gpt-5.6" });
+  if (request.method === "GET" && url.pathname === "/api/health") return json({ ok: true, database: Boolean(env.DB), llm: Boolean(env.OPENAI_API_KEY), cmine: Boolean(env.CMINE_CLIENT_ID && env.SESSION_SECRET), rewardAds: Boolean(env.REWARD_AD_PROVIDER), model: env.OPENAI_MODEL || "gpt-5.6" });
   if (request.method === "GET" && url.pathname === "/api/auth/config") return json({ cmine: Boolean(env.CMINE_CLIENT_ID && env.SESSION_SECRET && env.DB) });
   if (request.method === "GET" && url.pathname === "/api/auth/cmine/start") return authStart(request, env);
   if (request.method === "GET" && url.pathname === "/api/auth/cmine/callback") return authCallback(request, env);
@@ -108,6 +108,17 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
     return json({ ok: true }, 200, { "set-cookie": cookie("cmine_fit_session", "", request, 0) });
   }
   if (request.method === "POST" && url.pathname === "/api/plans") return planRequest(request, env);
+  if (request.method === "POST" && url.pathname === "/api/completions") {
+    const user = await getSessionUser(request, env);
+    if (!user) return json({ error: "AUTH_REQUIRED", message: "登录后才能同步训练记录。" }, 401);
+    const body = await request.json().catch(() => null) as { planId?: unknown; dayIndex?: unknown; exerciseId?: unknown } | null;
+    const planId = typeof body?.planId === "string" ? body.planId : "";
+    const exerciseId = typeof body?.exerciseId === "string" ? body.exerciseId : "";
+    const dayIndex = Number(body?.dayIndex);
+    if (!planId || !exerciseId || !Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex > 6) return json({ error: "INVALID_COMPLETION" }, 400);
+    try { return json(await recordWorkoutCompletion(env, user.id, planId, dayIndex, exerciseId), 201); }
+    catch { return json({ error: "PLAN_NOT_FOUND" }, 404); }
+  }
   if (request.method === "POST" && url.pathname === "/api/consents") {
     const body = await request.json().catch(() => ({})) as { locale?: string };
     const user = await getSessionUser(request, env);

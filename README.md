@@ -1,21 +1,18 @@
 # Cmine Fit
 
-一套可拆成 **自主轻量版** 与 **专业增强版** 的 AI 健身教练产品基础。
+Cmine Fit 是一套包含自主轻量版与专业增强版的 AI 健身教练产品。当前仓库已经不是纯前端演示：它包含 Cloudflare Worker API、D1 数据库迁移、服务端身份会话，以及通过 OpenAI Responses API 生成并校验训练计划的完整链路。
 
-当前仓库已经包含一个可运行的产品 MVP：
+## 已实现
 
-- 首次使用健康免责声明与风险确认
-- 身高、体重、年龄、性别、目标、经验、器械与每周训练天数引导
-- Mifflin–St Jeor 基础代谢估算、TDEE、热量差、目标周期与宏量营养建议
-- 减脂、增肌、塑形、手臂线条、力量五类目标计划
-- 2–6 天/周训练编排，自动适配徒手、哑铃或完整健身房
-- 真实动作缩略图与 GIF 示范
-- 中英产品界面，以及 9 种动作内容语言入口
-- Cmine ID OIDC + PKCE 登录适配器；Apple、Google、WeChat 适配槽位
-- 订阅与“看广告得积分”的交互原型
-- 响应式桌面/移动界面与社交分享卡片
+- Cloudflare D1：用户、会话、训练档案、AI 计划、免责确认与积分账本
+- Cmine ID：Authorization Code + PKCE，服务端回调，哈希会话标识与 HttpOnly Cookie
+- AI 计划：OpenAI Responses API + Structured Outputs，模型编排一周动作、组次、休息、教练提醒与饮食建议
+- 安全规则：BMR、TDEE、热量、宏量营养与周期由确定性代码计算；模型只能从允许的动作库选择，服务端复核器械、训练日、组次、次数和休息范围
+- 管理后台：从生产 D1 读取用户、计划、免责确认和有效会话数，并显示外部服务真实配置状态
+- 前端：完整资料采集、生成状态、动作指导、AI 计划来源标记与中英文界面
+- 契约测试：覆盖无密钥状态、输入校验、LLM 结构化响应、训练周表改写和 D1 数据表
 
-> 当前版本的计划由可审计的规则引擎生成，方便自主部署与安全验证。长期专业版可在同一结构化输出协议后接入 LLM，让模型负责解释、问答和个性化表达，而不绕过热量与安全规则。
+未配置外部凭据时，产品不会伪装成已经调用 AI 或已经登录。完整计划只在 LLM 成功生成并通过服务端校验后展示。
 
 ## 本地运行
 
@@ -24,45 +21,39 @@
     npm install
     npm run dev
 
-构建：
+验证：
 
-    npm run build
+    npm run lint
+    npm test
 
-## Cmine ID
+## 生产环境变量
 
-复制 .env.example 为 .env.local，在 [Cmine ID 开发者中心](https://identity.chwjh.com/developers) 注册 Public OIDC Client，并精确登记回调地址：
+通过部署平台的 secret/env 管理设置，不要写入仓库：
 
-    https://你的域名/auth/cmine/callback
+- `SESSION_SECRET`：随机会话签名密钥
+- `OPENAI_API_KEY`：OpenAI API 密钥
+- `OPENAI_MODEL`：默认 `gpt-5.6`
+- `CMINE_ISSUER`：默认 `https://identity.chwjh.com`
+- `CMINE_CLIENT_ID`：Cmine ID 应用 client_id
+- `CMINE_CLIENT_SECRET`：仅 Confidential Client 需要
 
-然后设置：
+Cmine ID 需精确登记每个生产域名的回调：
 
-    NEXT_PUBLIC_CMINE_CLIENT_ID=你的_client_id
+    https://你的域名/api/auth/cmine/callback
 
-当前自主版演示使用 Authorization Code + PKCE，将短期访问令牌放在 sessionStorage，不申请 refresh token。专业版应改为服务端回调、HttpOnly 会话 Cookie、令牌轮换与服务端授权检查。
-
-## 两个版本
+## 两种产品路径
 
 | 能力 | Cmine Fit 自主版 | Cmine Fit 专业版 |
 |---|---:|---:|
-| 自托管与无账号使用 | ✓ | — |
-| 基础指标与一周计划 | ✓ | ✓ |
-| 本地 / OpenAI-compatible LLM | 可选 | ✓ |
-| Cmine ID 与第三方登录 | 适配器 | ✓ |
-| 历史计划、围度、训练记录 | — | ✓ |
-| AI 对话 Coach | 基础 | ✓ |
-| 订阅、广告积分、权益 | — | ✓ |
-| 运营、风控与实验 | — | ✓ |
+| 自托管 | ✓ | — |
+| 基础指标与安全规则 | ✓ | ✓ |
+| LLM 训练计划 | 可接本地或兼容模型 | OpenAI 结构化生成 |
+| Cmine ID 与服务端会话 | 可选 | ✓ |
+| 档案与计划历史 | 可选 | D1 持久化 |
+| 管理与服务状态 | — | ✓ |
 
-完整的服务边界、数据模型、API 与盈利设计见 [产品架构](docs/PRODUCT_ARCHITECTURE.zh-CN.md)。
+完整架构见 [产品架构](docs/PRODUCT_ARCHITECTURE.zh-CN.md)，健康与法律边界见 [免责声明草案](docs/LEGAL_DISCLAIMER.zh-CN.md)。
 
-## 安全与免责声明
+## 安全边界
 
-本项目输出的是一般性健身和营养信息，不构成医疗诊断、治疗、康复或个体化医疗建议。正式运营前请由目标市场的律师、医生/运动医学专家和注册营养专业人士共同复核。
-
-详见 [健康免责声明草案](docs/LEGAL_DISCLAIMER.zh-CN.md)。
-
-## 动作数据
-
-仓库保留了原始 1,324 个动作数据集、图片、GIF 和 9 种语言动作说明。原数据集说明见 [DATASET_README.md](DATASET_README.md)，媒体署名与使用条件见 [NOTICE.md](NOTICE.md)。
-
-代码与数据许可请见 [LICENSE](LICENSE)；动作媒体 © Gym visual，须遵守原媒体条款。
+本项目输出一般性健身和营养信息，不构成医疗诊断、治疗、康复或个体化医疗建议。正式运营前仍需目标市场的法律、运动医学和营养专业人士复核。

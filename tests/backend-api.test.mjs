@@ -20,7 +20,7 @@ function planRequest(body = { profile, consent: true }) {
 test("health and auth config report missing external credentials honestly", async () => {
   const health = await worker.fetch(new Request("https://local.test/api/health"), {}, {});
   assert.equal(health.status, 200);
-  assert.deepEqual(await health.json(), { ok: true, database: false, llm: false, cmine: false, model: "gpt-5.6" });
+  assert.deepEqual(await health.json(), { ok: true, database: false, llm: false, cmine: false, rewardAds: false, model: "gpt-5.6" });
   const auth = await worker.fetch(new Request("https://local.test/api/auth/config"), {}, {});
   assert.deepEqual(await auth.json(), { cmine: false });
 });
@@ -91,4 +91,6 @@ test("D1 migration contains every long-term product record", async () => {
   for (const table of ["users", "sessions", "profiles", "plans", "consents", "point_ledger"]) {
     assert.match(sql, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`));
   }
+  const completionSql = await readFile(new URL("../drizzle/0001_workout_completions.sql", import.meta.url), "utf8");
+  assert.match(completionSql, /CREATE TABLE IF NOT EXISTS workout_completions/);
 });

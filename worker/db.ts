@@ -72,6 +72,21 @@ export async function pointsForUser(env: WorkerEnv, userId: string): Promise<num
   return Number(result?.points || 0);
 }
 
+export async function recordWorkoutCompletion(env: WorkerEnv, userId: string, planId: string, dayIndex: number, exerciseId: string): Promise<{ recorded: boolean; points: number }> {
+  const db = requireDb(env);
+  const plan = await db.prepare("SELECT id FROM plans WHERE id = ? AND user_id = ?").bind(planId, userId).first<{ id: string }>();
+  if (!plan) throw new Error("PLAN_NOT_FOUND");
+  const externalRef = `completion:${planId}:${dayIndex}:${exerciseId}`;
+  const existing = await db.prepare("SELECT id FROM workout_completions WHERE user_id = ? AND plan_id = ? AND day_index = ? AND exercise_id = ?").bind(userId, planId, dayIndex, exerciseId).first<{ id: string }>();
+  if (existing) return { recorded: false, points: await pointsForUser(env, userId) };
+  const now = new Date().toISOString();
+  await db.batch([
+    db.prepare("INSERT OR IGNORE INTO workout_completions (id, user_id, plan_id, day_index, exercise_id, completed_at) VALUES (?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), userId, planId, dayIndex, exerciseId, now),
+    db.prepare("INSERT OR IGNORE INTO point_ledger (id, user_id, delta, reason, external_ref, created_at) VALUES (?, ?, 5, 'exercise_completed', ?, ?)").bind(crypto.randomUUID(), userId, externalRef, now),
+  ]);
+  return { recorded: true, points: await pointsForUser(env, userId) };
+}
+
 export async function adminSummary(env: WorkerEnv): Promise<Record<string, number>> {
   const db = requireDb(env);
   const [users, plans, consents, sessions] = await Promise.all([
