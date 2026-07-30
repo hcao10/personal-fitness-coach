@@ -3,7 +3,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { defaultProfile, generatePlan, type Activity, type CoachPlan, type Equipment, type Experience, type Goal, type Profile } from "./lib/coach";
-import { AUTH_PROVIDERS, beginCmineLogin, getCmineSession, signOutCmine, type CmineUser } from "./lib/auth";
+import { AUTH_PROVIDERS, beginCmineLogin, getCmineSession, type CmineUser } from "./lib/auth";
 import { copy, languageOptions, type DisplayLanguage, type Locale } from "./lib/i18n";
 
 const goalOptions: { value: Goal; zh: string; en: string }[] = [
@@ -45,8 +45,30 @@ export default function CoachApp() {
 
   useEffect(() => {
     queueMicrotask(() => {
-      setAccepted(localStorage.getItem("cmine_fit_disclaimer_v1") === "accepted" || localStorage.getItem("forma_disclaimer_v1") === "accepted");
-      void getCmineSession().then((session) => { setUser(session.user); setPoints(session.points); });
+      setAccepted(localStorage.getItem("cmine_fit_disclaimer_health_v2") === "accepted");
+      void getCmineSession().then(async (session) => {
+        setUser(session.user);
+        setPoints(session.points);
+        if (!session.user) return;
+        const response = await fetch("/api/v1/me", { cache: "no-store" }).catch(() => null);
+        if (!response?.ok) return;
+        const account = await response.json() as {
+          profile?: Profile | null;
+          latestPlan?: { id: string; profile: Profile | null; plan: CoachPlan | null } | null;
+        };
+        if (account.profile) setProfile(account.profile);
+        if (account.latestPlan?.plan) {
+          setPlan(account.latestPlan.plan);
+          setPlanId(account.latestPlan.id);
+          setPlanReady(true);
+          const today = (new Date().getDay() + 6) % 7;
+          setActiveDay(account.latestPlan.plan.schedule[today]?.restDay
+            ? Math.max(0, account.latestPlan.plan.schedule.findIndex((day) => !day.restDay))
+            : today);
+        } else if (account.profile) {
+          setPlan(generatePlan(account.profile));
+        }
+      });
       void fetch("/api/health", { cache: "no-store" }).then((response) => response.json()).then((status: { llm?: boolean; rewardAds?: boolean }) => setServices({ ai: Boolean(status.llm), rewardAds: Boolean(status.rewardAds) })).catch(() => undefined);
       const authError = new URLSearchParams(window.location.search).get("auth_error");
       if (authError) setToast(authError);
@@ -78,6 +100,8 @@ export default function CoachApp() {
         setCompleted(new Set());
         setPlanReady(true);
         revealPlan = true;
+        const firstTrainingDay = result.plan.schedule.findIndex((day) => !day.restDay);
+        setActiveDay(Math.max(0, firstTrainingDay));
         setToast(lang === "zh" ? "AI 已完成个性化计划，并通过规则校验" : "Your AI plan passed the safety checks");
       } else {
         setPlanReady(false);
@@ -89,8 +113,6 @@ export default function CoachApp() {
     } finally {
       setGenerating(false);
       if (revealPlan) {
-        const firstTrainingDay = plan.schedule.findIndex((day) => !day.restDay);
-        setActiveDay(Math.max(0, firstTrainingDay));
         window.setTimeout(() => planRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 40);
       }
     }
@@ -113,6 +135,7 @@ export default function CoachApp() {
   const goalLabel = goalOptions.find((goal) => goal.value === profile.goal)?.[lang] || "";
   const coachNotes = plan.insights?.coachNotes[lang] || [t.note1, t.note2, t.note3];
   const dietGuidance = plan.insights?.dietGuidance[lang] || [t.diet1, t.diet2, t.diet3];
+  const planRationale = plan.insights?.planRationale[lang] || [];
 
   return (
     <main>
@@ -127,7 +150,7 @@ export default function CoachApp() {
           </label>
           {user && services.rewardAds && <button className="points-pill" onClick={() => setAdOpen(true)} aria-label={t.watchAd}><span>◆</span> {points}</button>}
           {user ? (
-            <button className="avatar-button" onClick={async () => { await signOutCmine(); setUser(null); setPoints(0); }}><span>{(user.name || user.email || "C").slice(0, 1).toUpperCase()}</span><em>{t.logout}</em></button>
+            <a className="avatar-button" href="/account"><span>{(user.name || user.email || "C").slice(0, 1).toUpperCase()}</span><em>{lang === "zh" ? "我的训练" : "My training"}</em></a>
           ) : <button className="login-button" onClick={() => setLoginOpen(true)}>{t.login} <span>↗</span></button>}
         </div>
       </header>
@@ -262,6 +285,7 @@ export default function CoachApp() {
             )}
           </div>
           <aside className="coach-sidebar">
+            {planRationale.length > 0 && <article className="rationale-card"><div className="card-kicker">{lang === "zh" ? "为什么这样安排" : "Why this plan fits"}</div>{planRationale.map((reason, index) => <div key={reason}><span>{String(index + 1).padStart(2, "0")}</span><p>{reason}</p></div>)}</article>}
             <article className="notes-card"><div className="card-kicker">{t.coachNotes}</div>{coachNotes.map((note, index) => <div key={note}><span>{index + 1}</span><p>{note}</p></div>)}</article>
             <article className="diet-card"><div className="card-kicker">{t.dietTitle}</div><ul>{dietGuidance.map((item) => <li key={item}>{item}</li>)}</ul></article>
           </aside>
@@ -286,7 +310,7 @@ export default function CoachApp() {
           <div className="modal-stripe"><span>SAFETY FIRST</span><b>01 / 03</b></div><h2 id="disclaimer-title">{t.disclaimerTitle}</h2><p className="disclaimer-intro">{t.disclaimerIntro}</p>
           <label className={healthCheck ? "checked" : ""}><input type="checkbox" checked={healthCheck} onChange={(e) => setHealthCheck(e.target.checked)} /><span>{healthCheck ? "✓" : ""}</span><p>{t.disclaimerHealth}</p></label>
           <label className={estimateCheck ? "checked" : ""}><input type="checkbox" checked={estimateCheck} onChange={(e) => setEstimateCheck(e.target.checked)} /><span>{estimateCheck ? "✓" : ""}</span><p>{t.disclaimerEstimate}</p></label>
-          <button className="primary-cta" disabled={!healthCheck || !estimateCheck} onClick={() => { localStorage.setItem("cmine_fit_disclaimer_v1", "accepted"); setAccepted(true); void fetch("/api/consents", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ locale: lang }) }); }}><span>{t.accept}</span><b>→</b></button>
+          <button className="primary-cta" disabled={!healthCheck || !estimateCheck} onClick={() => { localStorage.setItem("cmine_fit_disclaimer_health_v2", "accepted"); setAccepted(true); void fetch("/api/consents", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ locale: lang }) }); }}><span>{t.accept}</span><b>→</b></button>
           <small>{lang === "zh" ? "继续即表示你已阅读并接受《健康免责声明》与《隐私说明》。" : "Continuing means you accept the health disclaimer and privacy notice."}</small>
         </div>
       </div>}

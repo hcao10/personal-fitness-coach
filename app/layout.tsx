@@ -14,14 +14,14 @@ export async function generateMetadata(): Promise<Metadata> {
     keywords: ["AI fitness coach", "健身计划", "训练计划", "BMR", "open source fitness"],
     openGraph: {
       title: "Cmine Fit — 懂训练，更懂你",
-      description: "你今日的详细训练计划和注意事项，从这里开始。",
+      description: "从真实身体条件和训练目标出发，为您定制专属训练与饮食计划。",
       type: "website",
       images: [{ url: imageUrl, width: 1672, height: 941, alt: "Cmine Fit social preview" }],
     },
     twitter: {
       card: "summary_large_image",
       title: "Cmine Fit — 懂训练，更懂你",
-      description: "你今日的详细训练计划和注意事项，从这里开始。",
+      description: "从真实身体条件和训练目标出发，为您定制专属训练与饮食计划。",
       images: [imageUrl],
     },
   };

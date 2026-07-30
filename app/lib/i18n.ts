@@ -12,7 +12,7 @@ export const languageOptions: { value: Locale; label: string }[] = [
 export const copy = {
   zh: {
     aspiration: "更好的向往", expertPlan: "专业的规划", openCore: "一切由你", proEdition: "专业增强版", navCoach: "AI 计划", navLibrary: "动作指导", navAbout: "选择你的方式", navAdmin: "管理后台",
-    login: "登录", logout: "退出", eyebrow: "懂训练，更懂你", titleA: "想练得更好", titleB: "你今日的详细计划和注意事项如下。",
+    login: "登录", logout: "退出", eyebrow: "懂训练，更懂你", titleA: "低效盲目训练", titleB: "为您定制的专属计划如下：",
     subtitle: "Cmine Fit 从你的目标、身体状态、时间和器械出发，规划一份真正适合你、也能长期坚持的一周计划。",
     socialProof: "每份计划，都从你的真实条件开始", profileTitle: "先认识你，再写计划", profileHint: "约 60 秒 · 随时可以调整",
     basics: "身体数据", goal: "主要目标", routine: "训练现实", preview: "实时计划预览", generate: "生成我的完整计划",
@@ -41,7 +41,7 @@ export const copy = {
   },
   en: {
     aspiration: "A better ambition", expertPlan: "Expert planning", openCore: "Your way", proEdition: "Professional guidance", navCoach: "AI plan", navLibrary: "Exercise guide", navAbout: "Choose your way", navAdmin: "Admin",
-    login: "Sign in", logout: "Sign out", eyebrow: "Understands training. Understands you better.", titleA: "I want to train better", titleB: "Here is today’s detailed plan, with everything to keep in mind.",
+    login: "Sign in", logout: "Sign out", eyebrow: "Understands training. Understands you better.", titleA: "Inefficient, aimless training", titleB: "Your personalized plan starts here:",
     subtitle: "Cmine Fit starts with your goals, body, schedule and equipment to shape a week that truly fits — and lasts.",
     socialProof: "Every plan starts with your real constraints", profileTitle: "Tell us about you", profileHint: "About 60 seconds · Edit anytime",
     basics: "Body profile", goal: "Primary goal", routine: "Training reality", preview: "Live plan preview", generate: "Build my full plan",

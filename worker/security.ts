@@ -46,6 +46,13 @@ export async function verifyPayload<T>(signed: string | undefined, secret: strin
   try { return JSON.parse(decoder.decode(fromBase64Url(encoded))) as T; } catch { return null; }
 }
 
+export function safeEqual(left: string, right: string): boolean {
+  if (left.length !== right.length) return false;
+  let difference = 0;
+  for (let index = 0; index < left.length; index += 1) difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
+  return difference === 0;
+}
+
 export function parseCookies(request: Request): Record<string, string> {
   const result: Record<string, string> = {};
   for (const part of (request.headers.get("cookie") || "").split(";")) {

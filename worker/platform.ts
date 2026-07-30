@@ -34,9 +34,12 @@ export interface WorkerEnv {
   OPENAI_API_KEY?: string;
   OPENAI_MODEL?: string;
   OPENAI_BASE_URL?: string;
+  OPENAI_REASONING_EFFORT?: string;
   CMINE_ISSUER?: string;
   CMINE_CLIENT_ID?: string;
   CMINE_CLIENT_SECRET?: string;
   SESSION_SECRET?: string;
+  PUBLIC_ORIGIN?: string;
+  ADMIN_EMAILS?: string;
   REWARD_AD_PROVIDER?: string;
 }

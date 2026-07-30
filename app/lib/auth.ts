@@ -15,12 +15,13 @@ export async function getCmineSession(): Promise<{ user: CmineUser | null; point
   }
 }
 
-export async function beginCmineLogin(): Promise<{ ok: boolean; message?: string }> {
+export async function beginCmineLogin(returnTo = "/"): Promise<{ ok: boolean; message?: string }> {
   try {
     const response = await fetch("/api/auth/config", { cache: "no-store" });
     const config = await response.json() as { cmine?: boolean };
     if (!config.cmine) return { ok: false, message: "Cmine ID 登录暂时不可用，请稍后再试。" };
-    window.location.assign("/api/auth/cmine/start?returnTo=/");
+    const safeReturnTo = returnTo.startsWith("/") && !returnTo.startsWith("//") ? returnTo : "/";
+    window.location.assign(`/api/auth/cmine/start?returnTo=${encodeURIComponent(safeReturnTo)}`);
     return { ok: true };
   } catch {
     return { ok: false, message: "暂时无法连接登录服务，请稍后重试。" };

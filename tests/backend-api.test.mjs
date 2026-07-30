@@ -20,9 +20,33 @@ function planRequest(body = { profile, consent: true }) {
 test("health and auth config report missing external credentials honestly", async () => {
   const health = await worker.fetch(new Request("https://local.test/api/health"), {}, {});
   assert.equal(health.status, 200);
-  assert.deepEqual(await health.json(), { ok: true, database: false, llm: false, cmine: false, rewardAds: false, model: "gpt-5.6" });
+  assert.deepEqual(await health.json(), {
+    ok: true,
+    database: false,
+    llm: false,
+    cmine: false,
+    rewardAds: false,
+    model: "gpt-5.6",
+    reasoningEffort: "medium",
+  });
   const auth = await worker.fetch(new Request("https://local.test/api/auth/config"), {}, {});
   assert.deepEqual(await auth.json(), { cmine: false });
+});
+
+test("state-changing APIs reject cross-origin browser requests", async () => {
+  const response = await worker.fetch(new Request("https://local.test/api/v1/plans", {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: "https://evil.test" },
+    body: JSON.stringify({ profile, consent: true }),
+  }), {}, {});
+  assert.equal(response.status, 403);
+  assert.equal((await response.json()).error, "ORIGIN_REJECTED");
+});
+
+test("admin APIs require both a valid session and allowlisted email", async () => {
+  const response = await worker.fetch(new Request("https://local.test/api/v1/admin/overview"), {}, {});
+  assert.equal(response.status, 403);
+  assert.equal((await response.json()).error, "FORBIDDEN");
 });
 
 test("plan endpoint rejects invalid profiles", async () => {
@@ -61,10 +85,15 @@ test("structured LLM output changes the weekly plan and passes server validation
     assert.equal(String(url), "https://api.openai.com/v1/responses");
     const requestBody = JSON.parse(init.body);
     assert.equal(requestBody.model, "gpt-5.6");
+    assert.equal(requestBody.reasoning.effort, "medium");
+    assert.equal(requestBody.store, false);
     assert.equal(requestBody.text.format.type, "json_schema");
+    assert.equal(requestBody.text.format.strict, true);
     return Response.json({ id: "resp_test", output_text: JSON.stringify({
       summary_zh: "这是一份根据目标、经验和训练条件生成的个性化计划。",
       summary_en: "A personalized plan based on the goal, experience, and available setup.",
+      plan_rationale_zh: ["按恢复能力安排训练日", "用复合动作覆盖主要肌群", "通过休息日控制疲劳"],
+      plan_rationale_en: ["Training days match recovery", "Compound lifts cover key muscles", "Rest days manage fatigue"],
       coach_notes_zh: ["动作质量优先", "保留两次余力", "疼痛时立即停止"],
       coach_notes_en: ["Prioritize technique", "Keep two reps in reserve", "Stop when pain appears"],
       diet_guidance_zh: ["每餐安排蛋白质", "训练前补充碳水", "保持充足饮水"],
@@ -80,6 +109,7 @@ test("structured LLM output changes the weekly plan and passes server validation
     assert.equal(body.requestId, "resp_test");
     assert.equal(body.plan.schedule[0].title.zh, "AI 训练 1");
     assert.equal(body.plan.insights.coachNotes.zh.length, 3);
+    assert.equal(body.plan.insights.planRationale.en.length, 3);
     assert.equal(body.persisted, false);
   } finally {
     globalThis.fetch = originalFetch;
@@ -93,4 +123,14 @@ test("D1 migration contains every long-term product record", async () => {
   }
   const completionSql = await readFile(new URL("../drizzle/0001_workout_completions.sql", import.meta.url), "utf8");
   assert.match(completionSql, /CREATE TABLE IF NOT EXISTS workout_completions/);
+  const productSql = await readFile(new URL("../drizzle/0002_product_web_v1.sql", import.meta.url), "utf8");
+  for (const table of ["measurements", "workout_sessions", "generation_runs", "site_settings", "admin_audit_events"]) {
+    assert.match(productSql, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`));
+  }
+});
+
+test("homepage product copy matches the approved Chinese positioning", async () => {
+  const i18n = await readFile(new URL("../app/lib/i18n.ts", import.meta.url), "utf8");
+  assert.match(i18n, /titleA: "低效盲目训练"/);
+  assert.match(i18n, /titleB: "为您定制的专属计划如下："/);
 });

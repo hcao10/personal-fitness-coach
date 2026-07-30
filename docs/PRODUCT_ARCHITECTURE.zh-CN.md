@@ -147,3 +147,59 @@ plans/preview 可匿名调用并限速；保存、积分、订阅与历史数据
 3. Coach 版：结构化 LLM 输出、RAG 动作库、周复盘与自动调节。
 4. 专业版：订阅权益、广告积分账本、风控、运营后台。
 5. 专业版：教练协作、可穿戴设备、营养记录与医疗/法律分地区审核。
+
+## 10. Web v1 当前实现
+
+本仓库的 Web v1 已按以下边界实现，不再使用静态计划冒充模型结果：
+
+- `packages/coach-core` 是无状态、无网络、无数据库依赖的安全规则包，单独采用 Apache-2.0。
+- Worker API 负责 Cmine ID 会话、数据所有权、输入边界、生成记录与管理权限。
+- D1 持久化用户、资料、计划、测量、训练反馈、积分流水、设置和审计事件。
+- OpenAI Responses API 使用 `gpt-5.6`、`reasoning.effort=medium` 和严格 JSON Schema。
+- BMR、TDEE、热量下限、宏量营养、训练频率、器械限制由 `coach-core` 决定；模型只能编排与解释。
+- `planRationale` 是面向用户的双语安排理由，不是也不保存模型的隐藏思维链。
+- 用户中心支持资料恢复、计划历史、测量趋势、训练完成/反馈、导出和删除。
+- 管理后台使用 Sites 身份加 `ADMIN_EMAILS` 白名单，写操作记录 `admin_audit_events`。
+- PWA Manifest 和移动端布局是第二阶段原生 App 之前的可安装交付形态。
+
+当前版本化接口：
+
+    GET    /api/v1/me
+    DELETE /api/v1/me
+    GET    /api/v1/export
+    GET    /api/v1/profile
+    PUT    /api/v1/profile
+    GET    /api/v1/plans
+    POST   /api/v1/plans
+    GET    /api/v1/plans/:id
+    GET    /api/v1/measurements
+    POST   /api/v1/measurements
+    GET    /api/v1/progress
+    POST   /api/v1/workouts/:planId/complete
+    POST   /api/v1/workouts/:planId/feedback
+
+所有登录用户数据查询都从服务端会话取得 `user_id`，不接受客户端传入用户
+ID。写请求执行 Origin 校验；管理接口在普通登录之外再执行邮箱白名单校验。
+
+## 11. 商品化与 App 分阶段方案
+
+权益层使用能力项，例如 `plan.generate.monthly`、`coach.chat.daily`、
+`history.export`，业务代码不判断套餐名称。
+
+国际市场 Web 订阅接 Stripe Billing；iOS/Android 内购由 RevenueCat 统一
+Apple 和 Google IAP 状态。两类回调都必须验签、幂等，并映射到同一权益
+模型。供应商未接入前，不在用户界面显示订阅、广告或其他登录方式入口。
+
+激励广告使用 AdMob 服务端验证。只有广告网络签名回调可以创建奖励流水，
+`network + impression_id` 作为幂等键，任何浏览器端“已看完”事件都不能
+直接增加积分。
+
+原生 App 第二阶段采用 Expo/React Native，共用 API 类型、`coach-core` 和
+多语言资源。Cmine ID 必须通过系统浏览器、Universal Link 与 Secure Storage
+完成；训练计划支持离线查看、恢复后同步和推送提醒，随后再接 HealthKit、
+Health Connect 与可穿戴设备。
+
+生产主域名为 `fit.chwjh.com`，`PUBLIC_ORIGIN` 与 Cmine 回调必须固定为：
+
+    PUBLIC_ORIGIN=https://fit.chwjh.com
+    https://fit.chwjh.com/api/auth/cmine/callback
