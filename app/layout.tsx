@@ -13,6 +13,10 @@ export async function generateMetadata(): Promise<Metadata> {
     description: "从身体数据、训练目标和现实条件出发，生成能坚持的一周训练与饮食建议。",
     applicationName: "Cmine Fit",
     keywords: ["AI fitness coach", "健身计划", "训练计划", "BMR", "open source fitness"],
+    icons: {
+      icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
+      shortcut: "/icon.svg",
+    },
     openGraph: {
       title: "Cmine Fit — 懂训练，更懂你",
       description: "从真实身体条件和训练目标出发，为您定制专属训练与饮食计划。",
