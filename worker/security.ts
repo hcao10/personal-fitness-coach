@@ -23,6 +23,35 @@ export async function sha256(value: string): Promise<string> {
   return toBase64Url(new Uint8Array(digest));
 }
 
+async function aesKey(secret: string): Promise<CryptoKey> {
+  const digest = await crypto.subtle.digest("SHA-256", encoder.encode(`cmine-fit-token:${secret}`));
+  return crypto.subtle.importKey("raw", digest, "AES-GCM", false, ["encrypt", "decrypt"]);
+}
+
+export async function encryptSecret(value: string, secret: string): Promise<string> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await aesKey(secret), encoder.encode(value));
+  return `${toBase64Url(iv)}.${toBase64Url(new Uint8Array(encrypted))}`;
+}
+
+export async function decryptSecret(value: string | null | undefined, secret: string): Promise<string | null> {
+  if (!value) return null;
+  const [ivValue, encryptedValue, extra] = value.split(".");
+  if (!ivValue || !encryptedValue || extra) return null;
+  try {
+    const iv = Uint8Array.from(fromBase64Url(ivValue));
+    const encrypted = Uint8Array.from(fromBase64Url(encryptedValue));
+    const decrypted = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv },
+      await aesKey(secret),
+      encrypted,
+    );
+    return decoder.decode(decrypted);
+  } catch {
+    return null;
+  }
+}
+
 async function hmac(value: string, secret: string): Promise<string> {
   const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(value));

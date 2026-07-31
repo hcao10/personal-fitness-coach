@@ -29,6 +29,7 @@ export default function CoachApp() {
   const [planReady, setPlanReady] = useState(false);
   const [planId, setPlanId] = useState<string | null>(null);
   const [services, setServices] = useState({ ai: false, rewardAds: false });
+  const [announcement, setAnnouncement] = useState("");
   const [activeDay, setActiveDay] = useState(0);
   const [accepted, setAccepted] = useState<boolean | null>(null);
   const [healthCheck, setHealthCheck] = useState(false);
@@ -70,6 +71,7 @@ export default function CoachApp() {
         }
       });
       void fetch("/api/health", { cache: "no-store" }).then((response) => response.json()).then((status: { llm?: boolean; rewardAds?: boolean }) => setServices({ ai: Boolean(status.llm), rewardAds: Boolean(status.rewardAds) })).catch(() => undefined);
+      void fetch("/api/v1/site", { cache: "no-store" }).then((response) => response.json()).then((site: { announcement?: string }) => setAnnouncement(site.announcement || "")).catch(() => undefined);
       const authError = new URLSearchParams(window.location.search).get("auth_error");
       if (authError) setToast(authError);
     });
@@ -89,6 +91,11 @@ export default function CoachApp() {
     setCompleted(new Set());
   };
   const buildPlan = async () => {
+    if (!user) {
+      setLoginOpen(true);
+      setToast(lang === "zh" ? "登录后可使用真实 AI 计划并保存长期记录" : "Sign in to generate and save a real AI plan");
+      return;
+    }
     setGenerating(true);
     let revealPlan = false;
     try {
@@ -141,7 +148,7 @@ export default function CoachApp() {
     <main>
       <header className="topbar">
         <a className="brand" href="#top" aria-label="Cmine Fit home"><span className="brand-mark">C</span><span>CMINE <b>FIT</b></span></a>
-        <nav className="topnav" aria-label="Primary navigation"><a href="#coach">{t.navCoach}</a><a href="#library">{t.navLibrary}</a><a href="#editions">{t.navAbout}</a><a href="/pricing">{t.navPricing}</a><a href="/admin">{t.navAdmin}</a></nav>
+        <nav className="topnav" aria-label="Primary navigation"><a href="#coach">{t.navCoach}</a><a href="/nutrition">{lang === "zh" ? "饮食记录" : "Nutrition"}</a><a href="#editions">{t.navAbout}</a><a href="/pricing">{t.navPricing}</a><a href="/admin">{t.navAdmin}</a></nav>
         <div className="header-actions">
           <label className="language-select"><span className="sr-only">Language</span>
             <select value={locale} onChange={(event) => setLocale(event.target.value as Locale)}>
@@ -154,6 +161,7 @@ export default function CoachApp() {
           ) : <button className="login-button" onClick={() => setLoginOpen(true)}>{t.login} <span>↗</span></button>}
         </div>
       </header>
+      {announcement && <div className="site-announcement" role="status"><span>CMINE FIT</span><p>{announcement}</p></div>}
 
       <section className="hero" id="top">
         <div className="hero-copy">
@@ -322,7 +330,7 @@ export default function CoachApp() {
       </div>}
 
       {adOpen && <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setAdOpen(false)} role="dialog" aria-modal="true">
-        <div className="small-modal ad-modal"><button className="modal-close" onClick={() => setAdOpen(false)}>×</button><span className="modal-icon">◆</span><h2>{t.adTitle}</h2><p>{t.adText}</p><div className="ad-reward"><b>+20</b><span>{t.points}</span></div>
+        <div className="small-modal ad-modal"><button className="modal-close" onClick={() => setAdOpen(false)}>×</button><span className="modal-icon">◆</span><h2>{t.adTitle}</h2><p>{t.adText}</p><div className="ad-reward"><b>+10</b><span>{t.points}</span></div>
           <button className="primary-cta" disabled={adClaimed} onClick={async () => { const response = await fetch("/api/points/claim-ad", { method: "POST" }); const result = await response.json() as { message?: string }; setAdClaimed(response.ok); setToast(result.message || (lang === "zh" ? "奖励广告暂不可用" : "Reward ads are not available yet")); window.setTimeout(() => setAdOpen(false), 900); }}><span>{adClaimed ? t.completed : t.playAd}</span><b>▶</b></button>
         </div>
       </div>}

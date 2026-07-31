@@ -9,7 +9,7 @@ export default function AdminPage() {
     <aside className="admin-rail">
       <Link className="brand admin-brand" href="/" aria-label="Cmine Fit home"><span className="brand-mark">C</span><span>CMINE <b>FIT</b></span></Link>
       <div className="admin-nav-label">CONTROL ROOM</div>
-      <nav aria-label="管理后台导航"><a className="active" href="#overview"><span>01</span>总览</a><a href="#modules"><span>02</span>系统模块</a><a href="#generations"><span>03</span>AI 生成</a><a href="#users"><span>04</span>用户管理</a><a href="#settings"><span>05</span>站点设置</a><Link href="/"><span>↗</span>返回用户端</Link></nav>
+      <nav aria-label="管理后台导航"><a className="active" href="#overview"><span>01</span>总览</a><a href="#modules"><span>02</span>系统模块</a><a href="#models"><span>03</span>模型路由</a><a href="#billing"><span>04</span>支付订阅</a><a href="#nutrition-admin"><span>05</span>营养识别</a><a href="#users"><span>06</span>用户管理</a><a href="#settings"><span>07</span>额度设置</a><a href="#audit"><span>08</span>审计日志</a><Link href="/"><span>↗</span>返回用户端</Link></nav>
       <div className="admin-identity"><span>C</span><div><b>Cmine ID</b><small>产品权限验证</small></div></div>
     </aside>
     <section className="admin-main" id="overview">

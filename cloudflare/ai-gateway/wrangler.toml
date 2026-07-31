@@ -1,0 +1,11 @@
+name = "cmine-fit-ai-gateway"
+main = "src/index.ts"
+compatibility_date = "2026-04-01"
+account_id = "eec4d223ffc55199e88ae515a67323fe"
+
+[ai]
+binding = "AI"
+
+[observability]
+enabled = true
+head_sampling_rate = 0.1

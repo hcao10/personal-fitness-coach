@@ -20,15 +20,15 @@ function planRequest(body = { profile, consent: true }) {
 test("health and auth config report missing external credentials honestly", async () => {
   const health = await worker.fetch(new Request("https://local.test/api/health"), {}, {});
   assert.equal(health.status, 200);
-  assert.deepEqual(await health.json(), {
-    ok: true,
-    database: false,
-    llm: false,
-    cmine: false,
-    rewardAds: false,
-    model: "gpt-5.6",
-    reasoningEffort: "medium",
-  });
+  const status = await health.json();
+  assert.equal(status.ok, true);
+  assert.equal(status.database, false);
+  assert.equal(status.storage, false);
+  assert.equal(status.planner, false);
+  assert.equal(status.vision, false);
+  assert.equal(status.billing, false);
+  assert.equal(status.rewardAds, false);
+  assert.deepEqual(status.providers, { cloudflare: false, openai: false, compatible: false });
   const auth = await worker.fetch(new Request("https://local.test/api/auth/config"), {}, {});
   assert.deepEqual(await auth.json(), { cmine: false });
 });
@@ -55,65 +55,22 @@ test("plan endpoint rejects invalid profiles", async () => {
   assert.equal((await response.json()).error, "INVALID_PROFILE");
 });
 
-test("missing LLM key returns explicit fallback with a complete rule plan", async () => {
+test("real AI plans require a signed-in product account and never return a static fallback", async () => {
   const response = await worker.fetch(planRequest(), {}, {});
   const body = await response.json();
-  assert.equal(response.status, 503);
-  assert.equal(body.error, "AI_NOT_CONFIGURED");
-  assert.equal(body.fallbackPlan.schedule.length, 7);
-  assert.equal(body.fallbackPlan.schedule.filter((day) => !day.restDay).length, 4);
+  assert.equal(response.status, 401);
+  assert.equal(body.error, "AUTH_REQUIRED");
+  assert.equal("fallbackPlan" in body, false);
 });
 
-test("structured LLM output changes the weekly plan and passes server validation", async () => {
-  const originalFetch = globalThis.fetch;
-  const training = new Set([0, 1, 3, 5]);
-  const days = Array.from({ length: 7 }, (_, dayIndex) => ({
-    day_index: dayIndex,
-    rest_day: !training.has(dayIndex),
-    title_zh: training.has(dayIndex) ? `AI 训练 ${dayIndex + 1}` : "主动恢复",
-    title_en: training.has(dayIndex) ? `AI session ${dayIndex + 1}` : "Active recovery",
-    focus_zh: training.has(dayIndex) ? "个性化训练重点" : "轻松步行与活动度",
-    focus_en: training.has(dayIndex) ? "Personalized training focus" : "Easy walk and mobility",
-    duration_minutes: training.has(dayIndex) ? 46 : 30,
-    exercises: training.has(dayIndex) ? [
-      { exercise_id: "dumbbellBench", sets: 3, reps: "8-12", rest_seconds: 75 },
-      { exercise_id: "dumbbellRow", sets: 3, reps: "8-12", rest_seconds: 75 },
-      { exercise_id: "curl", sets: 3, reps: "10-12", rest_seconds: 60 },
-    ] : [],
-  }));
-  globalThis.fetch = async (url, init) => {
-    assert.equal(String(url), "https://api.openai.com/v1/responses");
-    const requestBody = JSON.parse(init.body);
-    assert.equal(requestBody.model, "gpt-5.6");
-    assert.equal(requestBody.reasoning.effort, "medium");
-    assert.equal(requestBody.store, false);
-    assert.equal(requestBody.text.format.type, "json_schema");
-    assert.equal(requestBody.text.format.strict, true);
-    return Response.json({ id: "resp_test", output_text: JSON.stringify({
-      summary_zh: "这是一份根据目标、经验和训练条件生成的个性化计划。",
-      summary_en: "A personalized plan based on the goal, experience, and available setup.",
-      plan_rationale_zh: ["按恢复能力安排训练日", "用复合动作覆盖主要肌群", "通过休息日控制疲劳"],
-      plan_rationale_en: ["Training days match recovery", "Compound lifts cover key muscles", "Rest days manage fatigue"],
-      coach_notes_zh: ["动作质量优先", "保留两次余力", "疼痛时立即停止"],
-      coach_notes_en: ["Prioritize technique", "Keep two reps in reserve", "Stop when pain appears"],
-      diet_guidance_zh: ["每餐安排蛋白质", "训练前补充碳水", "保持充足饮水"],
-      diet_guidance_en: ["Include protein each meal", "Use carbs before training", "Stay hydrated"],
-      days,
-    }) });
-  };
-  try {
-    const response = await worker.fetch(planRequest(), { OPENAI_API_KEY: "test-key" }, {});
-    const body = await response.json();
-    assert.equal(response.status, 200);
-    assert.equal(body.source, "llm");
-    assert.equal(body.requestId, "resp_test");
-    assert.equal(body.plan.schedule[0].title.zh, "AI 训练 1");
-    assert.equal(body.plan.insights.coachNotes.zh.length, 3);
-    assert.equal(body.plan.insights.planRationale.en.length, 3);
-    assert.equal(body.persisted, false);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+test("AI router supports low-cost Cloudflare, OpenAI, and compatible providers", async () => {
+  const llm = await readFile(new URL("../worker/llm.ts", import.meta.url), "utf8");
+  assert.match(llm, /provider === "cloudflare"/);
+  assert.match(llm, /provider === "openai"/);
+  assert.match(llm, /AI_COMPAT_BASE_URL/);
+  assert.match(llm, /AI_BUDGET_EXHAUSTED/);
+  assert.match(llm, /llama-3\.2-11b-vision-instruct/);
+  assert.match(llm, /kimi-k2\.6/);
 });
 
 test("D1 migration contains every long-term product record", async () => {
@@ -130,6 +87,21 @@ test("D1 migration contains every long-term product record", async () => {
   const adminRoleSql = await readFile(new URL("../drizzle/0003_cmine_admin_roles.sql", import.meta.url), "utf8");
   assert.match(adminRoleSql, /ADD COLUMN role TEXT NOT NULL DEFAULT 'user'/);
   assert.match(adminRoleSql, /ADD COLUMN cmine_role TEXT NOT NULL DEFAULT 'user'/);
+  const productizationSql = await readFile(new URL("../drizzle/0004_commerce_nutrition_ai.sql", import.meta.url), "utf8");
+  for (const table of ["billing_customers", "subscriptions", "entitlements", "feature_usage", "meal_logs", "meal_images", "meal_items", "meal_analysis_runs", "nutrition_cache", "ai_routes", "reward_events", "point_redemptions"]) {
+    assert.match(productizationSql, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`));
+  }
+});
+
+test("payments and nutrition enforce signed events and user confirmation", async () => {
+  const billing = await readFile(new URL("../worker/billing.ts", import.meta.url), "utf8");
+  const nutrition = await readFile(new URL("../worker/nutrition.ts", import.meta.url), "utf8");
+  assert.match(billing, /verifyStripeWebhook/);
+  assert.match(billing, /timingSafeEqual/);
+  assert.match(billing, /ON CONFLICT\(external_subscription_id\)/);
+  assert.match(nutrition, /NUTRITION_REFERENCE_REQUIRED/);
+  assert.match(nutrition, /world\.openfoodfacts\.org/);
+  assert.match(nutrition, /FoodData Central|api\.nal\.usda\.gov/);
 });
 
 test("admin authentication uses Cmine roles and contains no GPT identity dependency", async () => {

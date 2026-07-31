@@ -1,9 +1,10 @@
-import { generatePlan, type Activity, type Equipment, type Experience, type Goal, type Profile, type Sex } from "../app/lib/coach";
+import { type Activity, type Equipment, type Experience, type Goal, type Profile, type Sex } from "../app/lib/coach";
 import { verifyCmineAccessToken } from "./cmine-jwt";
 import {
   accountSnapshot,
   addMeasurement,
   adminOverview,
+  adminAuditEvents,
   adminSettings,
   adminSummary,
   adminUsers,
@@ -27,12 +28,28 @@ import {
   saveWorkoutSession,
   settingValue,
   updateAdminSetting,
+  updateAiRoute,
   updateUserStatus,
   upsertCmineUser,
   type MeasurementInput,
   type StoredUser,
 } from "./db";
-import { generateLlmPlan } from "./llm";
+import { aiServices, generateLlmPlan } from "./llm";
+import { billingCatalog, createCheckout, createPortal, processStripeEvent, stripeConfigured, verifyStripeWebhook } from "./billing";
+import { consumeCapability, entitlementSnapshot, redeemPoints, refundCapability, tierForUser, usageForUser } from "./product";
+import {
+  analyzeMeal,
+  confirmMeal,
+  createManualMeal,
+  dailyNutrition,
+  deleteMealImage,
+  foodByBarcode,
+  foodDataConfigured,
+  mealsForUser,
+  searchFoods,
+  uploadMealImage,
+} from "./nutrition";
+import { processAdmobReward, rewardAdsConfigured } from "./rewards";
 import type { WorkerEnv } from "./platform";
 import { cookie, parseCookies, randomToken, safeReturnPath, sha256, signPayload, verifyPayload } from "./security";
 
@@ -46,7 +63,11 @@ const sexes = new Set<Sex>(["female", "male"]);
 const activities = new Set<Activity>(["sedentary", "light", "moderate", "active"]);
 const experiences = new Set<Experience>(["beginner", "intermediate", "advanced"]);
 const equipment = new Set<Equipment>(["bodyweight", "dumbbell", "gym"]);
-const editableSettings = new Set(["announcement", "maintenance_mode", "disclaimer_version"]);
+const editableSettings = new Set([
+  "announcement", "maintenance_mode", "disclaimer_version",
+  "ai_daily_warning_usd", "ai_daily_hard_usd", "ai_monthly_warning_usd", "ai_monthly_hard_usd",
+  "free_plan_limit", "free_meal_scan_limit", "pro_plan_limit", "pro_meal_scan_limit", "pro_coach_message_limit",
+]);
 
 function profileFrom(value: unknown): Profile | null {
   if (!value || typeof value !== "object") return null;
@@ -157,7 +178,12 @@ async function authCallback(request: Request, env: WorkerEnv): Promise<Response>
     }),
   }).catch(() => null);
   if (!tokenResponse) return oauthError(request, env, "Cmine ID 暂时无法连接，请稍后重试");
-  const tokens = await tokenResponse.json().catch(() => null) as { access_token?: string; error?: string } | null;
+  const tokens = await tokenResponse.json().catch(() => null) as {
+    access_token?: string;
+    refresh_token?: string;
+    expires_in?: number;
+    error?: string;
+  } | null;
   if (!tokenResponse.ok || !tokens?.access_token) return oauthError(request, env, `Cmine ID 令牌交换失败（${tokens?.error || tokenResponse.status}）`);
 
   let claims: { sub: string };
@@ -193,7 +219,11 @@ async function authCallback(request: Request, env: WorkerEnv): Promise<Response>
   });
   if (user.status !== "active") return oauthError(request, env, "该账户目前无法登录，请联系支持");
   const sessionToken = randomToken(48);
-  await createSession(env, user.id, sessionToken);
+  await createSession(env, user.id, sessionToken, {
+    accessToken: tokens.access_token,
+    refreshToken: tokens.refresh_token,
+    expiresIn: tokens.expires_in,
+  });
   const headers = new Headers({
     location: new URL(state.returnTo, publicOrigin(request, env)).toString(),
     "cache-control": "no-store",
@@ -208,22 +238,69 @@ async function planRequest(request: Request, env: WorkerEnv): Promise<Response> 
   const profile = profileFrom(body?.profile);
   if (!profile) return errorJson("INVALID_PROFILE", "训练档案不完整或超出安全范围。", 400);
   if (body?.consent !== true) return errorJson("CONSENT_REQUIRED", "生成前需要确认健康免责声明与数据处理说明。", 412);
-  const user = await getSessionUser(request, env);
+  const required = await requireUser(request, env);
+  if (required instanceof Response) return required;
+  const user = required;
   if (await settingValue<boolean>(env, "maintenance_mode", false)) {
     return errorJson("MAINTENANCE_MODE", "AI 教练正在进行短暂维护，请稍后再试。", 503);
   }
-  const fallbackPlan = generatePlan(profile);
-  const model = env.OPENAI_MODEL || "gpt-5.6";
+  const tier = await tierForUser(env, user.id);
+  const inputHash = await sha256(JSON.stringify(profile));
+  const cached = env.DB ? await env.DB.prepare(`SELECT result_json FROM ai_request_cache
+    WHERE user_id = ? AND task = 'training_plan' AND input_hash = ? AND expires_at > ?`)
+    .bind(user.id, inputHash, new Date().toISOString()).first<{ result_json: string }>() : null;
+  if (cached) {
+    try {
+      const result = JSON.parse(cached.result_json) as Record<string, unknown>;
+      await recordGenerationRun(env, {
+        userId: user.id,
+        status: "succeeded",
+        model: String(result.model || "cache"),
+        latencyMs: 0,
+        provider: String(result.provider || "cache"),
+        task: "training_plan",
+        cacheHit: true,
+      }).catch(() => undefined);
+      return json({ ...result, cached: true, persisted: true });
+    } catch { /* regenerate invalid cache */ }
+  }
+  const quota = await consumeCapability(env, user.id, "plan.generate");
+  if (!quota.ok) return errorJson("PLAN_LIMIT_REACHED", "本周期的 AI 计划额度已用完，可使用积分兑换或升级专业版。", 429);
+  const model = tier === "pro"
+    ? "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+    : "@cf/meta/llama-3.1-8b-instruct-fast";
   const startedAt = Date.now();
-  if (!env.OPENAI_API_KEY) {
-    await recordGenerationRun(env, { userId: user?.id || null, status: "failed", model, latencyMs: 0, errorCode: "AI_NOT_CONFIGURED" }).catch(() => undefined);
-    return json({ error: "AI_NOT_CONFIGURED", message: "AI 教练暂时离线，计划没有生成。", fallbackPlan }, 503);
+  if (!aiServices(env).planner) {
+    await refundCapability(env, user.id, "plan.generate");
+    await recordGenerationRun(env, {
+      userId: user.id, status: "failed", model, latencyMs: 0, errorCode: "AI_NOT_CONFIGURED",
+      task: "training_plan", provider: "none",
+    }).catch(() => undefined);
+    return errorJson("AI_NOT_CONFIGURED", "AI 教练尚未配置，计划没有生成，也不会消耗你的额度。", 503);
   }
   try {
-    const result = await generateLlmPlan(env, profile, user?.id);
-    const planId = user && env.DB ? await savePlan(env, user.id, profile, result.plan, result.source, result.model) : null;
+    const result = await generateLlmPlan(env, profile, user.id, tier);
+    const planId = env.DB ? await savePlan(env, user.id, profile, result.plan, result.source, result.model) : null;
+    const publicResult = {
+      plan: result.plan,
+      source: result.source,
+      provider: result.provider,
+      model: result.model,
+      requestId: result.requestId,
+      planId,
+    };
+    if (env.DB) {
+      const now = new Date();
+      await env.DB.prepare(`INSERT INTO ai_request_cache
+        (id, user_id, task, input_hash, result_json, provider, model, expires_at, created_at)
+        VALUES (?, ?, 'training_plan', ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, task, input_hash) DO UPDATE SET result_json=excluded.result_json,
+          provider=excluded.provider, model=excluded.model, expires_at=excluded.expires_at, created_at=excluded.created_at`)
+        .bind(crypto.randomUUID(), user.id, inputHash, JSON.stringify(publicResult), result.provider, result.model,
+          new Date(now.getTime() + 24 * 3600_000).toISOString(), now.toISOString()).run();
+    }
     await recordGenerationRun(env, {
-      userId: user?.id || null,
+      userId: user.id,
       status: "succeeded",
       model: result.model,
       latencyMs: Date.now() - startedAt,
@@ -231,27 +308,31 @@ async function planRequest(request: Request, env: WorkerEnv): Promise<Response> 
       inputTokens: result.usage.inputTokens,
       outputTokens: result.usage.outputTokens,
       reasoningTokens: result.usage.reasoningTokens,
+      task: "training_plan",
+      provider: result.provider,
+      estimatedCostUsd: result.estimatedCostUsd,
     }).catch(() => undefined);
-    return json({
-      plan: result.plan,
-      source: result.source,
-      model: result.model,
-      requestId: result.requestId,
-      planId,
-      persisted: Boolean(planId),
-    });
+    return json({ ...publicResult, quota, persisted: Boolean(planId) });
   } catch (error) {
+    await refundCapability(env, user.id, "plan.generate");
     const message = error instanceof Error ? error.message : "AI_UNKNOWN_ERROR";
     const errorCode = message.split(":")[0].slice(0, 80);
     console.error("plan_generation_failed", errorCode);
     await recordGenerationRun(env, {
-      userId: user?.id || null,
+      userId: user.id,
       status: "failed",
       model,
       latencyMs: Date.now() - startedAt,
       errorCode,
+      task: "training_plan",
+      provider: "router",
     }).catch(() => undefined);
-    return json({ error: "AI_GENERATION_FAILED", message: "这次计划没有通过完整校验，请稍后重新生成。", fallbackPlan }, 502);
+    const budgetLimited = errorCode === "AI_BUDGET_EXHAUSTED";
+    return errorJson(
+      budgetLimited ? "AI_BUDGET_EXHAUSTED" : "AI_GENERATION_FAILED",
+      budgetLimited ? "今日 AI 成本保护已触发，请稍后再试。" : "这次计划没有通过完整校验，额度已退回，请稍后重新生成。",
+      budgetLimited ? 429 : 502,
+    );
   }
 }
 
@@ -282,12 +363,19 @@ function measurementFrom(value: unknown): MeasurementInput | null {
 }
 
 function services(env: WorkerEnv) {
+  const ai = aiServices(env);
   return {
     database: Boolean(env.DB),
-    llm: Boolean(env.OPENAI_API_KEY),
+    storage: Boolean(env.R2),
+    planner: ai.planner,
+    vision: ai.vision && Boolean(env.R2),
+    llm: ai.planner,
     cmine: Boolean(env.CMINE_CLIENT_ID && env.CMINE_CLIENT_SECRET && env.SESSION_SECRET && env.DB),
-    rewardAds: Boolean(env.REWARD_AD_PROVIDER),
-    model: env.OPENAI_MODEL || "gpt-5.6",
+    foodData: foodDataConfigured(),
+    billing: stripeConfigured(env),
+    rewardAds: rewardAdsConfigured(env),
+    providers: ai.providers,
+    model: ai.providers.cloudflare ? "Cloudflare AI Router" : env.OPENAI_MODEL || env.AI_COMPAT_TEXT_MODEL || "not configured",
     reasoningEffort: env.OPENAI_REASONING_EFFORT || "medium",
   };
 }
@@ -313,6 +401,23 @@ async function handleAdmin(request: Request, env: WorkerEnv, url: URL): Promise<
   if (url.pathname === "/api/v1/admin/users" && request.method === "GET") {
     return json({ users: await adminUsers(env, url.searchParams.get("q") || "", Number(url.searchParams.get("limit") || 30)) });
   }
+  if (url.pathname === "/api/v1/admin/audit" && request.method === "GET") {
+    return json({ events: await adminAuditEvents(env, Number(url.searchParams.get("limit") || 100)) });
+  }
+  const aiRouteMatch = url.pathname.match(/^\/api\/v1\/admin\/ai-routes\/([^/]+)$/);
+  if (aiRouteMatch && request.method === "PATCH") {
+    const body = await request.json().catch(() => null) as { provider?: unknown; model?: unknown; enabled?: unknown } | null;
+    if (!body || !["cloudflare", "openai", "compatible"].includes(String(body.provider)) ||
+      typeof body.model !== "string" || body.model.length < 2 || body.model.length > 160 || typeof body.enabled !== "boolean") {
+      return errorJson("INVALID_AI_ROUTE", "模型路由配置无效。", 400);
+    }
+    const updated = await updateAiRoute(env, decodeURIComponent(aiRouteMatch[1]), {
+      provider: body.provider as "cloudflare" | "openai" | "compatible",
+      model: body.model,
+      enabled: body.enabled,
+    }, actor);
+    return updated ? json({ ok: true }) : errorJson("AI_ROUTE_NOT_FOUND", "没有找到该模型路由。", 404);
+  }
   const userMatch = url.pathname.match(/^\/api\/v1\/admin\/users\/([^/]+)$/);
   if (userMatch && request.method === "PATCH") {
     const body = await request.json().catch(() => null) as { status?: unknown } | null;
@@ -329,6 +434,10 @@ async function handleAdmin(request: Request, env: WorkerEnv, url: URL): Promise<
     if (body.key === "maintenance_mode" && typeof body.value !== "boolean") return errorJson("INVALID_SETTING_VALUE", "维护状态必须是布尔值。", 400);
     if ((body.key === "announcement" || body.key === "disclaimer_version") && (typeof body.value !== "string" || body.value.length > 300)) {
       return errorJson("INVALID_SETTING_VALUE", "设置内容无效。", 400);
+    }
+    if (!["announcement", "disclaimer_version", "maintenance_mode"].includes(body.key) &&
+      (typeof body.value !== "number" || !Number.isFinite(body.value) || body.value < 0 || body.value > 10000)) {
+      return errorJson("INVALID_SETTING_VALUE", "额度或预算必须是有效的非负数字。", 400);
     }
     await updateAdminSetting(env, body.key, body.value, actor);
     await recordAdminAudit(env, actor, "site.setting.update", "setting", body.key, { value: body.value });
@@ -350,6 +459,18 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
   if (request.method === "GET" && url.pathname === "/api/health") {
     return json({ ok: true, ...services(env) });
   }
+  if (request.method === "GET" && url.pathname === "/api/v1/site") {
+    return json({
+      announcement: await settingValue<string>(env, "announcement", ""),
+      disclaimerVersion: await settingValue<string>(env, "disclaimer_version", "health-v2"),
+      capabilities: {
+        planner: services(env).planner,
+        vision: services(env).vision,
+        billing: services(env).billing,
+        rewardAds: services(env).rewardAds,
+      },
+    });
+  }
   if (request.method === "GET" && url.pathname === "/api/auth/config") {
     return json({ cmine: services(env).cmine });
   }
@@ -365,6 +486,158 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
   if (request.method === "POST" && url.pathname === "/api/auth/logout") {
     await deleteSession(request, env);
     return json({ ok: true }, 200, { "set-cookie": cookie("cmine_fit_session", "", request, 0) });
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/v1/billing/catalog") {
+    return json(billingCatalog(env));
+  }
+  if (request.method === "POST" && url.pathname === "/api/webhooks/stripe") {
+    try {
+      const rawBody = await request.text();
+      const event = await verifyStripeWebhook(env, rawBody, request.headers.get("stripe-signature"));
+      return json({ ok: true, ...(await processStripeEvent(env, event)) });
+    } catch (error) {
+      const code = error instanceof Error ? error.message.split(":")[0] : "STRIPE_WEBHOOK_FAILED";
+      return errorJson(code, "Stripe 事件未通过验证或处理失败。", code.includes("SIGNATURE") ? 400 : 500);
+    }
+  }
+  if ((request.method === "GET" || request.method === "POST") && url.pathname === "/api/webhooks/admob") {
+    try {
+      return json({ ok: true, ...(await processAdmobReward(request, env)) });
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "ADMOB_CALLBACK_FAILED";
+      return errorJson(code, code === "REWARD_AD_NOT_CONFIGURED" ? "激励广告回调尚未配置，未发放任何积分。" : "广告奖励回调验证失败。", code === "REWARD_AD_NOT_CONFIGURED" ? 503 : 400);
+    }
+  }
+  if (request.method === "GET" && url.pathname === "/api/v1/entitlements") {
+    const user = await requireUser(request, env);
+    return user instanceof Response ? user : json(await entitlementSnapshot(env, user.id));
+  }
+  if (request.method === "GET" && url.pathname === "/api/v1/usage") {
+    const user = await requireUser(request, env);
+    return user instanceof Response ? user : json(await usageForUser(env, user.id));
+  }
+  if (request.method === "POST" && url.pathname === "/api/v1/billing/checkout") {
+    const user = await requireUser(request, env);
+    if (user instanceof Response) return user;
+    const body = await request.json().catch(() => null) as { interval?: unknown } | null;
+    if (body?.interval !== "monthly" && body?.interval !== "yearly") return errorJson("INVALID_INTERVAL", "请选择月付或年付。", 400);
+    try {
+      return json(await createCheckout(env, user, body.interval, publicOrigin(request, env)), 201);
+    } catch (error) {
+      const code = error instanceof Error ? error.message.split(":")[0] : "CHECKOUT_FAILED";
+      return errorJson(code, code === "STRIPE_NOT_CONFIGURED" ? "支付服务尚未配置。" : "暂时无法创建结账页面。", code === "STRIPE_NOT_CONFIGURED" ? 503 : 502);
+    }
+  }
+  if (request.method === "POST" && url.pathname === "/api/v1/billing/portal") {
+    const user = await requireUser(request, env);
+    if (user instanceof Response) return user;
+    try {
+      return json(await createPortal(env, user, publicOrigin(request, env)), 201);
+    } catch (error) {
+      const code = error instanceof Error ? error.message.split(":")[0] : "PORTAL_FAILED";
+      return errorJson(code, code === "STRIPE_NOT_CONFIGURED" ? "支付服务尚未配置。" : "暂时无法打开订阅管理。", code === "STRIPE_NOT_CONFIGURED" ? 503 : 502);
+    }
+  }
+  if (request.method === "POST" && url.pathname === "/api/v1/points/redeem") {
+    const user = await requireUser(request, env);
+    if (user instanceof Response) return user;
+    const body = await request.json().catch(() => null) as { reward?: unknown } | null;
+    if (body?.reward !== "meal_scan" && body?.reward !== "plan_refresh") return errorJson("INVALID_REWARD", "兑换项目无效。", 400);
+    try {
+      return json(await redeemPoints(env, user.id, body.reward), 201);
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "REDEMPTION_FAILED";
+      return errorJson(code, code === "INSUFFICIENT_POINTS" ? "积分不足。" : "暂时无法完成兑换。", code === "INSUFFICIENT_POINTS" ? 409 : 500);
+    }
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/v1/meals/upload") {
+    const user = await requireUser(request, env);
+    if (user instanceof Response) return user;
+    const form = await request.formData().catch(() => null);
+    const file = form?.get("image");
+    const mealType = String(form?.get("mealType") || "meal").slice(0, 30);
+    const eatenAtValue = String(form?.get("eatenAt") || new Date().toISOString());
+    const eatenAt = new Date(eatenAtValue);
+    if (!(file instanceof File) || !Number.isFinite(eatenAt.getTime())) return errorJson("INVALID_MEAL_UPLOAD", "请选择有效的饭菜图片和时间。", 400);
+    try {
+      return json(await uploadMealImage(env, user, file, mealType, eatenAt.toISOString()), 201);
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "MEAL_UPLOAD_FAILED";
+      const status = code === "MEAL_STORAGE_NOT_CONFIGURED" ? 503 : 400;
+      return errorJson(code, status === 503 ? "图片存储尚未配置。" : "图片格式、大小或内容无效。", status);
+    }
+  }
+  if (request.method === "POST" && url.pathname === "/api/v1/meals/analyze") {
+    const user = await requireUser(request, env);
+    if (user instanceof Response) return user;
+    const body = await request.json().catch(() => null) as { mealId?: unknown } | null;
+    if (typeof body?.mealId !== "string") return errorJson("INVALID_MEAL", "缺少餐食记录。", 400);
+    try {
+      return json(await analyzeMeal(env, user, body.mealId), 201);
+    } catch (error) {
+      const code = error instanceof Error ? error.message.split(":")[0] : "MEAL_ANALYSIS_FAILED";
+      const status = code === "MEAL_SCAN_LIMIT_REACHED" || code === "AI_BUDGET_EXHAUSTED" ? 429 :
+        code.includes("NOT_FOUND") ? 404 : code.includes("NOT_CONFIGURED") ? 503 : 502;
+      const message = code === "MEAL_SCAN_LIMIT_REACHED" ? "本周期的饭菜识别额度已用完，可使用积分兑换或升级专业版。" :
+        code === "AI_BUDGET_EXHAUSTED" ? "今日 AI 成本保护已触发，请稍后再试。" :
+          code.includes("NOT_CONFIGURED") ? "饭菜识别模型尚未配置。" : "这张图片暂时无法可靠识别，额度已退回。";
+      return errorJson(code, message, status);
+    }
+  }
+  const mealConfirmMatch = url.pathname.match(/^\/api\/v1\/meals\/([^/]+)\/confirm$/);
+  if (mealConfirmMatch && request.method === "POST") {
+    const user = await requireUser(request, env);
+    if (user instanceof Response) return user;
+    const body = await request.json().catch(() => null) as Parameters<typeof confirmMeal>[3] | null;
+    if (!body || !Array.isArray(body.items)) return errorJson("INVALID_MEAL_ITEMS", "请确认餐食和份量。", 400);
+    try {
+      return json(await confirmMeal(env, user, decodeURIComponent(mealConfirmMatch[1]), body), 201);
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "MEAL_CONFIRM_FAILED";
+      return errorJson(code, code === "NUTRITION_REFERENCE_REQUIRED" ? "部分食物缺少营养数据，请选择数据库结果或手动填写。" : "餐食内容无效。", code === "MEAL_NOT_FOUND" ? 404 : 400);
+    }
+  }
+  if (url.pathname === "/api/v1/meals" && request.method === "GET") {
+    const user = await requireUser(request, env);
+    return user instanceof Response ? user : json({ meals: await mealsForUser(env, user.id, Number(url.searchParams.get("limit") || 30)) });
+  }
+  if (url.pathname === "/api/v1/meals" && request.method === "POST") {
+    const user = await requireUser(request, env);
+    if (user instanceof Response) return user;
+    const body = await request.json().catch(() => null) as Parameters<typeof createManualMeal>[2] | null;
+    if (!body || !Array.isArray(body.items) || typeof body.mealType !== "string" || typeof body.eatenAt !== "string") {
+      return errorJson("INVALID_MEAL_ITEMS", "请填写完整的餐食信息。", 400);
+    }
+    try { return json(await createManualMeal(env, user, body), 201); }
+    catch (error) { return errorJson(error instanceof Error ? error.message : "MEAL_CREATE_FAILED", "餐食内容无效。", 400); }
+  }
+  if (url.pathname === "/api/v1/nutrition/daily" && request.method === "GET") {
+    const user = await requireUser(request, env);
+    if (user instanceof Response) return user;
+    const date = url.searchParams.get("date") || new Date().toISOString().slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return errorJson("INVALID_DATE", "日期格式无效。", 400);
+    return json(await dailyNutrition(env, user.id, date));
+  }
+  if (url.pathname === "/api/v1/foods/search" && request.method === "GET") {
+    const user = await requireUser(request, env);
+    if (user instanceof Response) return user;
+    return json({ foods: await searchFoods(env, url.searchParams.get("q") || "") });
+  }
+  const barcodeMatch = url.pathname.match(/^\/api\/v1\/foods\/barcode\/([^/]+)$/);
+  if (barcodeMatch && request.method === "GET") {
+    const user = await requireUser(request, env);
+    if (user instanceof Response) return user;
+    const food = await foodByBarcode(env, decodeURIComponent(barcodeMatch[1]));
+    return food ? json({ food }) : errorJson("FOOD_NOT_FOUND", "食品数据库中没有找到该条码。", 404);
+  }
+  const mealImageMatch = url.pathname.match(/^\/api\/v1\/meal-images\/([^/]+)$/);
+  if (mealImageMatch && request.method === "DELETE") {
+    const user = await requireUser(request, env);
+    if (user instanceof Response) return user;
+    try { await deleteMealImage(env, user.id, decodeURIComponent(mealImageMatch[1])); return json({ ok: true }); }
+    catch { return errorJson("MEAL_IMAGE_NOT_FOUND", "没有找到该图片。", 404); }
   }
 
   if (request.method === "POST" && (url.pathname === "/api/plans" || url.pathname === "/api/v1/plans")) {

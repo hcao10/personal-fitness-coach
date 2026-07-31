@@ -1,6 +1,8 @@
 import type { CoachPlan, Profile } from "../app/lib/coach";
 import type { D1Database, WorkerEnv } from "./platform";
-import { parseCookies, sha256 } from "./security";
+import { decryptSecret, encryptSecret, parseCookies, sha256 } from "./security";
+import { entitlementSnapshot } from "./product";
+import { dailyNutrition, mealsForUser } from "./nutrition";
 
 export type StoredUser = {
   id: string;
@@ -82,24 +84,122 @@ export async function upsertCmineUser(env: WorkerEnv, identity: {
   return user;
 }
 
-export async function createSession(env: WorkerEnv, userId: string, rawToken: string): Promise<void> {
+export async function createSession(env: WorkerEnv, userId: string, rawToken: string, cmine?: {
+  accessToken: string;
+  refreshToken?: string | null;
+  expiresIn?: number | null;
+}): Promise<void> {
   const db = requireDb(env);
   const now = new Date();
   await db.prepare("DELETE FROM sessions WHERE expires_at <= ?").bind(now.toISOString()).run();
-  await db.prepare("INSERT INTO sessions (id_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)")
-    .bind(await sha256(rawToken), userId, now.toISOString(), new Date(now.getTime() + 7 * 86400_000).toISOString()).run();
+  const secret = env.SESSION_SECRET;
+  await db.prepare(`INSERT INTO sessions
+    (id_hash, user_id, cmine_access_token, cmine_refresh_token, cmine_token_expires_at, cmine_checked_at, created_at, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(
+      await sha256(rawToken),
+      userId,
+      cmine && secret ? await encryptSecret(cmine.accessToken, secret) : null,
+      cmine?.refreshToken && secret ? await encryptSecret(cmine.refreshToken, secret) : null,
+      cmine ? new Date(now.getTime() + Math.max(60, Number(cmine.expiresIn || 3600)) * 1000).toISOString() : null,
+      cmine ? now.toISOString() : null,
+      now.toISOString(),
+      new Date(now.getTime() + 7 * 86400_000).toISOString(),
+    ).run();
 }
 
 export async function getSessionUser(request: Request, env: WorkerEnv): Promise<StoredUser | null> {
   if (!env.DB) return null;
   const token = parseCookies(request).cmine_fit_session;
   if (!token) return null;
+  const idHash = await sha256(token);
   const row = await env.DB.prepare(`SELECT u.id, u.cmine_sub AS sub, u.email, u.name, u.picture, u.role,
-      u.cmine_role AS cmineRole, u.status, u.locale, u.timezone
+      u.cmine_role AS cmineRole, u.status, u.locale, u.timezone,
+      s.cmine_access_token AS cmineAccessToken, s.cmine_refresh_token AS cmineRefreshToken,
+      s.cmine_token_expires_at AS cmineTokenExpiresAt, s.cmine_checked_at AS cmineCheckedAt
     FROM sessions s JOIN users u ON u.id = s.user_id
     WHERE s.id_hash = ? AND s.expires_at > ? AND u.status = 'active'`)
-    .bind(await sha256(token), new Date().toISOString()).first<StoredUser>();
-  return row || null;
+    .bind(idHash, new Date().toISOString()).first<StoredUser & {
+      cmineAccessToken: string | null;
+      cmineRefreshToken: string | null;
+      cmineTokenExpiresAt: string | null;
+      cmineCheckedAt: string | null;
+    }>();
+  if (!row) return null;
+  const shouldCheck = row.cmineAccessToken && env.SESSION_SECRET && env.CMINE_CLIENT_ID && env.CMINE_CLIENT_SECRET &&
+    (!row.cmineCheckedAt || Date.now() - new Date(row.cmineCheckedAt).getTime() > 5 * 60_000);
+  if (shouldCheck) {
+    const issuer = (env.CMINE_ISSUER || "https://identity.chwjh.com").replace(/\/$/, "");
+    let accessToken = await decryptSecret(row.cmineAccessToken, env.SESSION_SECRET!);
+    const tokenExpired = !row.cmineTokenExpiresAt || new Date(row.cmineTokenExpiresAt).getTime() < Date.now() + 120_000;
+    if (tokenExpired && !row.cmineRefreshToken) {
+      await env.DB.prepare("DELETE FROM sessions WHERE id_hash = ?").bind(idHash).run();
+      return null;
+    }
+    if (tokenExpired && row.cmineRefreshToken) {
+      const refreshToken = await decryptSecret(row.cmineRefreshToken, env.SESSION_SECRET!);
+      if (refreshToken) {
+        const refreshResponse = await fetch(`${issuer}/oauth/token`, {
+          method: "POST",
+          headers: {
+            authorization: `Basic ${btoa(`${env.CMINE_CLIENT_ID}:${env.CMINE_CLIENT_SECRET}`)}`,
+            "content-type": "application/x-www-form-urlencoded",
+            accept: "application/json",
+          },
+          body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: env.CMINE_CLIENT_ID! }),
+        }).catch(() => null);
+        const refreshed = await refreshResponse?.json().catch(() => null) as {
+          access_token?: string; refresh_token?: string; expires_in?: number;
+        } | null;
+        if (refreshResponse?.ok && refreshed?.access_token) {
+          accessToken = refreshed.access_token;
+          await env.DB.prepare(`UPDATE sessions SET cmine_access_token=?, cmine_refresh_token=?,
+            cmine_token_expires_at=?, cmine_checked_at=? WHERE id_hash=?`)
+            .bind(
+              await encryptSecret(refreshed.access_token, env.SESSION_SECRET!),
+              refreshed.refresh_token ? await encryptSecret(refreshed.refresh_token, env.SESSION_SECRET!) : row.cmineRefreshToken,
+              new Date(Date.now() + Math.max(60, Number(refreshed.expires_in || 3600)) * 1000).toISOString(),
+              new Date().toISOString(),
+              idHash,
+            ).run();
+        } else if (refreshResponse && !refreshResponse.ok) {
+          await env.DB.prepare("DELETE FROM sessions WHERE id_hash = ?").bind(idHash).run();
+          return null;
+        }
+      }
+    }
+    if (accessToken && !tokenExpired) {
+      const response = await fetch(`${issuer}/oauth/introspect`, {
+        method: "POST",
+        headers: {
+          authorization: `Basic ${btoa(`${env.CMINE_CLIENT_ID}:${env.CMINE_CLIENT_SECRET}`)}`,
+          "content-type": "application/x-www-form-urlencoded",
+          accept: "application/json",
+        },
+        body: new URLSearchParams({ token: accessToken, client_id: env.CMINE_CLIENT_ID! }),
+      }).catch(() => null);
+      const status = await response?.json().catch(() => null) as { active?: boolean } | null;
+      if (response?.ok && status?.active === false) {
+        await env.DB.prepare("DELETE FROM sessions WHERE id_hash = ?").bind(idHash).run();
+        return null;
+      }
+      if (response?.ok && status?.active === true) {
+        await env.DB.prepare("UPDATE sessions SET cmine_checked_at = ? WHERE id_hash = ?").bind(new Date().toISOString(), idHash).run();
+      }
+    }
+  }
+  return {
+    id: row.id,
+    sub: row.sub,
+    email: row.email,
+    name: row.name,
+    picture: row.picture,
+    role: row.role,
+    cmineRole: row.cmineRole,
+    status: row.status,
+    locale: row.locale,
+    timezone: row.timezone,
+  };
 }
 
 export async function deleteSession(request: Request, env: WorkerEnv): Promise<void> {
@@ -245,13 +345,17 @@ export async function progressForUser(env: WorkerEnv, userId: string) {
 }
 
 export async function accountSnapshot(env: WorkerEnv, user: StoredUser) {
-  const [profile, plans, measurements, progress, points, ledger] = await Promise.all([
+  const today = new Date().toISOString().slice(0, 10);
+  const [profile, plans, measurements, progress, points, ledger, product, meals, nutritionToday] = await Promise.all([
     profileForUser(env, user.id),
     listPlansForUser(env, user.id, 12),
     measurementsForUser(env, user.id, 24),
     progressForUser(env, user.id),
     pointsForUser(env, user.id),
     pointLedgerForUser(env, user.id, 20),
+    entitlementSnapshot(env, user.id),
+    mealsForUser(env, user.id, 8),
+    dailyNutrition(env, user.id, today),
   ]);
   return {
     user: { sub: user.sub, email: user.email, name: user.name, picture: user.picture, locale: user.locale, timezone: user.timezone },
@@ -262,6 +366,9 @@ export async function accountSnapshot(env: WorkerEnv, user: StoredUser) {
     progress,
     points,
     pointLedger: ledger,
+    product,
+    meals,
+    nutritionToday,
   };
 }
 
@@ -275,13 +382,19 @@ export async function recordGenerationRun(env: WorkerEnv, input: {
   inputTokens?: number | null;
   outputTokens?: number | null;
   reasoningTokens?: number | null;
+  task?: string;
+  provider?: string;
+  estimatedCostUsd?: number;
+  cacheHit?: boolean;
 }): Promise<void> {
   if (!env.DB) return;
   await env.DB.prepare(`INSERT INTO generation_runs
-    (id, user_id, status, model, latency_ms, request_id, error_code, input_tokens, output_tokens, reasoning_tokens, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    (id, user_id, status, model, latency_ms, request_id, error_code, input_tokens, output_tokens, reasoning_tokens,
+      task, provider, estimated_cost_usd, cache_hit, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .bind(crypto.randomUUID(), input.userId, input.status, input.model, input.latencyMs, input.requestId || null,
       input.errorCode || null, input.inputTokens ?? null, input.outputTokens ?? null, input.reasoningTokens ?? null,
+      input.task || "training_plan", input.provider || "unknown", input.estimatedCostUsd || 0, input.cacheHit ? 1 : 0,
       new Date().toISOString()).run();
 }
 
@@ -293,7 +406,11 @@ export async function settingValue<T>(env: WorkerEnv, key: string, fallback: T):
 
 export async function adminOverview(env: WorkerEnv) {
   const db = requireDb(env);
-  const [users, activeUsers, plans, consents, sessions, completions, measurements, generations, failedGenerations, recentUsers, recentPlans, recentRuns] = await Promise.all([
+  const [
+    users, activeUsers, plans, consents, sessions, completions, measurements, generations, failedGenerations,
+    recentUsers, recentPlans, recentRuns, subscriptions, revenue, failedBilling, meals, mealAnalyses,
+    failedMealAnalyses, lowConfidenceMeals, aiCost, recentBilling, recentAudits, routes, redemptions,
+  ] = await Promise.all([
     db.prepare("SELECT COUNT(*) AS value FROM users").first<{ value: number }>(),
     db.prepare("SELECT COUNT(*) AS value FROM users WHERE status = 'active'").first<{ value: number }>(),
     db.prepare("SELECT COUNT(*) AS value FROM plans").first<{ value: number }>(),
@@ -310,6 +427,21 @@ export async function adminOverview(env: WorkerEnv) {
     db.prepare(`SELECT id, status, model, latency_ms, request_id, error_code, created_at
       FROM generation_runs ORDER BY created_at DESC LIMIT 12`)
       .all<{ id: string; status: string; model: string; latency_ms: number; request_id: string | null; error_code: string | null; created_at: string }>(),
+    db.prepare("SELECT COUNT(*) AS value FROM subscriptions WHERE status IN ('active', 'trialing')").first<{ value: number }>(),
+    db.prepare("SELECT COALESCE(SUM(amount_total), 0) AS value FROM billing_events WHERE event_type = 'invoice.paid' AND status = 'processed'").first<{ value: number }>(),
+    db.prepare("SELECT COUNT(*) AS value FROM billing_events WHERE status = 'failed'").first<{ value: number }>(),
+    db.prepare("SELECT COUNT(*) AS value FROM meal_logs WHERE status = 'confirmed'").first<{ value: number }>(),
+    db.prepare("SELECT COUNT(*) AS value FROM meal_analysis_runs").first<{ value: number }>(),
+    db.prepare("SELECT COUNT(*) AS value FROM meal_analysis_runs WHERE status = 'failed'").first<{ value: number }>(),
+    db.prepare("SELECT COUNT(*) AS value FROM meal_analysis_runs WHERE confidence IS NOT NULL AND confidence < 0.7").first<{ value: number }>(),
+    db.prepare("SELECT COALESCE(SUM(estimated_cost_usd), 0) AS value FROM generation_runs").first<{ value: number }>(),
+    db.prepare(`SELECT event_id, event_type, object_id, amount_total, currency, status, error_code, received_at
+      FROM billing_events ORDER BY received_at DESC LIMIT 12`).all<Record<string, unknown>>(),
+    db.prepare(`SELECT id, admin_email, action, target_type, target_id, detail_json, created_at
+      FROM admin_audit_events ORDER BY created_at DESC LIMIT 20`).all<Record<string, unknown>>(),
+    db.prepare("SELECT id, task, tier, priority, provider, model, enabled, updated_at FROM ai_routes ORDER BY task, tier, priority")
+      .all<Record<string, unknown>>(),
+    db.prepare("SELECT COUNT(*) AS value FROM point_redemptions").first<{ value: number }>(),
   ]);
   const generationCount = Number(generations?.value || 0);
   const failureCount = Number(failedGenerations?.value || 0);
@@ -324,6 +456,17 @@ export async function adminOverview(env: WorkerEnv) {
       measurements: Number(measurements?.value || 0),
       generations: generationCount,
       generationSuccessRate: generationCount ? Math.round(((generationCount - failureCount) / generationCount) * 100) : 0,
+      subscriptions: Number(subscriptions?.value || 0),
+      revenueUsd: Number(revenue?.value || 0) / 100,
+      failedBilling: Number(failedBilling?.value || 0),
+      meals: Number(meals?.value || 0),
+      mealAnalyses: Number(mealAnalyses?.value || 0),
+      mealAnalysisSuccessRate: Number(mealAnalyses?.value || 0)
+        ? Math.round(((Number(mealAnalyses?.value || 0) - Number(failedMealAnalyses?.value || 0)) / Number(mealAnalyses?.value || 0)) * 100)
+        : 0,
+      lowConfidenceMeals: Number(lowConfidenceMeals?.value || 0),
+      aiCostUsd: Number(Number(aiCost?.value || 0).toFixed(4)),
+      redemptions: Number(redemptions?.value || 0),
     },
     recentUsers: (recentUsers.results || []).map((row) => ({ ...row, createdAt: row.created_at })),
     recentPlans: (recentPlans.results || []).map((row) => ({ id: row.id, userId: row.user_id, source: row.source, model: row.model, createdAt: row.created_at })),
@@ -331,6 +474,12 @@ export async function adminOverview(env: WorkerEnv) {
       id: row.id, status: row.status, model: row.model, latencyMs: row.latency_ms,
       requestId: row.request_id, errorCode: row.error_code, createdAt: row.created_at,
     })),
+    recentBilling: recentBilling.results || [],
+    recentAudits: (recentAudits.results || []).map((row) => ({
+      ...row,
+      detail: parseJson<unknown>(row.detail_json as string | null),
+    })),
+    aiRoutes: (routes.results || []).map((row) => ({ ...row, enabled: Boolean(row.enabled) })),
   };
 }
 
@@ -380,6 +529,26 @@ export async function recordAdminAudit(env: WorkerEnv, adminEmail: string, actio
     .bind(crypto.randomUUID(), adminEmail, action, targetType, targetId, JSON.stringify(detail), new Date().toISOString()).run();
 }
 
+export async function adminAuditEvents(env: WorkerEnv, limit = 100) {
+  const rows = await requireDb(env).prepare(`SELECT id, admin_email, action, target_type, target_id, detail_json, created_at
+    FROM admin_audit_events ORDER BY created_at DESC LIMIT ?`).bind(Math.min(200, Math.max(1, limit))).all<Record<string, unknown>>();
+  return (rows.results || []).map((row) => ({ ...row, detail: parseJson<unknown>(row.detail_json as string | null) }));
+}
+
+export async function updateAiRoute(env: WorkerEnv, routeId: string, input: {
+  provider: "cloudflare" | "openai" | "compatible";
+  model: string;
+  enabled: boolean;
+}, adminEmail: string): Promise<boolean> {
+  const db = requireDb(env);
+  const existing = await db.prepare("SELECT id FROM ai_routes WHERE id = ?").bind(routeId).first<{ id: string }>();
+  if (!existing) return false;
+  await db.prepare("UPDATE ai_routes SET provider = ?, model = ?, enabled = ?, updated_at = ? WHERE id = ?")
+    .bind(input.provider, input.model.slice(0, 160), input.enabled ? 1 : 0, new Date().toISOString(), routeId).run();
+  await recordAdminAudit(env, adminEmail, "ai.route.update", "ai_route", routeId, input);
+  return true;
+}
+
 export async function exportUserData(env: WorkerEnv, user: StoredUser) {
   const db = requireDb(env);
   const [snapshot, consents, workouts, completions] = await Promise.all([
@@ -395,5 +564,9 @@ export async function exportUserData(env: WorkerEnv, user: StoredUser) {
 }
 
 export async function deleteUserData(env: WorkerEnv, userId: string): Promise<void> {
+  if (env.DB && env.R2) {
+    const images = await env.DB.prepare("SELECT object_key FROM meal_images WHERE user_id = ?").bind(userId).all<{ object_key: string }>();
+    await Promise.all((images.results || []).map((image) => env.R2!.delete(image.object_key).catch(() => undefined)));
+  }
   await requireDb(env).prepare("DELETE FROM users WHERE id = ?").bind(userId).run();
 }

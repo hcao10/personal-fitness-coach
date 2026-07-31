@@ -1,17 +1,21 @@
 # Cmine Fit
 
-Cmine Fit 是一套包含自主轻量版与专业增强版的 AI 健身教练产品。当前仓库已经不是纯前端演示：它包含 Cloudflare Worker API、D1 数据库迁移、服务端身份会话，以及通过 OpenAI Responses API 生成并校验训练计划的完整链路。
+Cmine Fit 是一套包含自主轻量版与专业增强版的 AI 健身教练产品。当前仓库包含 Cloudflare Worker API、D1/R2 数据、服务端身份会话、可切换 AI 路由、训练与营养记录、权益、账单和管理控制台，不是纯前端演示。
 
 ## 已实现
 
-- Cloudflare D1：用户、会话、训练档案、AI 计划、身体测量、训练反馈、免责确认、积分账本、生成记录与管理审计
-- Cmine ID：Confidential Client、Authorization Code + PKCE S256、JWKS 签名验证、`iss`/`aud`/`exp`/`sub` 校验、已验证邮箱、哈希会话标识与 HttpOnly Cookie
-- AI 计划：OpenAI Responses API + `gpt-5.6` + Structured Outputs，模型编排一周动作、组次、休息、安排理由、教练提醒与饮食建议
+- Cloudflare D1/R2：用户、会话、训练档案、AI 计划、测量、训练反馈、餐食、图片、权益、用量、账单事件、积分、生成记录与管理审计
+- Cmine ID：Confidential Client、Authorization Code + PKCE S256、JWKS 签名验证、令牌撤销联动、哈希会话标识与 HttpOnly Cookie
+- 可切换 AI：Cloudflare Workers AI 为默认低成本路由；同时支持 OpenAI Responses API 与任意 OpenAI-compatible/Qwen/Ollama/vLLM 服务
+- 成本控制：按能力计量、30 天额度、24 小时同输入复用、日/月预算硬限制、失败重试和一次供应商升级
 - 安全规则：BMR、TDEE、热量、宏量营养与周期由确定性代码计算；模型只能从允许的动作库选择，服务端复核器械、训练日、组次、次数和休息范围
-- 用户中心：今日训练、计划历史、身体资料、测量趋势、完成率、连续训练、积分流水、数据导出与账号删除
-- 管理后台：用户与计划指标、AI 成功率和错误、用户停用/恢复、服务状态、免责声明与功能开关、操作审计
+- 饮食记录：拍照候选识别、条码扫描、Open Food Facts/USDA 搜索、份量确认和确定性营养计算；不把照片估计伪装成精确热量
+- Stripe：Checkout、Customer Portal、签名 Webhook、事件幂等、订阅乱序保护与能力权益；未配置时购买入口隐藏
+- 用户中心：今日训练、RPE/疼痛反馈、计划历史、身体趋势、营养汇总、会员与额度、积分流水、数据导出与账号删除
+- 管理后台：用户与留存、订阅与退款、AI 成本/延迟/失败切换、饭菜识别质量、模型路由、预算额度、公告和审计
 - PWA：移动端导航、Web App Manifest 与可安装能力
-- 契约测试：覆盖无密钥状态、跨站写入、管理员权限、输入校验、LLM 结构化响应、训练周表改写和 D1 数据表
+- 原生 App 接口：共享 API、Cmine PKCE、权益、餐食和训练记录接口已与 Web 解耦，供后续 Expo/React Native、RevenueCat、HealthKit/Health Connect 使用
+- 契约测试：覆盖无密钥状态、跨站写入、管理员权限、AI 路由、结构化响应、支付签名与营养确认边界
 
 未配置外部凭据时，产品不会伪装成已经调用 AI 或已经登录。完整计划只在 LLM 成功生成并通过服务端校验后展示。
 
@@ -35,6 +39,13 @@ Cmine Fit 是一套包含自主轻量版与专业增强版的 AI 健身教练产
 - `OPENAI_API_KEY`：OpenAI API 密钥
 - `OPENAI_MODEL`：默认 `gpt-5.6`
 - `OPENAI_REASONING_EFFORT`：默认 `medium`
+- `CLOUDFLARE_AI_GATEWAY_URL` / `CLOUDFLARE_AI_GATEWAY_TOKEN`：内部 Workers AI binding 网关；生产默认路由
+- `AI_COMPAT_BASE_URL` / `AI_COMPAT_API_KEY`：可选 OpenAI-compatible 或自托管 Qwen/Ollama/vLLM
+- `AI_COMPAT_TEXT_MODEL` / `AI_COMPAT_VISION_MODEL`：兼容服务的文本与视觉模型名
+- `USDA_API_KEY`：可选；未配置时仍使用 Open Food Facts
+- `STRIPE_SECRET_KEY`、`STRIPE_WEBHOOK_SECRET`、`STRIPE_PRICE_MONTHLY`、`STRIPE_PRICE_YEARLY`：启用真实 Web 订阅
+- `STRIPE_TAX_ENABLED`：是否让 Stripe Checkout 自动计税
+- `ADMOB_SSV_KEY_URL`：激励广告服务器签名验证密钥来源
 - `CMINE_ISSUER`：默认 `https://identity.chwjh.com`
 - `CMINE_CLIENT_ID`：Cmine ID 应用 client_id
 - `CMINE_CLIENT_SECRET`：Confidential Client 密钥
@@ -46,8 +57,9 @@ Cmine ID 需精确登记每个生产域名的回调：
 
     https://fit.chwjh.com/api/auth/cmine/callback
 
-生产健康检查为 `/api/health`。正式启用前要求 `database`、`llm`、`cmine`
-为 `true`；广告尚未接入时 `rewardAds` 保持 `false`。
+生产健康检查为 `/api/health`，分别报告 `database`、`storage`、`cmine`、
+`planner`、`vision`、`foodData`、`billing` 和 `rewardAds`。广告尚未接入时
+`rewardAds` 保持 `false`，用户端也不会显示入口。
 
 ## 两种产品路径
 
@@ -55,9 +67,11 @@ Cmine ID 需精确登记每个生产域名的回调：
 |---|---:|---:|
 | 自托管 | ✓ | — |
 | 基础指标与安全规则 | ✓ | ✓ |
-| LLM 训练计划 | 可接本地或兼容模型 | OpenAI 结构化生成 |
+| LLM 训练计划 | 可接本地或兼容模型 | 可切换路由与结构化生成 |
 | Cmine ID 与服务端会话 | 可选 | ✓ |
 | 档案与计划历史 | 可选 | D1 持久化 |
+| 饭菜识别与营养记录 | 可自行接模型 | 视觉候选 + 数据库计算 |
+| 用量、权益与账单 | — | ✓ |
 | 管理与服务状态 | — | ✓ |
 
 无状态规则已抽离到 [`packages/coach-core`](packages/coach-core)，该包按

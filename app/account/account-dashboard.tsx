@@ -31,6 +31,24 @@ type AccountData = {
   progress: { completedExercises: number; completedWorkouts: number; latestMeasurement: Measurement | null };
   points: number;
   pointLedger: { id: string; delta: number; reason: string; createdAt: string }[];
+  product: {
+    membership: {
+      tier: "free" | "pro";
+      name: string;
+      status: string;
+      currentPeriodEnd: string | null;
+      cancelAtPeriodEnd: boolean;
+      provider: string | null;
+    };
+    capabilities: string[];
+    usage: {
+      period: string;
+      tier: "free" | "pro";
+      capabilities: Record<string, { used: number; bonus: number; limit: number; remaining: number }>;
+    };
+  };
+  nutritionToday: { meals: number; calories: number; proteinG: number; carbsG: number; fatG: number };
+  meals: { id: string; mealType: string; eatenAt: string; calories: number; items: { name: string }[] }[];
 };
 
 const goals: { value: Profile["goal"]; label: string }[] = [
@@ -53,11 +71,21 @@ export default function AccountDashboard() {
   const [savingProfile, setSavingProfile] = useState(false);
   const [measurement, setMeasurement] = useState({ weightKg: "", bodyFatPct: "", waistCm: "", armCm: "", note: "" });
   const [savingMeasurement, setSavingMeasurement] = useState(false);
+  const [catalogConfigured, setCatalogConfigured] = useState(false);
+  const [feedback, setFeedback] = useState({ durationMinutes: 45, rpe: 7, pain: false, notes: "" });
+  const [savingFeedback, setSavingFeedback] = useState(false);
   const [notice, setNotice] = useState("");
 
   const loadAccount = async () => {
     setLoading(true);
-    const response = await fetch("/api/v1/me", { cache: "no-store" }).catch(() => null);
+    const [response, catalogResponse] = await Promise.all([
+      fetch("/api/v1/me", { cache: "no-store" }).catch(() => null),
+      fetch("/api/v1/billing/catalog", { cache: "no-store" }).catch(() => null),
+    ]);
+    if (catalogResponse?.ok) {
+      const catalog = await catalogResponse.json().catch(() => null) as { configured?: boolean } | null;
+      setCatalogConfigured(Boolean(catalog?.configured));
+    }
     if (!response?.ok) {
       setSignedOut(true);
       setData(null);
@@ -129,6 +157,39 @@ export default function AccountDashboard() {
     else setNotice("暂时无法删除账号数据，请稍后重试。");
   };
 
+  const saveFeedback = async () => {
+    if (!data?.latestPlan?.id) return setNotice("还没有可以记录反馈的训练计划。");
+    setSavingFeedback(true);
+    const response = await fetch(`/api/v1/workouts/${encodeURIComponent(data.latestPlan.id)}/feedback`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ dayIndex: today, ...feedback }),
+    });
+    setSavingFeedback(false);
+    if (!response.ok) return setNotice((await response.json().catch(() => null))?.message || "训练反馈保存失败。");
+    setNotice("训练反馈已经保存，会用于下一周期的调整。");
+    await loadAccount();
+  };
+
+  const openBillingPortal = async () => {
+    const response = await fetch("/api/v1/billing/portal", { method: "POST" });
+    const body = await response.json().catch(() => null);
+    if (!response.ok || !body?.url) return setNotice(body?.message || "暂时无法打开订阅管理。");
+    window.location.assign(body.url);
+  };
+
+  const redeem = async (reward: "meal_scan" | "plan_refresh") => {
+    const response = await fetch("/api/v1/points/redeem", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ reward }),
+    });
+    const body = await response.json().catch(() => null);
+    if (!response.ok) return setNotice(body?.message || "积分兑换失败。");
+    setNotice(reward === "meal_scan" ? "已兑换 1 次饭菜识别。" : "已兑换 1 次计划刷新。");
+    await loadAccount();
+  };
+
   if (loading) {
     return <main className="account-shell"><div className="account-loading"><span>C</span><p>正在整理你的训练记录…</p></div></main>;
   }
@@ -151,11 +212,13 @@ export default function AccountDashboard() {
       <Link className="brand account-brand" href="/"><span className="brand-mark">C</span><span>CMINE <b>FIT</b></span></Link>
       <nav>
         <a href="#today"><span>01</span>今日训练</a>
-        <a href="#plans"><span>02</span>计划历史</a>
-        <a href="#progress"><span>03</span>身体进度</a>
-        <a href="#profile"><span>04</span>训练档案</a>
-        <a href="#membership"><span>05</span>专业计划</a>
-        <a href="#account"><span>06</span>账号与数据</a>
+        <Link href="/nutrition"><span>02</span>饮食记录</Link>
+        <a href="#feedback"><span>03</span>训练反馈</a>
+        <a href="#plans"><span>04</span>计划历史</a>
+        <a href="#progress"><span>05</span>身体进度</a>
+        <a href="#profile"><span>06</span>训练档案</a>
+        <a href="#membership"><span>07</span>专业计划</a>
+        <a href="#account"><span>08</span>账号与数据</a>
       </nav>
       <div className="account-user">
         <span>{(data.user.name || data.user.email || "C").slice(0, 1).toUpperCase()}</span>
@@ -166,7 +229,7 @@ export default function AccountDashboard() {
     <section className="account-main">
       <header className="account-topbar">
         <div><span>CMINE FIT / MY TRAINING</span><strong>我的训练</strong></div>
-        <div><Link href="/pricing">专业计划</Link><Link href="/">生成新计划 ↗</Link><button onClick={async () => { await signOutCmine(); window.location.assign("/"); }}>安全退出</button></div>
+        <div><Link href="/nutrition">饮食记录</Link><Link href="/pricing">专业计划</Link><Link href="/">生成新计划 ↗</Link><button onClick={async () => { await signOutCmine(); window.location.assign("/"); }}>安全退出</button></div>
       </header>
 
       <section className="account-hero" id="today">
@@ -187,11 +250,22 @@ export default function AccountDashboard() {
         <article><span>完成训练</span><b>{data.progress.completedWorkouts}</b><small>已保存的训练日</small></article>
         <article><span>完成动作</span><b>{data.progress.completedExercises}</b><small>逐项同步记录</small></article>
         <article><span>身体记录</span><b>{data.measurements.length}</b><small>用于观察长期趋势</small></article>
-        <article><span>当前积分</span><b>{data.points}</b><small>只来自已验证事件</small></article>
+        <article><span>今日摄入</span><b>{data.nutritionToday.calories}</b><small>{data.nutritionToday.proteinG}g 蛋白质</small></article>
       </div>
 
+      <section className="account-panel workout-feedback-panel" id="feedback">
+        <div className="account-section-title"><div><span>03 / TRAINING FEEDBACK</span><h2>训练反馈</h2></div><p>记录强度、疼痛和完成情况，专业版会把这些变化用于下一周期。</p></div>
+        <div className="feedback-grid">
+          <label><span>训练时长</span><div><input type="number" min="1" max="240" value={feedback.durationMinutes} onChange={(event) => setFeedback({ ...feedback, durationMinutes: Number(event.target.value) })} /><em>min</em></div></label>
+          <label><span>主观强度 RPE</span><input type="range" min="1" max="10" value={feedback.rpe} onChange={(event) => setFeedback({ ...feedback, rpe: Number(event.target.value) })} /><b>{feedback.rpe}/10</b></label>
+          <label className="feedback-pain"><input type="checkbox" checked={feedback.pain} onChange={(event) => setFeedback({ ...feedback, pain: event.target.checked })} /><span>训练中出现疼痛或不适</span></label>
+          <label className="feedback-notes"><span>备注</span><input value={feedback.notes} maxLength={500} onChange={(event) => setFeedback({ ...feedback, notes: event.target.value })} placeholder="例如：睡眠不足、右肩紧张、动作状态很好" /></label>
+          <button onClick={() => void saveFeedback()} disabled={savingFeedback || !data.latestPlan}>{savingFeedback ? "正在保存…" : "保存今天的反馈 →"}</button>
+        </div>
+      </section>
+
       <section className="account-panel" id="plans">
-        <div className="account-section-title"><div><span>02 / PLAN HISTORY</span><h2>计划历史</h2></div><p>每次生成都会保留当时的身体资料、模型版本和完整计划。</p></div>
+        <div className="account-section-title"><div><span>04 / PLAN HISTORY</span><h2>计划历史</h2></div><p>每次生成都会保留当时的身体资料、模型版本和完整计划。</p></div>
         {data.plans.length ? <div className="plan-history">
           {data.plans.map((item, index) => <article key={item.id}>
             <div><span>{String(data.plans.length - index).padStart(2, "0")}</span><small>{dateText(item.createdAt)}</small></div>
@@ -203,7 +277,7 @@ export default function AccountDashboard() {
       </section>
 
       <section className="account-panel" id="progress">
-        <div className="account-section-title"><div><span>03 / PROGRESS</span><h2>身体进度</h2></div><p>看长期趋势，不被某一天的波动打乱节奏。</p></div>
+        <div className="account-section-title"><div><span>05 / PROGRESS</span><h2>身体进度</h2></div><p>看长期趋势，不被某一天的波动打乱节奏。</p></div>
         <div className="progress-layout">
           <div className="measurement-form">
             <h3>记录今天</h3>
@@ -228,7 +302,7 @@ export default function AccountDashboard() {
       </section>
 
       <section className="account-panel" id="profile">
-        <div className="account-section-title"><div><span>04 / TRAINING PROFILE</span><h2>训练档案</h2></div><p>更新后会用于下一次 AI 规划，不会改写已有计划。</p></div>
+        <div className="account-section-title"><div><span>06 / TRAINING PROFILE</span><h2>训练档案</h2></div><p>更新后会用于下一次 AI 规划，不会改写已有计划。</p></div>
         <div className="profile-editor">
           <label><span>生理性别</span><select value={profile.sex} onChange={(event) => setProfile({ ...profile, sex: event.target.value as Profile["sex"] })}><option value="female">女性</option><option value="male">男性</option></select></label>
           <label><span>年龄</span><input type="number" value={profile.age} onChange={(event) => setProfile({ ...profile, age: Number(event.target.value) })} /></label>
@@ -246,29 +320,33 @@ export default function AccountDashboard() {
       </section>
 
       <section className="account-panel membership-panel" id="membership">
-        <div className="account-section-title"><div><span>05 / MEMBERSHIP</span><h2>专业计划</h2></div><p>从一次计划走向长期调整。正式收费前不会扣款，也不会把未接入的支付入口伪装成可用功能。</p></div>
+        <div className="account-section-title"><div><span>07 / MEMBERSHIP</span><h2>专业计划</h2></div><p>当前状态、额度、续费和取消信息都来自真实权益与支付记录。</p></div>
         <div className="membership-current">
-          <div><span>当前方案</span><h3>Cmine Fit 基础版</h3><p>完整训练档案、AI 周计划、身体记录与计划历史已经可以使用。</p></div>
-          <b>ACTIVE</b>
+          <div><span>当前方案</span><h3>{data.product.membership.name}</h3><p>
+            计划剩余 {data.product.usage.capabilities["plan.generate"]?.remaining ?? 0} 次 ·
+            饭菜识别剩余 {data.product.usage.capabilities["meal.scan"]?.remaining ?? 0} 次
+            {data.product.membership.currentPeriodEnd && ` · ${dateText(data.product.membership.currentPeriodEnd)} ${data.product.membership.cancelAtPeriodEnd ? "到期" : "续费"}`}
+          </p></div>
+          <b>{data.product.membership.status.toUpperCase()}</b>
         </div>
-        <div className="membership-preview">
-          <div>
-            <span>CMINE FIT PRO</span>
-            <h3>更细致地理解你的变化，再安排下一步。</h3>
-            <p>专业版将提供长期自适应计划、阶段复盘、恢复与负荷调整、更深入的饮食指导，以及持续对话的 AI Coach。</p>
-          </div>
-          <ul>
-            <li>依据完成率、RPE 与疼痛反馈调整下一周期</li>
-            <li>训练、营养、恢复与现实日程一起规划</li>
-            <li>阶段趋势、停滞识别与可执行的改进建议</li>
-            <li>未来与 App、健康数据和穿戴设备同步</li>
-          </ul>
-          <div className="membership-price"><small>计划价格</small><b>US$9.99<em>/ 月</em></b><span>或 US$79 / 年 · 正式开放前不收费</span><Link href="/pricing">查看完整方案 →</Link></div>
+        {data.product.membership.tier === "pro" ? <div className="membership-preview">
+          <div><span>CMINE FIT PRO</span><h3>你的长期 Coach 权益已经生效。</h3><p>训练计划、饭菜识别、长期趋势和 Coach 对话都按当前专业版额度提供。</p></div>
+          <ul><li>每月 30 次训练计划</li><li>每月 100 次饭菜识别</li><li>每月 200 条 Coach 消息</li><li>阶段复盘与自适应调整</li></ul>
+          <div className="membership-price"><small>订阅管理</small><b>PRO</b><span>付款方式、发票、续费与取消由 Stripe 安全管理</span>{catalogConfigured && <button onClick={() => void openBillingPortal()}>管理订阅 →</button>}</div>
+        </div> : <div className="membership-preview">
+          <div><span>CMINE FIT PRO</span><h3>更细致地理解你的变化，再安排下一步。</h3><p>专业版把训练、营养、恢复与现实日程放在同一个长期档案里持续调整。</p></div>
+          <ul><li>依据完成率、RPE 与疼痛反馈调整</li><li>每月 100 次饭菜识别</li><li>阶段趋势、停滞识别与复盘</li><li>未来与 App、健康数据同步</li></ul>
+          <div className="membership-price"><small>计划价格</small><b>US$9.99<em>/ 月</em></b><span>或 US$79 / 年</span>{catalogConfigured && <Link href="/pricing">选择专业版 →</Link>}</div>
+        </div>}
+        <div className="points-redemption">
+          <div><span>积分余额</span><b>{data.points}</b><small>完成训练获得积分；广告积分仅在服务端验证后发放</small></div>
+          <button disabled={data.points < 50} onClick={() => void redeem("meal_scan")}>50 积分 · 饭菜识别</button>
+          <button disabled={data.points < 100} onClick={() => void redeem("plan_refresh")}>100 积分 · 计划刷新</button>
         </div>
       </section>
 
       <section className="account-panel account-data-panel" id="account">
-        <div className="account-section-title"><div><span>06 / ACCOUNT & DATA</span><h2>账号与数据</h2></div><p>Cmine Fit 数据与你的 Cmine ID 身份分开管理。</p></div>
+        <div className="account-section-title"><div><span>08 / ACCOUNT & DATA</span><h2>账号与数据</h2></div><p>Cmine Fit 数据与你的 Cmine ID 身份分开管理。</p></div>
         <div className="account-data-actions">
           <article><div><h3>导出我的数据</h3><p>下载计划、进度、训练记录和同意记录的 JSON 副本。</p></div><a href="/api/v1/export">开始导出 ↗</a></article>
           <article className="danger"><div><h3>删除 Cmine Fit 数据</h3><p>删除本站内的用户、计划和进度，不会删除 Cmine ID。</p></div><button onClick={() => void removeAccount()}>删除数据</button></article>
