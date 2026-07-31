@@ -14,9 +14,9 @@ export default function manifest(): MetadataRoute.Manifest {
     categories: ["fitness", "health", "lifestyle"],
     icons: [
       {
-        src: "/og.png",
+        src: "/icon.svg",
         sizes: "any",
-        type: "image/png",
+        type: "image/svg+xml",
         purpose: "any",
       },
     ],
