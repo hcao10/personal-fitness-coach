@@ -33,7 +33,7 @@ footer{padding:32px clamp(22px,6vw,96px);display:grid;grid-template-columns:auto
 .rationale-card p{font-size:10px;line-height:1.65;margin:0}
 
 .account-shell{min-height:100vh;background:#e9e6dd;color:var(--ink);display:grid;grid-template-columns:260px minmax(0,1fr)}
-.account-rail{position:sticky;top:0;height:100vh;background:var(--ink);color:#fff;padding:30px 24px;display:flex;flex-direction:column}
+.account-rail{position:fixed;left:0;top:0;bottom:0;width:260px;height:auto;background:var(--ink);color:#fff;padding:30px 24px;display:flex;flex-direction:column;z-index:20}
 .account-brand{color:#fff;text-decoration:none}
 .account-brand b{color:#8d9188}
 .account-rail nav{display:grid;gap:6px;margin-top:70px}
@@ -46,7 +46,7 @@ footer{padding:32px clamp(22px,6vw,96px);display:grid;grid-template-columns:auto
 .account-user>div{display:grid;min-width:0}
 .account-user b{font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .account-user small{font-size:8px;color:#777b72;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.account-main{min-width:0;padding:0 clamp(24px,4vw,64px)}
+.account-main{grid-column:2;min-width:0;padding:0 clamp(24px,4vw,64px)}
 .account-topbar{height:86px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--line)}
 .account-topbar>div:first-child{display:grid;gap:4px}
 .account-topbar span{font-size:8px;letter-spacing:.16em;color:var(--muted)}
@@ -122,6 +122,23 @@ footer{padding:32px clamp(22px,6vw,96px);display:grid;grid-template-columns:auto
 .account-data-actions a,.account-data-actions button{border:1px solid var(--line);border-radius:999px;background:var(--card);padding:9px 13px;font-size:9px;text-decoration:none;color:var(--ink);cursor:pointer;white-space:nowrap}
 .account-data-actions .danger{border-left:3px solid var(--coral)}
 .account-data-actions .danger button{color:#b3422b}
+.membership-current{display:flex;justify-content:space-between;align-items:center;gap:30px;background:#eeece5;border-radius:18px;padding:22px;margin-bottom:12px}
+.membership-current>div>span,.membership-preview>div:first-child>span{font-size:8px;letter-spacing:.15em;color:var(--coral)}
+.membership-current h3{font:700 19px "Manrope",sans-serif;letter-spacing:-.03em;margin:7px 0}
+.membership-current p{font-size:9px;line-height:1.65;color:var(--muted);margin:0}
+.membership-current>b{font-size:8px;letter-spacing:.12em;color:#61790d;background:rgba(143,177,19,.13);border-radius:999px;padding:8px 11px}
+.membership-preview{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(250px,.85fr) minmax(210px,.55fr);gap:26px;background:var(--ink);color:#fff;border-radius:21px;padding:clamp(25px,3vw,38px)}
+.membership-preview h3{font:700 clamp(24px,3vw,40px)/1.05 "Manrope",sans-serif;letter-spacing:-.05em;margin:13px 0}
+.membership-preview p{font-size:10px;line-height:1.75;color:#a5aaa0;margin:0;max-width:560px}
+.membership-preview ul{list-style:none;margin:4px 0;padding:0;display:grid;align-content:center;gap:13px}
+.membership-preview li{position:relative;padding-left:20px;font-size:9px;line-height:1.55;color:#c0c4bb}
+.membership-preview li:before{content:"✓";position:absolute;left:0;color:var(--acid);font-weight:800}
+.membership-price{border-left:1px solid rgba(255,255,255,.12);padding-left:26px;display:grid;align-content:center}
+.membership-price small{font-size:8px;color:#7f847a}
+.membership-price>b{font:700 31px "Manrope",sans-serif;letter-spacing:-.05em;color:var(--acid);margin:10px 0 3px}
+.membership-price b em{font:500 10px "DM Sans",sans-serif;letter-spacing:0;color:#9ea398;font-style:normal}
+.membership-price>span{font-size:8px;color:#7f847a;line-height:1.6}
+.membership-price>a{margin-top:22px;border-radius:999px;background:var(--acid);color:var(--ink);padding:11px 15px;text-align:center;text-decoration:none;font-size:9px;font-weight:800}
 .account-empty{border:1px dashed var(--line);border-radius:14px;padding:24px;text-align:center;color:var(--muted);font-size:9px}
 .account-empty a{color:var(--ink);font-weight:700;text-decoration:none}
 .account-footer{display:flex;justify-content:space-between;gap:30px;padding:28px 2px 40px;color:var(--muted);font-size:8px}
@@ -140,6 +157,50 @@ footer{padding:32px clamp(22px,6vw,96px);display:grid;grid-template-columns:auto
 .account-signin button em{font-style:normal;margin-left:20px}
 .account-signin>a{color:#94a69e;font-size:9px;margin-top:17px}
 .account-toast,.admin-toast{position:fixed;right:24px;bottom:24px;z-index:50}
+.pro-edition>.edition-link{border:0;background:var(--ink);color:#fff;border-radius:999px;padding:12px 14px 12px 18px;display:inline-flex;align-items:center;gap:30px;cursor:pointer;font-size:10px;text-decoration:none}
+.pro-edition>.edition-link b{color:var(--acid)}
+
+.pricing-page{min-height:100vh;background:#e9e6dd;color:var(--ink);padding:0 clamp(22px,5vw,76px)}
+.pricing-header{height:86px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--line)}
+.pricing-header nav{display:flex;gap:8px}
+.pricing-header nav a{font-size:9px;text-decoration:none;color:var(--ink);border:1px solid var(--line);border-radius:999px;padding:8px 12px}
+.pricing-hero{padding:clamp(70px,10vw,150px) 0 70px;position:relative}
+.pricing-hero>span{font-size:9px;letter-spacing:.18em;color:var(--coral)}
+.pricing-hero h1{font:700 clamp(58px,9vw,132px)/.9 "Manrope",sans-serif;letter-spacing:-.075em;margin:22px 0;max-width:1200px}
+.pricing-hero>p{font-size:12px;line-height:1.8;color:var(--muted);max-width:660px}
+.pricing-hero>div{position:absolute;right:0;bottom:74px;border:1px solid var(--line);background:rgba(255,255,255,.34);border-radius:18px;padding:18px 22px;display:grid;gap:4px}
+.pricing-hero>div b{font-size:10px}
+.pricing-hero>div span{font-size:8px;color:var(--muted)}
+.pricing-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.pricing-grid>article{background:var(--card);border:1px solid var(--line);border-radius:28px;padding:clamp(28px,4vw,52px);display:flex;flex-direction:column;min-height:650px}
+.pricing-grid article>header{display:flex;justify-content:space-between;align-items:center}
+.pricing-grid article>header span{font-size:8px;letter-spacing:.16em;color:var(--coral)}
+.pricing-grid article>header b{font-size:8px;border-radius:999px;padding:7px 10px;background:#eeece5}
+.pricing-grid h2{font:700 clamp(36px,4vw,58px) "Manrope",sans-serif;letter-spacing:-.055em;margin:46px 0 18px}
+.plan-price{min-height:82px;display:flex;gap:12px;align-items:end}
+.plan-price strong{font:700 clamp(36px,4vw,60px)/1 "Manrope",sans-serif;letter-spacing:-.06em}
+.plan-price small{font-size:9px;color:var(--muted);line-height:1.5;padding-bottom:6px}
+.pricing-grid article>p{font-size:10px;line-height:1.75;color:var(--muted);max-width:550px;margin:28px 0}
+.pricing-grid ul{list-style:none;padding:0;margin:0 0 32px;display:grid;gap:14px}
+.pricing-grid li{font-size:10px;line-height:1.55;padding-left:22px;position:relative}
+.pricing-grid li:before{content:"✓";position:absolute;left:0;color:#788d1d;font-weight:800}
+.pricing-grid article>a,.pricing-grid article>button{margin-top:auto;border:0;border-radius:999px;background:var(--ink);color:#fff;text-decoration:none;text-align:center;padding:14px 18px;font-size:10px;font-weight:800}
+.pricing-grid .pro-plan{background:var(--ink);color:#fff;border-color:var(--ink);position:relative;overflow:hidden}
+.pricing-grid .pro-plan:after{content:"";position:absolute;right:-170px;top:-170px;width:430px;height:430px;border-radius:50%;border:70px solid rgba(223,255,69,.08)}
+.pricing-grid .pro-plan>*{position:relative;z-index:1}
+.pricing-grid .pro-plan header span,.pricing-grid .pro-plan .plan-price strong{color:var(--acid)}
+.pricing-grid .pro-plan header b{background:rgba(223,255,69,.12);color:var(--acid)}
+.pricing-grid .pro-plan p,.pricing-grid .pro-plan .plan-price small{color:#9da298}
+.pricing-grid .pro-plan li:before{color:var(--acid)}
+.pricing-grid .pro-plan button{background:#30332d;color:#7f847a;cursor:not-allowed}
+.pricing-notes{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;padding:80px 0}
+.pricing-notes article{border-top:1px solid var(--line);padding-top:22px;display:grid;grid-template-columns:30px 1fr;gap:6px}
+.pricing-notes article>span{font-size:8px;color:var(--coral)}
+.pricing-notes h3{font-size:13px;margin:0}
+.pricing-notes p{grid-column:2;font-size:9px;color:var(--muted);line-height:1.7;margin:5px 0}
+.pricing-footer{display:flex;justify-content:space-between;gap:30px;border-top:1px solid var(--line);padding:28px 0 40px;color:var(--muted);font-size:8px}
+.pricing-footer span{letter-spacing:.15em}
+.pricing-footer p{margin:0}
 
 .admin-metrics-wide{grid-template-columns:repeat(5,1fr)}
 .admin-table{border-top:1px solid var(--line)}
@@ -177,12 +238,18 @@ footer{padding:32px clamp(22px,6vw,96px);display:grid;grid-template-columns:auto
   .profile-editor{grid-template-columns:repeat(3,1fr)}
   .profile-editor .profile-limitations{grid-column:1/-1}
   .profile-editor>button{grid-column:1/-1}
+  .membership-preview{grid-template-columns:1fr 1fr}
+  .membership-price{grid-column:1/-1;border-left:0;border-top:1px solid rgba(255,255,255,.12);padding:22px 0 0;grid-template-columns:1fr auto;align-items:end}
+  .membership-price>b{grid-row:2}
+  .membership-price>span{grid-row:3}
+  .membership-price>a{grid-column:2;grid-row:1/4;margin:0;align-self:center}
   .admin-metrics-wide{grid-template-columns:repeat(3,1fr)}
   .admin-metrics-wide article:nth-child(3){border-right:0}
 }
 @media(max-width:950px){
   .account-shell{grid-template-columns:1fr}
-  .account-rail{position:static;height:auto;display:flex;align-items:center;gap:24px;padding:17px 22px}
+  .account-rail{position:static;width:auto;height:auto;display:flex;align-items:center;gap:24px;padding:17px 22px}
+  .account-main{grid-column:auto}
   .account-rail nav{display:flex;margin:0 0 0 auto}
   .account-rail nav a{grid-template-columns:auto;padding:9px}
   .account-rail nav a span{display:none}
@@ -208,6 +275,11 @@ footer{padding:32px clamp(22px,6vw,96px);display:grid;grid-template-columns:auto
   .progress-records article{grid-template-columns:1fr}
   .progress-records article p{grid-column:1}
   .profile-editor{grid-template-columns:1fr 1fr}
+  .membership-current{align-items:flex-start}
+  .membership-preview{grid-template-columns:1fr}
+  .membership-price{grid-column:auto;display:grid;grid-template-columns:1fr;padding-top:20px}
+  .membership-price>b,.membership-price>span,.membership-price>a{grid-column:auto;grid-row:auto}
+  .membership-price>a{margin-top:18px}
   .account-data-actions article{align-items:start;display:grid}
   .account-footer{display:grid}
   .admin-table-head{display:none}
@@ -218,4 +290,10 @@ footer{padding:32px clamp(22px,6vw,96px);display:grid;grid-template-columns:auto
   .admin-user-list article>button{grid-column:3}
   .admin-settings>label,.admin-settings>article{grid-template-columns:1fr}
   .admin-settings>label>span{grid-column:1}
+  .pricing-header nav a:first-child{display:none}
+  .pricing-hero>div{position:static;width:max-content;margin-top:28px}
+  .pricing-grid{grid-template-columns:1fr}
+  .pricing-grid>article{min-height:auto}
+  .pricing-notes{grid-template-columns:1fr;padding:50px 0}
+  .pricing-footer{display:grid}
 }

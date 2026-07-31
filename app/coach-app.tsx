@@ -141,7 +141,7 @@ export default function CoachApp() {
     <main>
       <header className="topbar">
         <a className="brand" href="#top" aria-label="Cmine Fit home"><span className="brand-mark">C</span><span>CMINE <b>FIT</b></span></a>
-        <nav className="topnav" aria-label="Primary navigation"><a href="#coach">{t.navCoach}</a><a href="#library">{t.navLibrary}</a><a href="#editions">{t.navAbout}</a><a href="/admin">{t.navAdmin}</a></nav>
+        <nav className="topnav" aria-label="Primary navigation"><a href="#coach">{t.navCoach}</a><a href="#library">{t.navLibrary}</a><a href="#editions">{t.navAbout}</a><a href="/pricing">{t.navPricing}</a><a href="/admin">{t.navAdmin}</a></nav>
         <div className="header-actions">
           <label className="language-select"><span className="sr-only">Language</span>
             <select value={locale} onChange={(event) => setLocale(event.target.value as Locale)}>
@@ -298,7 +298,7 @@ export default function CoachApp() {
           <article className="open-edition"><div className="edition-tag">{t.openCore}</div><h3>{t.openTitle}</h3><p>{t.openText}</p><div className="feature-cloud"><span>{lang === "zh" ? "自由部署" : "Self-host"}</span><span>{lang === "zh" ? "本地模型" : "Local AI"}</span><span>{lang === "zh" ? "透明可控" : "Transparent core"}</span><span>{lang === "zh" ? "9 种语言" : "9 languages"}</span></div><a href="https://github.com/hcao10/personal-fitness-coach" target="_blank" rel="noreferrer">{t.viewSource} <b>↗</b></a></article>
           <article className="pro-edition"><div className="edition-tag">{t.proEdition}</div><h3>{t.proTitle}</h3><p>{t.proText}</p>
             <div className="pro-diagram"><div><span>01</span><b>{lang === "zh" ? "训练档案" : "Training record"}</b><small>CONTINUITY</small></div><i>→</i><div><span>02</span><b>{lang === "zh" ? "智能规划" : "Smart planning"}</b><small>PERSONALIZATION</small></div><i>→</i><div><span>03</span><b>{lang === "zh" ? "持续调整" : "Ongoing refinement"}</b><small>PROGRESS</small></div></div>
-            <button onClick={() => setLoginOpen(true)}>{t.upgrade} <b>→</b></button>
+            <a className="edition-link" href="/pricing">{t.upgrade} <b>→</b></a>
           </article>
         </div>
       </section>

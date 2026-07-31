@@ -154,7 +154,8 @@ export default function AccountDashboard() {
         <a href="#plans"><span>02</span>计划历史</a>
         <a href="#progress"><span>03</span>身体进度</a>
         <a href="#profile"><span>04</span>训练档案</a>
-        <a href="#account"><span>05</span>账号与数据</a>
+        <a href="#membership"><span>05</span>专业计划</a>
+        <a href="#account"><span>06</span>账号与数据</a>
       </nav>
       <div className="account-user">
         <span>{(data.user.name || data.user.email || "C").slice(0, 1).toUpperCase()}</span>
@@ -165,7 +166,7 @@ export default function AccountDashboard() {
     <section className="account-main">
       <header className="account-topbar">
         <div><span>CMINE FIT / MY TRAINING</span><strong>我的训练</strong></div>
-        <div><Link href="/">生成新计划 ↗</Link><button onClick={async () => { await signOutCmine(); window.location.assign("/"); }}>安全退出</button></div>
+        <div><Link href="/pricing">专业计划</Link><Link href="/">生成新计划 ↗</Link><button onClick={async () => { await signOutCmine(); window.location.assign("/"); }}>安全退出</button></div>
       </header>
 
       <section className="account-hero" id="today">
@@ -244,8 +245,30 @@ export default function AccountDashboard() {
         </div>
       </section>
 
+      <section className="account-panel membership-panel" id="membership">
+        <div className="account-section-title"><div><span>05 / MEMBERSHIP</span><h2>专业计划</h2></div><p>从一次计划走向长期调整。正式收费前不会扣款，也不会把未接入的支付入口伪装成可用功能。</p></div>
+        <div className="membership-current">
+          <div><span>当前方案</span><h3>Cmine Fit 基础版</h3><p>完整训练档案、AI 周计划、身体记录与计划历史已经可以使用。</p></div>
+          <b>ACTIVE</b>
+        </div>
+        <div className="membership-preview">
+          <div>
+            <span>CMINE FIT PRO</span>
+            <h3>更细致地理解你的变化，再安排下一步。</h3>
+            <p>专业版将提供长期自适应计划、阶段复盘、恢复与负荷调整、更深入的饮食指导，以及持续对话的 AI Coach。</p>
+          </div>
+          <ul>
+            <li>依据完成率、RPE 与疼痛反馈调整下一周期</li>
+            <li>训练、营养、恢复与现实日程一起规划</li>
+            <li>阶段趋势、停滞识别与可执行的改进建议</li>
+            <li>未来与 App、健康数据和穿戴设备同步</li>
+          </ul>
+          <div className="membership-price"><small>计划价格</small><b>US$9.99<em>/ 月</em></b><span>或 US$79 / 年 · 正式开放前不收费</span><Link href="/pricing">查看完整方案 →</Link></div>
+        </div>
+      </section>
+
       <section className="account-panel account-data-panel" id="account">
-        <div className="account-section-title"><div><span>05 / ACCOUNT & DATA</span><h2>账号与数据</h2></div><p>Cmine Fit 数据与你的 Cmine ID 身份分开管理。</p></div>
+        <div className="account-section-title"><div><span>06 / ACCOUNT & DATA</span><h2>账号与数据</h2></div><p>Cmine Fit 数据与你的 Cmine ID 身份分开管理。</p></div>
         <div className="account-data-actions">
           <article><div><h3>导出我的数据</h3><p>下载计划、进度、训练记录和同意记录的 JSON 副本。</p></div><a href="/api/v1/export">开始导出 ↗</a></article>
           <article className="danger"><div><h3>删除 Cmine Fit 数据</h3><p>删除本站内的用户、计划和进度，不会删除 Cmine ID。</p></div><button onClick={() => void removeAccount()}>删除数据</button></article>
