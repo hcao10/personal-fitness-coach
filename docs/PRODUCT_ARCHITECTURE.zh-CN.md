@@ -159,7 +159,7 @@ plans/preview 可匿名调用并限速；保存、积分、订阅与历史数据
 - BMR、TDEE、热量下限、宏量营养、训练频率、器械限制由 `coach-core` 决定；模型只能编排与解释。
 - `planRationale` 是面向用户的双语安排理由，不是也不保存模型的隐藏思维链。
 - 用户中心支持资料恢复、计划历史、测量趋势、训练完成/反馈、导出和删除。
-- 管理后台使用 Sites 身份加 `ADMIN_EMAILS` 白名单，写操作记录 `admin_audit_events`。
+- 管理后台统一使用 Cmine ID 会话，并叠加 Cmine Fit 自身的 `admin` 产品角色；`ADMIN_EMAILS` 仅用于首次引导管理员，写操作记录 `admin_audit_events`。
 - PWA Manifest 和移动端布局是第二阶段原生 App 之前的可安装交付形态。
 
 当前版本化接口：

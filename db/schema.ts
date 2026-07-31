@@ -6,6 +6,8 @@ export const users = sqliteTable("users", {
   email: text("email"),
   name: text("name"),
   picture: text("picture"),
+  role: text("role").notNull().default("user"),
+  cmineRole: text("cmine_role").notNull().default("user"),
   status: text("status").notNull().default("active"),
   locale: text("locale").notNull().default("zh"),
   timezone: text("timezone").notNull().default("UTC"),

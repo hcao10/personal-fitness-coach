@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { beginCmineLogin } from "../lib/auth";
 
 type AdminOverview = {
+  admin: { email: string | null; name: string | null; role: string };
   metrics: {
     users: number;
     activeUsers: number;
@@ -36,13 +38,15 @@ function dateTime(value: string) {
 export default function AdminDashboard() {
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [error, setError] = useState("");
+  const [errorCode, setErrorCode] = useState("");
   const [notice, setNotice] = useState("");
   const [announcement, setAnnouncement] = useState("");
 
   const load = async () => {
     const response = await fetch("/api/v1/admin/overview", { cache: "no-store" }).catch(() => null);
     if (!response?.ok) {
-      const body = await response?.json().catch(() => null) as { message?: string } | null;
+      const body = await response?.json().catch(() => null) as { error?: string; message?: string } | null;
+      setErrorCode(body?.error || "");
       setError(body?.message || `管理服务暂时不可用${response ? `（${response.status}）` : ""}`);
       return;
     }
@@ -50,6 +54,7 @@ export default function AdminDashboard() {
     setOverview(next);
     setAnnouncement(String(next.settings.announcement?.value || ""));
     setError("");
+    setErrorCode("");
   };
 
   useEffect(() => {
@@ -92,10 +97,12 @@ export default function AdminDashboard() {
 
   if (error) {
     return <section className="admin-denied">
-      <span>ACCESS CONTROL</span>
-      <h1>当前账号不能进入管理后台。</h1>
+      <span>CMINE ID · ACCESS CONTROL</span>
+      <h1>{errorCode === "AUTH_REQUIRED" ? "先确认你的 Cmine 身份。" : "当前账号不能进入管理后台。"}</h1>
       <p>{error}</p>
-      <Link href="/">返回用户端</Link>
+      {errorCode === "AUTH_REQUIRED"
+        ? <button className="admin-login-button" onClick={() => void beginCmineLogin("/admin")}>使用 Cmine ID 登录 →</button>
+        : <Link href="/account">查看当前登录账号</Link>}
     </section>;
   }
 
@@ -111,7 +118,7 @@ export default function AdminDashboard() {
   return <>
     <div className="admin-intro">
       <div><p>懂训练，更懂每一次变化</p><h1>产品状态，<br /><em>一眼看清。</em></h1></div>
-      <aside><span>当前阶段</span><b>{overview ? "PRODUCT ONLINE" : "CONNECTING"}</b><p>指标直接读取生产数据库与运行环境；外部服务没有配置时会明确显示，不使用演示数字。</p></aside>
+      <aside><span>当前管理员</span><b>{overview?.admin.name || overview?.admin.email || "CMINE ADMIN"}</b><p>身份与管理权限均由 Cmine ID 登录及 Cmine Fit 产品角色验证，不依赖任何第三方站点账号。</p></aside>
     </div>
 
     <div className="admin-metrics admin-metrics-wide" aria-label="产品数据">

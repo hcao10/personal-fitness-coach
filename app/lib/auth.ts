@@ -1,6 +1,12 @@
 "use client";
 
-export type CmineUser = { sub: string; email?: string | null; name?: string | null; picture?: string | null };
+export type CmineUser = {
+  sub: string;
+  email?: string | null;
+  name?: string | null;
+  picture?: string | null;
+  role?: "user" | "admin";
+};
 export const AUTH_PROVIDERS = [
   { id: "cmine", label: "Cmine ID", enabled: true },
 ] as const;

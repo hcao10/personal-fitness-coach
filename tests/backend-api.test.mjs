@@ -43,10 +43,10 @@ test("state-changing APIs reject cross-origin browser requests", async () => {
   assert.equal((await response.json()).error, "ORIGIN_REJECTED");
 });
 
-test("admin APIs require both a valid session and allowlisted email", async () => {
+test("admin APIs require a valid Cmine session", async () => {
   const response = await worker.fetch(new Request("https://local.test/api/v1/admin/overview"), {}, {});
-  assert.equal(response.status, 403);
-  assert.equal((await response.json()).error, "FORBIDDEN");
+  assert.equal(response.status, 401);
+  assert.equal((await response.json()).error, "AUTH_REQUIRED");
 });
 
 test("plan endpoint rejects invalid profiles", async () => {
@@ -127,6 +127,20 @@ test("D1 migration contains every long-term product record", async () => {
   for (const table of ["measurements", "workout_sessions", "generation_runs", "site_settings", "admin_audit_events"]) {
     assert.match(productSql, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`));
   }
+  const adminRoleSql = await readFile(new URL("../drizzle/0003_cmine_admin_roles.sql", import.meta.url), "utf8");
+  assert.match(adminRoleSql, /ADD COLUMN role TEXT NOT NULL DEFAULT 'user'/);
+  assert.match(adminRoleSql, /ADD COLUMN cmine_role TEXT NOT NULL DEFAULT 'user'/);
+});
+
+test("admin authentication uses Cmine roles and contains no GPT identity dependency", async () => {
+  const api = await readFile(new URL("../worker/api.ts", import.meta.url), "utf8");
+  const adminPage = await readFile(new URL("../app/admin/page.tsx", import.meta.url), "utf8");
+  const adminDashboard = await readFile(new URL("../app/admin/admin-dashboard.tsx", import.meta.url), "utf8");
+  assert.match(api, /const admin = await getSessionUser\(request, env\)/);
+  assert.match(api, /admin\.role !== "admin"/);
+  assert.doesNotMatch(api, /oai-authenticated-user-email/);
+  assert.doesNotMatch(adminPage, /ChatGPT|chatGPT|signin-with-chatgpt/);
+  assert.match(adminDashboard, /beginCmineLogin\("\/admin"\)/);
 });
 
 test("homepage product copy matches the approved Chinese positioning", async () => {

@@ -39,7 +39,7 @@ Cmine Fit 是一套包含自主轻量版与专业增强版的 AI 健身教练产
 - `CMINE_CLIENT_ID`：Cmine ID 应用 client_id
 - `CMINE_CLIENT_SECRET`：Confidential Client 密钥
 - `PUBLIC_ORIGIN`：生产环境固定为 `https://fit.chwjh.com`
-- `ADMIN_EMAILS`：逗号分隔的管理后台邮箱白名单
+- `ADMIN_EMAILS`：逗号分隔的 Cmine Fit 管理员引导名单；仅在 Cmine ID 已验证登录后授予产品管理员角色
 - `REWARD_AD_PROVIDER`：未接激励广告时留空，前端不会显示假入口
 
 Cmine ID 需精确登记每个生产域名的回调：

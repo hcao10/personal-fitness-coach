@@ -170,7 +170,7 @@ footer{padding:32px clamp(22px,6vw,96px);display:grid;grid-template-columns:auto
 .admin-denied>span{font-size:9px;letter-spacing:.16em;color:var(--coral)}
 .admin-denied h1{font:700 clamp(45px,6vw,78px)/1.02 "Manrope",sans-serif;letter-spacing:-.06em;margin:20px 0}
 .admin-denied p{font-size:10px;color:var(--muted)}
-.admin-denied a{margin-top:18px;background:var(--ink);color:#fff;border-radius:999px;padding:10px 14px;text-decoration:none;font-size:9px}
+.admin-denied a,.admin-login-button{margin-top:18px;background:var(--ink);color:#fff;border:0;border-radius:999px;padding:10px 14px;text-decoration:none;font-size:9px;cursor:pointer}
 
 @media(max-width:1100px){
   .plan-history{grid-template-columns:1fr 1fr}

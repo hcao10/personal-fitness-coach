@@ -8,6 +8,8 @@ export type StoredUser = {
   email: string | null;
   name: string | null;
   picture: string | null;
+  role: string;
+  cmineRole: string;
   status: string;
   locale: string;
   timezone: string;
@@ -52,16 +54,29 @@ function publicPlan(row: PlanRow) {
   };
 }
 
-export async function upsertCmineUser(env: WorkerEnv, identity: { sub: string; email?: string; name?: string; picture?: string }): Promise<StoredUser> {
+export async function upsertCmineUser(env: WorkerEnv, identity: {
+  sub: string;
+  email?: string;
+  name?: string;
+  picture?: string;
+  role?: string;
+}): Promise<StoredUser> {
   const db = requireDb(env);
   const existing = await db.prepare("SELECT id FROM users WHERE cmine_sub = ?").bind(identity.sub).first<{ id: string }>();
   const id = existing?.id || crypto.randomUUID();
   const now = new Date().toISOString();
-  await db.prepare(`INSERT INTO users (id, cmine_sub, email, name, picture, status, locale, timezone, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, 'active', 'zh', 'UTC', ?, ?)
-    ON CONFLICT(cmine_sub) DO UPDATE SET email=excluded.email, name=excluded.name, picture=excluded.picture, updated_at=excluded.updated_at`)
-    .bind(id, identity.sub, identity.email || null, identity.name || null, identity.picture || null, now, now).run();
-  const user = await db.prepare(`SELECT id, cmine_sub AS sub, email, name, picture, status, locale, timezone
+  const cmineRole = identity.role === "admin" || identity.role === "super_admin" ? identity.role : "user";
+  const bootstrapAdmins = (env.ADMIN_EMAILS || "").split(",").map((value) => value.trim().toLowerCase()).filter(Boolean);
+  const role = cmineRole === "admin" || cmineRole === "super_admin" ||
+    Boolean(identity.email && bootstrapAdmins.includes(identity.email.trim().toLowerCase()))
+    ? "admin"
+    : "user";
+  await db.prepare(`INSERT INTO users (id, cmine_sub, email, name, picture, role, cmine_role, status, locale, timezone, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'active', 'zh', 'UTC', ?, ?)
+    ON CONFLICT(cmine_sub) DO UPDATE SET email=excluded.email, name=excluded.name, picture=excluded.picture,
+      role=excluded.role, cmine_role=excluded.cmine_role, updated_at=excluded.updated_at`)
+    .bind(id, identity.sub, identity.email || null, identity.name || null, identity.picture || null, role, cmineRole, now, now).run();
+  const user = await db.prepare(`SELECT id, cmine_sub AS sub, email, name, picture, role, cmine_role AS cmineRole, status, locale, timezone
     FROM users WHERE id = ?`).bind(id).first<StoredUser>();
   if (!user) throw new Error("USER_UPSERT_FAILED");
   return user;
@@ -79,7 +94,8 @@ export async function getSessionUser(request: Request, env: WorkerEnv): Promise<
   if (!env.DB) return null;
   const token = parseCookies(request).cmine_fit_session;
   if (!token) return null;
-  const row = await env.DB.prepare(`SELECT u.id, u.cmine_sub AS sub, u.email, u.name, u.picture, u.status, u.locale, u.timezone
+  const row = await env.DB.prepare(`SELECT u.id, u.cmine_sub AS sub, u.email, u.name, u.picture, u.role,
+      u.cmine_role AS cmineRole, u.status, u.locale, u.timezone
     FROM sessions s JOIN users u ON u.id = s.user_id
     WHERE s.id_hash = ? AND s.expires_at > ? AND u.status = 'active'`)
     .bind(await sha256(token), new Date().toISOString()).first<StoredUser>();
@@ -324,10 +340,10 @@ export async function adminSummary(env: WorkerEnv): Promise<Record<string, numbe
 
 export async function adminUsers(env: WorkerEnv, query: string, limit = 30) {
   const term = `%${query.slice(0, 100)}%`;
-  const result = await requireDb(env).prepare(`SELECT id, cmine_sub, email, name, status, locale, timezone, created_at, updated_at
+  const result = await requireDb(env).prepare(`SELECT id, cmine_sub, email, name, role, cmine_role, status, locale, timezone, created_at, updated_at
     FROM users WHERE (? = '%%' OR email LIKE ? OR name LIKE ? OR cmine_sub LIKE ?)
     ORDER BY created_at DESC LIMIT ?`).bind(term, term, term, term, Math.min(50, Math.max(1, limit)))
-    .all<{ id: string; cmine_sub: string; email: string | null; name: string | null; status: string; locale: string; timezone: string; created_at: string; updated_at: string }>();
+    .all<{ id: string; cmine_sub: string; email: string | null; name: string | null; role: string; cmine_role: string; status: string; locale: string; timezone: string; created_at: string; updated_at: string }>();
   return result.results || [];
 }
 

@@ -1,0 +1,4 @@
+ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user';
+ALTER TABLE users ADD COLUMN cmine_role TEXT NOT NULL DEFAULT 'user';
+
+CREATE INDEX IF NOT EXISTS users_role_idx ON users(role);

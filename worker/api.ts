@@ -46,7 +46,6 @@ const sexes = new Set<Sex>(["female", "male"]);
 const activities = new Set<Activity>(["sedentary", "light", "moderate", "active"]);
 const experiences = new Set<Experience>(["beginner", "intermediate", "advanced"]);
 const equipment = new Set<Equipment>(["bodyweight", "dumbbell", "gym"]);
-const defaultAdminEmail = "yvonnesplayground@gmail.com";
 const editableSettings = new Set(["announcement", "maintenance_mode", "disclaimer_version"]);
 
 function profileFrom(value: unknown): Profile | null {
@@ -86,13 +85,6 @@ function writeOriginAllowed(request: Request, env: WorkerEnv): boolean {
   if (!origin) return true;
   const requestOrigin = new URL(request.url).origin;
   return origin === requestOrigin || origin === publicOrigin(request, env);
-}
-
-function adminEmail(request: Request, env: WorkerEnv): string | null {
-  const email = request.headers.get("oai-authenticated-user-email")?.trim().toLowerCase();
-  if (!email) return null;
-  const allowed = (env.ADMIN_EMAILS || defaultAdminEmail).split(",").map((value) => value.trim().toLowerCase()).filter(Boolean);
-  return allowed.includes(email) ? email : null;
 }
 
 function oauthError(request: Request, env: WorkerEnv, message: string): Response {
@@ -186,6 +178,8 @@ async function authCallback(request: Request, env: WorkerEnv): Promise<Response>
     email_verified?: boolean;
     name?: string;
     picture?: string;
+    avatar_url?: string;
+    role?: string;
   } | null;
   if (!userResponse.ok || !identity?.sub || identity.sub !== claims.sub) return oauthError(request, env, "Cmine ID 用户信息校验失败");
   if (!identity.email || identity.email_verified !== true) return oauthError(request, env, "请先在 Cmine ID 完成邮箱验证");
@@ -194,7 +188,8 @@ async function authCallback(request: Request, env: WorkerEnv): Promise<Response>
     sub: identity.sub,
     email: identity.email,
     name: identity.name,
-    picture: identity.picture,
+    picture: identity.picture || identity.avatar_url,
+    role: identity.role,
   });
   if (user.status !== "active") return oauthError(request, env, "该账户目前无法登录，请联系支持");
   const sessionToken = randomToken(48);
@@ -299,14 +294,21 @@ function services(env: WorkerEnv) {
 
 async function handleAdmin(request: Request, env: WorkerEnv, url: URL): Promise<Response | null> {
   if (!url.pathname.startsWith("/api/v1/admin/") && url.pathname !== "/api/admin/summary") return null;
-  const email = adminEmail(request, env);
-  if (!email) return errorJson("FORBIDDEN", "当前账号没有管理权限。", 403);
+  const admin = await getSessionUser(request, env);
+  if (!admin) return errorJson("AUTH_REQUIRED", "请先使用 Cmine ID 登录。", 401);
+  if (admin.role !== "admin") return errorJson("FORBIDDEN", "当前 Cmine ID 没有 Cmine Fit 管理权限。", 403);
+  const actor = admin.email || admin.sub;
   if (!env.DB) return errorJson("DATABASE_NOT_CONFIGURED", "数据库尚未连接。", 503);
   if (url.pathname === "/api/admin/summary" && request.method === "GET") {
     return json({ metrics: await adminSummary(env), services: services(env) });
   }
   if (url.pathname === "/api/v1/admin/overview" && request.method === "GET") {
-    return json({ ...(await adminOverview(env)), services: services(env), settings: await adminSettings(env) });
+    return json({
+      ...(await adminOverview(env)),
+      admin: { email: admin.email, name: admin.name, role: admin.role },
+      services: services(env),
+      settings: await adminSettings(env),
+    });
   }
   if (url.pathname === "/api/v1/admin/users" && request.method === "GET") {
     return json({ users: await adminUsers(env, url.searchParams.get("q") || "", Number(url.searchParams.get("limit") || 30)) });
@@ -317,7 +319,7 @@ async function handleAdmin(request: Request, env: WorkerEnv, url: URL): Promise<
     if (body?.status !== "active" && body?.status !== "suspended") return errorJson("INVALID_STATUS", "用户状态无效。", 400);
     const userId = decodeURIComponent(userMatch[1]);
     if (!await updateUserStatus(env, userId, body.status)) return errorJson("USER_NOT_FOUND", "没有找到该用户。", 404);
-    await recordAdminAudit(env, email, "user.status.update", "user", userId, { status: body.status });
+    await recordAdminAudit(env, actor, "user.status.update", "user", userId, { status: body.status });
     return json({ ok: true });
   }
   if (url.pathname === "/api/v1/admin/settings" && request.method === "GET") return json({ settings: await adminSettings(env) });
@@ -328,8 +330,8 @@ async function handleAdmin(request: Request, env: WorkerEnv, url: URL): Promise<
     if ((body.key === "announcement" || body.key === "disclaimer_version") && (typeof body.value !== "string" || body.value.length > 300)) {
       return errorJson("INVALID_SETTING_VALUE", "设置内容无效。", 400);
     }
-    await updateAdminSetting(env, body.key, body.value, email);
-    await recordAdminAudit(env, email, "site.setting.update", "setting", body.key, { value: body.value });
+    await updateAdminSetting(env, body.key, body.value, actor);
+    await recordAdminAudit(env, actor, "site.setting.update", "setting", body.key, { value: body.value });
     return json({ ok: true });
   }
   return errorJson("NOT_FOUND", "没有找到该管理接口。", 404);
@@ -356,7 +358,7 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
   if (request.method === "GET" && url.pathname === "/api/auth/me") {
     const user = await getSessionUser(request, env);
     return json({
-      user: user ? { sub: user.sub, email: user.email, name: user.name, picture: user.picture } : null,
+      user: user ? { sub: user.sub, email: user.email, name: user.name, picture: user.picture, role: user.role } : null,
       points: user ? await pointsForUser(env, user.id) : 0,
     });
   }
