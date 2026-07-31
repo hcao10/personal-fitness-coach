@@ -1,0 +1,14 @@
+import * as SQLite from "expo-sqlite";
+import type { SyncMutation } from "../../../packages/api-contracts/src";
+import { api } from "./api";
+
+const dbPromise = SQLite.openDatabaseAsync("cmine-fit.db");
+export async function initializeOfflineStore() { const db = await dbPromise; await db.execAsync(`PRAGMA journal_mode=WAL;
+  CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS sync_outbox (mutation_id TEXT PRIMARY KEY, value_json TEXT NOT NULL, created_at TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);`); }
+export async function cacheValue(key: string, value: unknown) { const db = await dbPromise; await db.runAsync("INSERT INTO cache(key,value_json,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at", key, JSON.stringify(value), new Date().toISOString()); }
+export async function cachedValue<T>(key: string): Promise<T | null> { const db = await dbPromise; const row = await db.getFirstAsync<{ value_json: string }>("SELECT value_json FROM cache WHERE key=?", key); return row ? JSON.parse(row.value_json) as T : null; }
+export async function enqueue(mutation: SyncMutation) { const db = await dbPromise; await db.runAsync("INSERT OR IGNORE INTO sync_outbox(mutation_id,value_json,created_at) VALUES (?,?,?)", mutation.mutationId, JSON.stringify(mutation), new Date().toISOString()); }
+export async function synchronize() { const db = await dbPromise; const rows = await db.getAllAsync<{ mutation_id: string; value_json: string }>("SELECT mutation_id,value_json FROM sync_outbox ORDER BY created_at LIMIT 50"); const mutations = rows.map((row) => JSON.parse(row.value_json) as SyncMutation); if (mutations.length) { const result = await api<{ results: Array<{ mutationId: string; status: string }>; cursor: number }>("/api/v1/sync/batch", { method: "POST", body: JSON.stringify({ mutations }) }); for (const item of result.results) if (item.status === "applied" || item.status === "duplicate") await db.runAsync("DELETE FROM sync_outbox WHERE mutation_id=?", item.mutationId); await db.runAsync("INSERT INTO sync_state(key,value) VALUES ('cursor',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", String(result.cursor)); }
+  const state = await db.getFirstAsync<{ value: string }>("SELECT value FROM sync_state WHERE key='cursor'"); const changes = await api<{ events: unknown[]; cursor: number }>(`/api/v1/sync/changes?cursor=${encodeURIComponent(state?.value || "0")}`); await cacheValue("server_changes", changes.events); await db.runAsync("INSERT INTO sync_state(key,value) VALUES ('cursor',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", String(changes.cursor)); return changes; }

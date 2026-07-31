@@ -211,11 +211,11 @@ export default function AccountDashboard() {
     <aside className="account-rail">
       <Link className="brand account-brand" href="/"><span className="brand-mark">C</span><span>CMINE <b>FIT</b></span></Link>
       <nav>
-        <a href="#today"><span>01</span>今日训练</a>
-        <Link href="/nutrition"><span>02</span>饮食记录</Link>
-        <a href="#feedback"><span>03</span>训练反馈</a>
-        <a href="#plans"><span>04</span>计划历史</a>
-        <a href="#progress"><span>05</span>身体进度</a>
+        <Link href="/today"><span>01</span>今日训练</Link>
+        <Link href="/coach"><span>02</span>Coach</Link>
+        <Link href="/nutrition"><span>03</span>饮食记录</Link>
+        <Link href="/progress"><span>04</span>身体进度</Link>
+        <a href="#plans"><span>05</span>计划历史</a>
         <a href="#profile"><span>06</span>训练档案</a>
         <a href="#membership"><span>07</span>专业计划</a>
         <a href="#account"><span>08</span>账号与数据</a>
@@ -237,7 +237,7 @@ export default function AccountDashboard() {
           <span>欢迎回来，{data.user.name?.split(" ")[0] || "今天也在进步的你"}</span>
           <h1>{todayPlan?.restDay ? "今天，把恢复也认真完成。" : todayPlan ? todayPlan.title.zh : "从第一份专属计划开始。"}</h1>
           <p>{todayPlan?.focus.zh || "更新训练档案后，让 AI 根据你的目标和现实条件安排完整一周。"}</p>
-          {data.latestPlan ? <Link href="/#plan">查看当前计划 <b>→</b></Link> : <Link href="/#coach">生成第一份计划 <b>→</b></Link>}
+          {data.latestPlan ? <Link href="/today">查看今日训练 <b>→</b></Link> : <Link href="/onboarding">生成第一份计划 <b>→</b></Link>}
         </div>
         <article>
           <small>TODAY</small>
@@ -314,6 +314,10 @@ export default function AccountDashboard() {
           <label><span>训练经验</span><select value={profile.experience} onChange={(event) => setProfile({ ...profile, experience: event.target.value as Profile["experience"] })}><option value="beginner">新手</option><option value="intermediate">进阶</option><option value="advanced">高级</option></select></label>
           <label><span>可用器械</span><select value={profile.equipment} onChange={(event) => setProfile({ ...profile, equipment: event.target.value as Profile["equipment"] })}><option value="bodyweight">徒手 / 居家</option><option value="dumbbell">哑铃</option><option value="gym">完整健身房</option></select></label>
           <label><span>每周训练</span><select value={profile.days} onChange={(event) => setProfile({ ...profile, days: Number(event.target.value) })}>{[2, 3, 4, 5, 6].map((day) => <option key={day} value={day}>{day} 天</option>)}</select></label>
+          <label><span>单次训练时长</span><input type="number" min="20" max="180" value={profile.sessionMinutes || 50} onChange={(event) => setProfile({ ...profile, sessionMinutes: Number(event.target.value) })} /></label>
+          <label><span>训练地点</span><select value={profile.trainingLocation || "mixed"} onChange={(event) => setProfile({ ...profile, trainingLocation: event.target.value as NonNullable<Profile["trainingLocation"]> })}><option value="home">居家</option><option value="gym">健身房</option><option value="outdoors">户外</option><option value="mixed">多个地点</option></select></label>
+          <label><span>饮食偏好</span><select value={profile.dietaryPreference || "balanced"} onChange={(event) => setProfile({ ...profile, dietaryPreference: event.target.value as NonNullable<Profile["dietaryPreference"]> })}><option value="balanced">均衡饮食</option><option value="vegetarian">素食</option><option value="high_protein">高蛋白</option><option value="none">暂不设置</option></select></label>
+          <label><span>忌口、过敏或不吃的食物</span><input value={profile.exclusions || ""} onChange={(event) => setProfile({ ...profile, exclusions: event.target.value })} placeholder="没有可留空" /></label>
           <label className="profile-limitations"><span>伤病、疼痛或需要避开的动作</span><input value={profile.limitations} onChange={(event) => setProfile({ ...profile, limitations: event.target.value })} placeholder="没有可留空" /></label>
           <button onClick={() => void saveProfile()} disabled={savingProfile}>{savingProfile ? "正在保存…" : "保存训练档案 →"}</button>
         </div>

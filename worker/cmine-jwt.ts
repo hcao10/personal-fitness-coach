@@ -70,7 +70,7 @@ async function verifyWithJwk(token: string, jwk: JsonWebKeyWithKid, alg: string)
 export async function verifyCmineAccessToken(
   token: string,
   issuerValue: string,
-  clientId: string,
+  clientId: string | string[],
 ): Promise<CmineAccessClaims> {
   const parts = token.split(".");
   if (parts.length !== 3) throw new Error("CMINE_JWT_FORMAT");
@@ -91,7 +91,8 @@ export async function verifyCmineAccessToken(
   const now = Math.floor(Date.now() / 1000);
   const audiences = typeof claims.aud === "string" ? [claims.aud] : claims.aud;
   if (!claims.iss || !safeEqual(claims.iss.replace(/\/$/, ""), issuer)) throw new Error("CMINE_JWT_ISSUER");
-  if (!Array.isArray(audiences) || !audiences.some((audience) => safeEqual(audience, clientId))) throw new Error("CMINE_JWT_AUDIENCE");
+  const allowedClients = Array.isArray(clientId) ? clientId : [clientId];
+  if (!Array.isArray(audiences) || !audiences.some((audience) => allowedClients.some((allowed) => safeEqual(audience, allowed)))) throw new Error("CMINE_JWT_AUDIENCE");
   if (!claims.sub || typeof claims.sub !== "string") throw new Error("CMINE_JWT_SUBJECT");
   if (!claims.exp || claims.exp < now - 30) throw new Error("CMINE_JWT_EXPIRED");
   if (claims.nbf && claims.nbf > now + 30) throw new Error("CMINE_JWT_NOT_ACTIVE");

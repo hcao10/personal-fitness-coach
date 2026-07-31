@@ -1,0 +1,2 @@
+import { Text, View } from "react-native"; import { Screen, styles } from "../src/Screen";
+export default function Coach() { return <Screen eyebrow="COACH / 连续对话" title="懂训练，更懂你"><View style={styles.card}><Text style={styles.label}>连续上下文</Text><Text style={styles.value}>你的计划、训练反馈和恢复趋势会一起进入 Coach 上下文。</Text></View><View style={styles.card}><Text>正式消息由 /api/v1/coach/conversations 提供，并以 SSE 流式返回；所有计划改变仍需你确认。</Text></View></Screen>; }

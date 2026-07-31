@@ -27,7 +27,9 @@ export default function CoachApp() {
   const [plan, setPlan] = useState<CoachPlan>(() => generatePlan(defaultProfile));
   const [generating, setGenerating] = useState(false);
   const [planReady, setPlanReady] = useState(false);
+  const [anonymousPreview, setAnonymousPreview] = useState(false);
   const [planId, setPlanId] = useState<string | null>(null);
+  const [planStatus, setPlanStatus] = useState<"active" | "draft">("active");
   const [services, setServices] = useState({ ai: false, rewardAds: false });
   const [announcement, setAnnouncement] = useState("");
   const [activeDay, setActiveDay] = useState(0);
@@ -61,6 +63,7 @@ export default function CoachApp() {
         if (account.latestPlan?.plan) {
           setPlan(account.latestPlan.plan);
           setPlanId(account.latestPlan.id);
+          setPlanStatus("active");
           setPlanReady(true);
           const today = (new Date().getDay() + 6) % 7;
           setActiveDay(account.latestPlan.plan.schedule[today]?.restDay
@@ -92,24 +95,27 @@ export default function CoachApp() {
   };
   const buildPlan = async () => {
     if (!user) {
-      setLoginOpen(true);
-      setToast(lang === "zh" ? "登录后可使用真实 AI 计划并保存长期记录" : "Sign in to generate and save a real AI plan");
+      sessionStorage.setItem("cmine_fit_intake_draft", JSON.stringify(profile));
+      setPlan(generatePlan(profile));
+      setAnonymousPreview(true);
+      setToast(lang === "zh" ? "已生成不消耗 AI 的个性化预览；登录后解锁完整计划" : "Your private rules-based preview is ready; sign in to unlock the full plan");
       return;
     }
     setGenerating(true);
     let revealPlan = false;
     try {
       const response = await fetch("/api/plans", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ profile, consent: accepted === true }) });
-      const result = await response.json() as { plan?: CoachPlan; planId?: string | null; source?: "llm"; message?: string };
+      const result = await response.json() as { plan?: CoachPlan; planId?: string | null; planStatus?: "active" | "draft"; source?: "llm"; message?: string };
       if (response.ok && result.plan) {
         setPlan(result.plan);
         setPlanId(result.planId || null);
+        setPlanStatus(result.planStatus || "active");
         setCompleted(new Set());
         setPlanReady(true);
         revealPlan = true;
         const firstTrainingDay = result.plan.schedule.findIndex((day) => !day.restDay);
         setActiveDay(Math.max(0, firstTrainingDay));
-        setToast(lang === "zh" ? "AI 已完成个性化计划，并通过规则校验" : "Your AI plan passed the safety checks");
+        setToast(result.planStatus === "draft" ? (lang === "zh" ? "新计划已生成草案；确认后才会替换当前计划" : "Your new plan is a draft until you confirm it") : (lang === "zh" ? "AI 已完成个性化计划，并通过规则校验" : "Your AI plan passed the safety checks"));
       } else {
         setPlanReady(false);
         setToast(result.message || (lang === "zh" ? "AI 教练暂时离线，计划没有生成，请稍后重试" : "The AI coach is temporarily offline; please try again"));
@@ -134,8 +140,14 @@ export default function CoachApp() {
     }
     setCompleted((current) => new Set(current).add(key));
   };
-  const signIn = async () => {
-    const result = await beginCmineLogin();
+  const activateDraft = async () => {
+    if (!planId) return;
+    const response = await fetch(`/api/v1/plans/${encodeURIComponent(planId)}/activate`, { method: "POST" });
+    if (!response.ok) { setToast(lang === "zh" ? "计划草案启用失败，请重试" : "Could not activate this plan"); return; }
+    setPlanStatus("active"); setToast(lang === "zh" ? "新计划已经启用，旧版本仍保留在历史中" : "The new plan is active; the previous version remains in history");
+  };
+  const signIn = async (resumeIntake = false) => {
+    const result = await beginCmineLogin(resumeIntake ? "/onboarding?resume=intake" : "/");
     if (!result.ok) { setLoginOpen(false); setToast(result.message || "登录暂不可用。"); }
   };
   const currentDay = plan.schedule[activeDay] || plan.schedule[0];
@@ -228,11 +240,30 @@ export default function CoachApp() {
                   </select>
                 </label>
               </div>
+              <div className="field-grid two">
+                <label><FieldLabel>{lang === "zh" ? "单次训练时长" : "Session duration"}</FieldLabel><span className="input-unit"><input type="number" min="20" max="180" value={profile.sessionMinutes || 50} onChange={(e) => patchProfile("sessionMinutes", Number(e.target.value))} /><em>{lang === "zh" ? "分钟" : "min"}</em></span></label>
+                <label><FieldLabel>{lang === "zh" ? "训练地点" : "Training location"}</FieldLabel>
+                  <select value={profile.trainingLocation || "mixed"} onChange={(e) => patchProfile("trainingLocation", e.target.value as NonNullable<Profile["trainingLocation"]>)}>
+                    <option value="home">{lang === "zh" ? "居家" : "Home"}</option><option value="gym">{lang === "zh" ? "健身房" : "Gym"}</option><option value="outdoors">{lang === "zh" ? "户外" : "Outdoors"}</option><option value="mixed">{lang === "zh" ? "多个地点" : "Mixed"}</option>
+                  </select>
+                </label>
+              </div>
               <div className="days-control"><FieldLabel>{lang === "zh" ? "每周训练几天" : "Training days per week"}</FieldLabel><div>{[2, 3, 4, 5, 6].map((day) => <button key={day} className={profile.days === day ? "active" : ""} onClick={() => patchProfile("days", day)}>{day}</button>)}</div></div>
               <label className="full-field"><FieldLabel>{lang === "zh" ? "伤病、疼痛或需要避开的动作（选填）" : "Injuries, pain or movements to avoid (optional)"}</FieldLabel><input value={profile.limitations} onChange={(e) => patchProfile("limitations", e.target.value)} placeholder={lang === "zh" ? "例如：右膝旧伤，避免跳跃" : "e.g. old right knee injury; avoid jumping"} /></label>
             </div>
-            <button className="primary-cta" onClick={buildPlan} disabled={generating}><span>{generating ? (lang === "zh" ? "AI 正在规划…" : "AI is planning…") : t.generate}</span><b>{generating ? "···" : "→"}</b></button>
-            <p className="privacy-line">◉ {lang === "zh" ? "生成时会将本页训练资料发送给服务端；登录后保存计划历史" : "Generation sends this profile to the server; signed-in users keep plan history"}</p>
+            <div className="form-section">
+              <div className="form-section-title"><span>04</span><h3>{lang === "zh" ? "饮食偏好" : "Food preferences"}</h3></div>
+              <div className="field-grid two">
+                <label><FieldLabel>{lang === "zh" ? "日常饮食方式" : "Eating style"}</FieldLabel>
+                  <select value={profile.dietaryPreference || "balanced"} onChange={(e) => patchProfile("dietaryPreference", e.target.value as NonNullable<Profile["dietaryPreference"]>)}>
+                    <option value="balanced">{lang === "zh" ? "均衡饮食" : "Balanced"}</option><option value="vegetarian">{lang === "zh" ? "素食" : "Vegetarian"}</option><option value="high_protein">{lang === "zh" ? "高蛋白" : "High protein"}</option><option value="none">{lang === "zh" ? "暂不设置" : "No preference"}</option>
+                  </select>
+                </label>
+                <label><FieldLabel>{lang === "zh" ? "忌口、过敏或不吃的食物" : "Exclusions or allergies"}</FieldLabel><input value={profile.exclusions || ""} onChange={(e) => patchProfile("exclusions", e.target.value)} placeholder={lang === "zh" ? "例如：乳糖不耐、花生过敏" : "e.g. lactose, peanut allergy"} /></label>
+              </div>
+            </div>
+            <button className="primary-cta" onClick={buildPlan} disabled={generating}><span>{generating ? (lang === "zh" ? "AI 正在规划…" : "AI is planning…") : !user ? (lang === "zh" ? "查看我的计划预览" : "Preview my plan") : t.generate}</span><b>{generating ? "···" : "→"}</b></button>
+            <p className="privacy-line">◉ {!user ? (lang === "zh" ? "预览只在当前浏览器计算，不上传身体或伤病资料" : "Preview calculations stay in this browser; body and injury data are not uploaded") : (lang === "zh" ? "生成时会安全提交训练资料并保存计划历史" : "Generation securely submits this profile and saves plan history")}</p>
           </div>
 
           <aside className="preview-card">
@@ -245,12 +276,25 @@ export default function CoachApp() {
             </div>
             <div className="week-strip">{plan.schedule.map((day, index) => <div key={index} className={day.restDay ? "" : "training"}><span>{dayNames[lang][index]}</span><b>{day.restDay ? "·" : "●"}</b></div>)}</div>
             <div className="preview-note"><span>↗</span><p>{plan.insights?.summary[lang] || (lang === "zh" ? "完成生成后，AI 会围绕「" + goalLabel + "」安排训练日、动作、组次和恢复。" : "After generation, AI will arrange your days, exercises, volume, and recovery around this goal.")}</p></div>
+            {anonymousPreview && !user && <div className="anonymous-plan-preview">
+              <div className="preview-day-sample">
+                <span>{lang === "zh" ? "第一天 · 部分预览" : "Day one · partial preview"}</span>
+                <b>{plan.schedule.find((day) => !day.restDay)?.title[lang]}</b>
+                <p>{plan.schedule.find((day) => !day.restDay)?.exercises.slice(0, 2).map((exercise) => exercise.name[lang]).join(" · ")}</p>
+              </div>
+              <div className="locked-plan-sections" aria-label={lang === "zh" ? "登录后解锁的完整计划" : "Full plan unlocked after sign in"}>
+                <span>完整 7 天安排</span><span>组数、次数与休息</span><span>渐进负荷</span><span>完整饮食建议</span><span>为什么这样安排</span><span>Coach 长期调整</span>
+              </div>
+              <p>{lang === "zh" ? "登录后，根据您刚刚填写的资料生成完整专属计划。" : "Sign in to generate the full personalized plan from the information you just entered."}</p>
+              <button onClick={() => void signIn(true)}>{lang === "zh" ? "保存资料并生成完整计划" : "Save details and generate full plan"}<b>→</b></button>
+            </div>}
           </aside>
         </div>
       </section>
 
       {planReady && <section className="plan-section" id="plan" ref={planRef}>
         <div className="section-heading light"><p>02 / YOUR PLAN</p><div><h2>{t.planTitle}</h2><span>{t.planSub}</span></div></div><div className="plan-source-pill llm">{lang === "zh" ? "AI 个性化计划 · 已通过安全校验" : "AI PERSONALIZED · SAFETY CHECKED"}</div>
+        {planStatus === "draft" && <div className="plan-draft-banner"><div><span>DRAFT / 待确认</span><p>{lang === "zh" ? "这是新计划草案。启用前，你当前正在执行的计划不会改变。" : "This is a draft. Your active plan will not change until you confirm."}</p></div><button onClick={() => void activateDraft()}>{lang === "zh" ? "确认并启用新计划" : "Confirm and activate"} →</button></div>}
         <div className="nutrition-grid">
           <article className="nutrition-main">
             <div className="card-kicker">{t.nutrition}</div>
@@ -313,7 +357,7 @@ export default function CoachApp() {
 
       <footer><a className="brand" href="#top"><span className="brand-mark">C</span><span>CMINE <b>FIT</b></span></a><p>{t.footerNote}</p><span>© 2026 Cmine Fit · Exercise media © Gym visual · <a className="admin-link" href="/admin">{t.navAdmin}</a></span></footer>
 
-      {accepted === false && <div className="modal-backdrop safety-backdrop" role="dialog" aria-modal="true" aria-labelledby="disclaimer-title">
+      {user && accepted === false && <div className="modal-backdrop safety-backdrop" role="dialog" aria-modal="true" aria-labelledby="disclaimer-title">
         <div className="safety-modal">
           <div className="modal-stripe"><span>SAFETY FIRST</span><b>01 / 03</b></div><h2 id="disclaimer-title">{t.disclaimerTitle}</h2><p className="disclaimer-intro">{t.disclaimerIntro}</p>
           <label className={healthCheck ? "checked" : ""}><input type="checkbox" checked={healthCheck} onChange={(e) => setHealthCheck(e.target.checked)} /><span>{healthCheck ? "✓" : ""}</span><p>{t.disclaimerHealth}</p></label>
@@ -325,7 +369,7 @@ export default function CoachApp() {
 
       {loginOpen && <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setLoginOpen(false)} role="dialog" aria-modal="true">
         <div className="small-modal"><button className="modal-close" onClick={() => setLoginOpen(false)}>×</button><span className="modal-icon">↗</span><h2>{t.signinTitle}</h2><p>{t.signinText}</p>
-          <div className="provider-list">{AUTH_PROVIDERS.map((provider) => <button key={provider.id} onClick={signIn}><span>C</span>{provider.label}<em>→</em></button>)}</div>
+          <div className="provider-list">{AUTH_PROVIDERS.map((provider) => <button key={provider.id} onClick={() => void signIn(anonymousPreview)}><span>C</span>{provider.label}<em>→</em></button>)}</div>
         </div>
       </div>}
 

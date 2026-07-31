@@ -9,10 +9,27 @@ interface ExecutionContext {
   passThroughOnException(): void;
 }
 
+function mobileAssociation(request: Request, env: WorkerEnv): Response | null {
+  const pathname = new URL(request.url).pathname;
+  if (request.method !== "GET") return null;
+  const headers = { "content-type": "application/json; charset=utf-8", "cache-control": "public, max-age=3600" };
+  if (pathname === "/.well-known/apple-app-site-association") {
+    if (!env.APPLE_APP_TEAM_ID) return Response.json({ error: "MOBILE_LINK_NOT_CONFIGURED" }, { status: 404 });
+    return Response.json({ applinks: { apps: [], details: [{ appID: `${env.APPLE_APP_TEAM_ID}.com.chwjh.cminefit`, paths: ["/auth/mobile/callback"] }] } }, { headers });
+  }
+  if (pathname === "/.well-known/assetlinks.json") {
+    if (!env.ANDROID_APP_SHA256_CERT_FINGERPRINT) return Response.json({ error: "MOBILE_LINK_NOT_CONFIGURED" }, { status: 404 });
+    return Response.json([{ relation: ["delegate_permission/common.handle_all_urls"], target: { namespace: "android_app", package_name: "com.chwjh.cminefit", sha256_cert_fingerprints: [env.ANDROID_APP_SHA256_CERT_FINGERPRINT] } }], { headers });
+  }
+  return null;
+}
+
 const worker = {
   async fetch(request: Request, env: WorkerEnv, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     try {
+      const association = mobileAssociation(request, env);
+      if (association) return association;
       const apiResponse = await handleApi(request, env);
       if (apiResponse) return apiResponse;
     } catch (error) {

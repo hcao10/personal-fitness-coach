@@ -25,8 +25,10 @@ async function numericSetting(env: WorkerEnv, key: string, fallback: number): Pr
 export async function tierForUser(env: WorkerEnv, userId: string): Promise<ProductTier> {
   if (!env.DB) return "free";
   const row = await env.DB.prepare(`SELECT status, current_period_end FROM subscriptions
-    WHERE user_id = ? AND status IN ('active', 'trialing') ORDER BY updated_at DESC LIMIT 1`)
-    .bind(userId).first<{ status: string; current_period_end: string | null }>();
+    WHERE user_id = ? AND status IN ('active', 'trialing', 'in_grace_period')
+      AND (current_period_end IS NULL OR current_period_end > ?)
+    ORDER BY updated_at DESC LIMIT 1`)
+    .bind(userId, new Date().toISOString()).first<{ status: string; current_period_end: string | null }>();
   if (!row) return "free";
   if (row.current_period_end && new Date(row.current_period_end).getTime() < Date.now()) return "free";
   return "pro";
@@ -55,7 +57,8 @@ export async function limitForCapability(env: WorkerEnv, tier: ProductTier, capa
 export async function membershipForUser(env: WorkerEnv, userId: string) {
   const tier = await tierForUser(env, userId);
   const subscription = env.DB ? await env.DB.prepare(`SELECT status, price_id, current_period_end, cancel_at_period_end, provider
-    FROM subscriptions WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1`)
+    FROM subscriptions WHERE user_id = ?
+    ORDER BY CASE WHEN status IN ('active', 'trialing', 'in_grace_period') THEN 0 ELSE 1 END, updated_at DESC LIMIT 1`)
     .bind(userId).first<{ status: string; price_id: string | null; current_period_end: string | null; cancel_at_period_end: number; provider: string }>() : null;
   return {
     tier,
@@ -156,4 +159,3 @@ export async function redeemPoints(env: WorkerEnv, userId: string, reward: "meal
   ]);
   return { reward, pointsSpent: config.points, balance: balance - config.points };
 }
-

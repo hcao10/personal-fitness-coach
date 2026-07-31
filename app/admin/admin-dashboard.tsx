@@ -16,7 +16,7 @@ type AdminOverview = {
   };
   services: {
     database: boolean; storage: boolean; planner: boolean; vision: boolean; llm: boolean; cmine: boolean;
-    foodData: boolean; billing: boolean; rewardAds: boolean; model: string; reasoningEffort: string;
+    foodData: boolean; billing: boolean; mobileBilling: boolean; rewardAds: boolean; mobileAuth: boolean; maintenance: boolean; model: string; reasoningEffort: string;
     providers: Record<string, boolean>;
   };
   recentUsers: AdminUser[];
@@ -126,6 +126,9 @@ export default function AdminDashboard() {
     { name: "食品数据库", detail: "USDA FoodData Central + Open Food Facts", live: Boolean(services?.foodData) },
     { name: "Cmine ID", detail: "PKCE、JWKS、会话续期与 Connected Apps 撤销", live: Boolean(services?.cmine) },
     { name: "Stripe", detail: "Checkout、Portal、Webhook 与权益同步", live: Boolean(services?.billing) },
+    { name: "RevenueCat", detail: "Apple / Google 内购事件与统一 Pro 权益", live: Boolean(services?.mobileBilling) },
+    { name: "移动端身份", detail: "Cmine PKCE、Bearer Token 与离线同步", live: Boolean(services?.mobileAuth) },
+    { name: "定时维护", detail: "图片、缓存、会话清理与周度任务", live: Boolean(services?.maintenance) },
     { name: "激励广告", detail: "只有签名回调成功才发积分", live: Boolean(services?.rewardAds) },
   ];
 
@@ -141,6 +144,10 @@ export default function AdminDashboard() {
       <article><span>AI 估算成本</span><b>${metrics?.aiCostUsd ?? "—"}</b><small>按已知模型单价累计</small></article>
       <article><span>专业订阅</span><b>{metrics?.subscriptions ?? "—"}</b><small>收入 ${metrics?.revenueUsd ?? 0}</small></article>
       <article><span>确认餐食</span><b>{metrics?.meals ?? "—"}</b><small>识别成功率 {metrics?.mealAnalysisSuccessRate ?? 0}%</small></article>
+      <article><span>完成建档</span><b>{metrics?.onboardingCompleted ?? "—"}</b><small>新用户产品漏斗</small></article>
+      <article><span>Coach 消息</span><b>{metrics?.coachMessages ?? "—"}</b><small>{metrics?.coachConversations ?? 0} 段对话</small></article>
+      <article><span>周度复盘</span><b>{metrics?.weeklyReviews ?? "—"}</b><small>{metrics?.acceptedReviews ?? 0} 次接受调整</small></article>
+      <article><span>移动设备</span><b>{metrics?.devices ?? "—"}</b><small>已注册同步设备</small></article>
     </div>
 
     <section className="admin-panel" id="modules">
@@ -178,7 +185,7 @@ export default function AdminDashboard() {
     </section>
 
     <section className="admin-panel" id="billing">
-      <div className="admin-section-title"><div><span>05 / BILLING</span><h2>订阅与支付事件</h2></div><p>Stripe Webhook 是订阅状态的唯一事实来源。</p></div>
+      <div className="admin-section-title"><div><span>05 / BILLING</span><h2>订阅与支付事件</h2></div><p>Web 以 Stripe、App 以 RevenueCat Webhook 为各自事实来源，统一归并为能力权益。</p></div>
       <div className="billing-event-list">{overview?.recentBilling?.length ? overview.recentBilling.map((event) => <article key={String(event.event_id)}>
         <b className={event.status === "processed" ? "status-good" : "status-bad"}>{String(event.status)}</b>
         <div><strong>{String(event.event_type)}</strong><span>{String(event.object_id || "—")}</span></div>

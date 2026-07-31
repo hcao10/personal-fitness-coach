@@ -2,6 +2,7 @@ import { type Activity, type Equipment, type Experience, type Goal, type Profile
 import { verifyCmineAccessToken } from "./cmine-jwt";
 import {
   accountSnapshot,
+  activatePlan,
   addMeasurement,
   adminOverview,
   adminAuditEvents,
@@ -16,6 +17,7 @@ import {
   listPlansForUser,
   measurementsForUser,
   planForUser,
+  planVersionStatus,
   pointsForUser,
   profileForUser,
   progressForUser,
@@ -52,12 +54,35 @@ import {
 import { processAdmobReward, rewardAdsConfigured } from "./rewards";
 import type { WorkerEnv } from "./platform";
 import { cookie, parseCookies, randomToken, safeReturnPath, sha256, signPayload, verifyPayload } from "./security";
+import { completeOnboarding, onboardingSnapshot, saveOnboardingDraft, skipOnboarding } from "./modules/onboarding";
+import { createConversation, conversationMessages, decideCoachAction, listConversations, sendCoachMessage } from "./modules/coach";
+import { decideReview, generateReview, listReviews, reviewDetail, saveReviewCheckin } from "./modules/reviews";
+import { deleteDevice, deleteHealthConnection, importHealthObservations, registerDevice, syncBatch, syncChanges, upsertHealthConnection } from "./modules/mobile";
+import { processRevenueCatEvent, revenueCatConfigured, verifyRevenueCatWebhook } from "./modules/revenuecat";
+import { runMaintenance, verifyMaintenanceRequest } from "./modules/maintenance";
 
 const json = (body: unknown, status = 200, headers?: HeadersInit) => Response.json(body, {
   status,
   headers: { "cache-control": "no-store", ...headers },
 });
 const errorJson = (error: string, message: string, status: number) => json({ error, message }, status);
+function coachStream(result: { assistantMessage: { id: string; content: string; actions?: unknown[] }; duplicate?: boolean }) {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    start(controller) {
+      const content = result.assistantMessage.content;
+      for (let index = 0; index < content.length; index += 48) {
+        controller.enqueue(encoder.encode(`event: message.delta\ndata: ${JSON.stringify({ delta: content.slice(index, index + 48) })}\n\n`));
+      }
+      for (const action of result.assistantMessage.actions || []) {
+        controller.enqueue(encoder.encode(`event: action.proposed\ndata: ${JSON.stringify(action)}\n\n`));
+      }
+      controller.enqueue(encoder.encode(`event: message.completed\ndata: ${JSON.stringify({ id: result.assistantMessage.id, duplicate: Boolean(result.duplicate) })}\n\n`));
+      controller.close();
+    },
+  });
+  return new Response(stream, { headers: { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-store", connection: "keep-alive" } });
+}
 const goals = new Set<Goal>(["fat_loss", "muscle", "recomp", "arms", "strength"]);
 const sexes = new Set<Sex>(["female", "male"]);
 const activities = new Set<Activity>(["sedentary", "light", "moderate", "active"]);
@@ -84,10 +109,14 @@ function profileFrom(value: unknown): Profile | null {
     days: Number(body.days),
     equipment: body.equipment as Equipment,
     limitations: typeof body.limitations === "string" ? body.limitations.trim().slice(0, 500) : "",
+    sessionMinutes: Number(body.sessionMinutes || 50),
+    trainingLocation: (["home", "gym", "outdoors", "mixed"].includes(String(body.trainingLocation)) ? body.trainingLocation : "mixed") as Profile["trainingLocation"],
+    dietaryPreference: (["balanced", "vegetarian", "high_protein", "none"].includes(String(body.dietaryPreference)) ? body.dietaryPreference : "none") as Profile["dietaryPreference"],
+    exclusions: typeof body.exclusions === "string" ? body.exclusions.trim().slice(0, 500) : "",
   };
   if (!sexes.has(profile.sex) || !activities.has(profile.activity) || !goals.has(profile.goal) || !experiences.has(profile.experience) || !equipment.has(profile.equipment)) return null;
-  if (![profile.age, profile.height, profile.weight, profile.targetWeight, profile.days].every(Number.isFinite)) return null;
-  if (profile.age < 16 || profile.age > 85 || profile.height < 130 || profile.height > 220 || profile.weight < 35 || profile.weight > 250 || profile.targetWeight < 35 || profile.targetWeight > 250 || profile.days < 2 || profile.days > 6) return null;
+  if (![profile.age, profile.height, profile.weight, profile.targetWeight, profile.days, profile.sessionMinutes].every(Number.isFinite)) return null;
+  if (profile.age < 16 || profile.age > 85 || profile.height < 130 || profile.height > 220 || profile.weight < 35 || profile.weight > 250 || profile.targetWeight < 35 || profile.targetWeight > 250 || profile.days < 2 || profile.days > 6 || Number(profile.sessionMinutes) < 20 || Number(profile.sessionMinutes) > 180) return null;
   return profile;
 }
 
@@ -114,8 +143,25 @@ function oauthError(request: Request, env: WorkerEnv, message: string): Response
   return Response.redirect(target.toString(), 302);
 }
 
+async function requestUser(request: Request, env: WorkerEnv): Promise<StoredUser | null> {
+  const sessionUser = await getSessionUser(request, env);
+  if (sessionUser) return sessionUser;
+  const authorization = request.headers.get("authorization") || "";
+  if (!authorization.startsWith("Bearer ") || !env.CMINE_MOBILE_CLIENT_IDS) return null;
+  const token = authorization.slice(7).trim();
+  const clientIds = env.CMINE_MOBILE_CLIENT_IDS.split(",").map((value) => value.trim()).filter(Boolean);
+  if (!token || !clientIds.length) return null;
+  const issuer = (env.CMINE_ISSUER || "https://identity.chwjh.com").replace(/\/$/, "");
+  let claims: { sub: string };
+  try { claims = await verifyCmineAccessToken(token, issuer, clientIds); } catch { return null; }
+  const response = await fetch(`${issuer}/oauth/userinfo`, { headers: { authorization: `Bearer ${token}`, accept: "application/json" } }).catch(() => null);
+  const identity = await response?.json().catch(() => null) as { sub?: string; email?: string; email_verified?: boolean; name?: string; picture?: string; avatar_url?: string; role?: string } | null;
+  if (!response?.ok || !identity?.sub || identity.sub !== claims.sub || !identity.email || identity.email_verified !== true) return null;
+  return upsertCmineUser(env, { sub: identity.sub, email: identity.email, name: identity.name, picture: identity.picture || identity.avatar_url, role: identity.role });
+}
+
 async function requireUser(request: Request, env: WorkerEnv): Promise<StoredUser | Response> {
-  const user = await getSessionUser(request, env);
+  const user = await requestUser(request, env);
   return user || errorJson("AUTH_REQUIRED", "请先登录 Cmine ID。", 401);
 }
 
@@ -224,8 +270,14 @@ async function authCallback(request: Request, env: WorkerEnv): Promise<Response>
     refreshToken: tokens.refresh_token,
     expiresIn: tokens.expires_in,
   });
+  const onboarding = await onboardingSnapshot(env, user);
+  let destination = state.returnTo;
+  if (destination === "/") {
+    if (onboarding.status === "not_started" || onboarding.status === "in_progress") destination = "/onboarding";
+    else if (onboarding.status === "completed") destination = "/today";
+  }
   const headers = new Headers({
-    location: new URL(state.returnTo, publicOrigin(request, env)).toString(),
+    location: new URL(destination, publicOrigin(request, env)).toString(),
     "cache-control": "no-store",
   });
   headers.append("set-cookie", cookie("cmine_fit_session", sessionToken, request, 7 * 86400));
@@ -281,6 +333,7 @@ async function planRequest(request: Request, env: WorkerEnv): Promise<Response> 
   try {
     const result = await generateLlmPlan(env, profile, user.id, tier);
     const planId = env.DB ? await savePlan(env, user.id, profile, result.plan, result.source, result.model) : null;
+    const version = planId ? await planVersionStatus(env, user.id, planId) : null;
     const publicResult = {
       plan: result.plan,
       source: result.source,
@@ -288,6 +341,8 @@ async function planRequest(request: Request, env: WorkerEnv): Promise<Response> 
       model: result.model,
       requestId: result.requestId,
       planId,
+      planStatus: version?.status || "active",
+      version,
     };
     if (env.DB) {
       const now = new Date();
@@ -373,7 +428,11 @@ function services(env: WorkerEnv) {
     cmine: Boolean(env.CMINE_CLIENT_ID && env.CMINE_CLIENT_SECRET && env.SESSION_SECRET && env.DB),
     foodData: foodDataConfigured(),
     billing: stripeConfigured(env),
+    mobileBilling: revenueCatConfigured(env),
     rewardAds: rewardAdsConfigured(env),
+    mobileAuth: Boolean(env.CMINE_MOBILE_CLIENT_IDS),
+    mobileLinks: Boolean(env.APPLE_APP_TEAM_ID && env.ANDROID_APP_SHA256_CERT_FINGERPRINT),
+    maintenance: Boolean(env.MAINTENANCE_SECRET),
     providers: ai.providers,
     model: ai.providers.cloudflare ? "Cloudflare AI Router" : env.OPENAI_MODEL || env.AI_COMPAT_TEXT_MODEL || "not configured",
     reasoningEffort: env.OPENAI_REASONING_EFFORT || "medium",
@@ -467,6 +526,7 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
         planner: services(env).planner,
         vision: services(env).vision,
         billing: services(env).billing,
+        mobileBilling: services(env).mobileBilling,
         rewardAds: services(env).rewardAds,
       },
     });
@@ -477,7 +537,7 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
   if (request.method === "GET" && url.pathname === "/api/auth/cmine/start") return authStart(request, env);
   if (request.method === "GET" && url.pathname === "/api/auth/cmine/callback") return authCallback(request, env);
   if (request.method === "GET" && url.pathname === "/api/auth/me") {
-    const user = await getSessionUser(request, env);
+    const user = await requestUser(request, env);
     return json({
       user: user ? { sub: user.sub, email: user.email, name: user.name, picture: user.picture, role: user.role } : null,
       points: user ? await pointsForUser(env, user.id) : 0,
@@ -488,8 +548,48 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
     return json({ ok: true }, 200, { "set-cookie": cookie("cmine_fit_session", "", request, 0) });
   }
 
+  if (url.pathname === "/api/v1/onboarding" && request.method === "GET") {
+    const user = await requireUser(request, env);
+    return user instanceof Response ? user : json(await onboardingSnapshot(env, user));
+  }
+  if ((url.pathname === "/api/v1/onboarding" && request.method === "PATCH") ||
+      (url.pathname === "/api/v1/onboarding/import-intake" && request.method === "POST")) {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    const body = await request.json().catch(() => null) as { step?: unknown; data?: unknown; source?: unknown } | null;
+    if (!body?.data || typeof body.data !== "object") return errorJson("INVALID_ONBOARDING_DRAFT", "建档资料格式无效。", 400);
+    try { return json(await saveOnboardingDraft(env, user.id, { step: Number(body.step || 0), data: body.data as Record<string, unknown>,
+      source: url.pathname.endsWith("import-intake") || body.source === "homepage_intake" ? "homepage_intake" : "guided" }), 201); }
+    catch (error) { return errorJson(error instanceof Error ? error.message : "ONBOARDING_SAVE_FAILED", "无法保存建档草稿。", 400); }
+  }
+  if (url.pathname === "/api/v1/onboarding/complete" && request.method === "POST") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    const body = await request.json().catch(() => null) as { profile?: unknown; consent?: unknown; locale?: unknown } | null;
+    const profile = profileFrom(body?.profile);
+    if (!profile) return errorJson("INVALID_PROFILE", "训练档案不完整或超出安全范围。", 400);
+    if (body?.consent !== true) return errorJson("CONSENT_REQUIRED", "请先确认健康免责声明。", 412);
+    await recordConsent(request, env, user.id, body.locale === "en" ? "en" : "zh");
+    return json(await completeOnboarding(env, user.id, profile), 201);
+  }
+  if (url.pathname === "/api/v1/onboarding/skip" && request.method === "POST") {
+    const user = await requireUser(request, env); return user instanceof Response ? user : json(await skipOnboarding(env, user.id), 201);
+  }
+
   if (request.method === "GET" && url.pathname === "/api/v1/billing/catalog") {
     return json(billingCatalog(env));
+  }
+  if (request.method === "POST" && url.pathname === "/api/webhooks/revenuecat") {
+    try {
+      verifyRevenueCatWebhook(env, request);
+      const body = await request.json() as Record<string, unknown>;
+      return json({ ok: true, ...(await processRevenueCatEvent(env, body)) });
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "REVENUECAT_WEBHOOK_FAILED";
+      return errorJson(code, "RevenueCat 事件未通过验证或处理失败。", code.includes("SIGNATURE") ? 401 : code.includes("NOT_CONFIGURED") ? 503 : 400);
+    }
+  }
+  if (request.method === "POST" && url.pathname === "/api/internal/maintenance/run") {
+    try { await verifyMaintenanceRequest(request, env); return json({ ok: true, ...(await runMaintenance(env)) }); }
+    catch (error) { const code = error instanceof Error ? error.message : "MAINTENANCE_FAILED"; return errorJson(code, "维护任务未通过验证或执行失败。", code.includes("SIGNATURE") || code.includes("REPLAY") ? 401 : 500); }
   }
   if (request.method === "POST" && url.pathname === "/api/webhooks/stripe") {
     try {
@@ -550,6 +650,122 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
       const code = error instanceof Error ? error.message : "REDEMPTION_FAILED";
       return errorJson(code, code === "INSUFFICIENT_POINTS" ? "积分不足。" : "暂时无法完成兑换。", code === "INSUFFICIENT_POINTS" ? 409 : 500);
     }
+  }
+
+  if (url.pathname === "/api/v1/coach/conversations" && request.method === "GET") {
+    const user = await requireUser(request, env); return user instanceof Response ? user : json({ conversations: await listConversations(env, user.id) });
+  }
+  if (url.pathname === "/api/v1/coach/conversations" && request.method === "POST") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    const body = await request.json().catch(() => ({})) as { title?: unknown };
+    return json({ conversation: await createConversation(env, user.id, typeof body.title === "string" ? body.title : undefined) }, 201);
+  }
+  const coachMessagesMatch = url.pathname.match(/^\/api\/v1\/coach\/conversations\/([^/]+)\/messages$/);
+  if (coachMessagesMatch && request.method === "GET") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    try { return json({ messages: await conversationMessages(env, user.id, decodeURIComponent(coachMessagesMatch[1]), url.searchParams.get("before")) }); }
+    catch { return errorJson("CONVERSATION_NOT_FOUND", "没有找到这段 Coach 对话。", 404); }
+  }
+  if (coachMessagesMatch && request.method === "POST") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    const body = await request.json().catch(() => null) as { message?: unknown; clientMutationId?: unknown } | null;
+    if (typeof body?.message !== "string") return errorJson("MESSAGE_REQUIRED", "请输入要发送给 Coach 的内容。", 400);
+    try {
+      const result = await sendCoachMessage(env, user, decodeURIComponent(coachMessagesMatch[1]), { message: body.message,
+        clientMutationId: typeof body.clientMutationId === "string" ? body.clientMutationId.slice(0, 100) : null });
+      return coachStream(result);
+    } catch (error) {
+      const code = error instanceof Error ? error.message.split(":")[0] : "COACH_FAILED";
+      const status = code === "COACH_LIMIT_REACHED" ? 403 : code === "CONVERSATION_NOT_FOUND" ? 404 : code === "AI_BUDGET_EXHAUSTED" ? 429 : 502;
+      return errorJson(code, code === "COACH_LIMIT_REACHED" ? "连续 Coach 是 Pro 权益；请升级或检查本月额度。" : "Coach 暂时无法完成回复，请稍后重试。", status);
+    }
+  }
+  const coachActionMatch = url.pathname.match(/^\/api\/v1\/coach\/actions\/([^/]+)\/(accept|reject)$/);
+  if (coachActionMatch && request.method === "POST") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    try { return json(await decideCoachAction(env, user.id, decodeURIComponent(coachActionMatch[1]), coachActionMatch[2] === "accept" ? "accepted" : "rejected")); }
+    catch { return errorJson("ACTION_NOT_FOUND", "没有找到这条 Coach 建议。", 404); }
+  }
+
+  if (url.pathname === "/api/v1/reviews" && request.method === "GET") {
+    const user = await requireUser(request, env); return user instanceof Response ? user : json({ reviews: await listReviews(env, user.id) });
+  }
+  const reviewMatch = url.pathname.match(/^\/api\/v1\/reviews\/([^/]+)(?:\/(check-in|generate|accept|reject))?$/);
+  if (reviewMatch && request.method === "GET" && !reviewMatch[2]) {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    const review = await reviewDetail(env, user.id, decodeURIComponent(reviewMatch[1]));
+    return review ? json({ review }) : errorJson("REVIEW_NOT_FOUND", "没有找到这次复盘。", 404);
+  }
+  if (reviewMatch && request.method === "POST") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    const id = decodeURIComponent(reviewMatch[1]);
+    try {
+      if (reviewMatch[2] === "check-in") return json({ review: await saveReviewCheckin(env, user.id, id, await request.json() as Record<string, unknown>) }, 201);
+      if (reviewMatch[2] === "generate") return json({ review: await generateReview(env, user, id) }, 201);
+      if (reviewMatch[2] === "accept" || reviewMatch[2] === "reject") return json(await decideReview(env, user.id, id, reviewMatch[2] === "accept" ? "accepted" : "rejected"));
+    } catch (error) {
+      const code = error instanceof Error ? error.message.split(":")[0] : "REVIEW_FAILED";
+      return errorJson(code, code === "REVIEW_LIMIT_REACHED" ? "自适应周度复盘是 Pro 权益；请升级或检查本月额度。" : "暂时无法完成这次周度复盘。", code === "REVIEW_LIMIT_REACHED" ? 403 : code.includes("NOT_FOUND") ? 404 : 400);
+    }
+  }
+
+  if (url.pathname === "/api/v1/devices" && request.method === "POST") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    try { return json({ device: await registerDevice(env, user.id, await request.json() as Record<string, unknown>) }, 201); }
+    catch { return errorJson("INVALID_DEVICE", "设备信息无效。", 400); }
+  }
+  if (url.pathname === "/api/v1/devices" && request.method === "GET") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    const rows = await env.DB!.prepare("SELECT id,platform,name,last_seen_at,created_at FROM devices WHERE user_id=? ORDER BY last_seen_at DESC").bind(user.id).all();
+    return json({ devices: rows.results || [] });
+  }
+  const deviceMatch = url.pathname.match(/^\/api\/v1\/devices\/([^/]+)$/);
+  if (deviceMatch && request.method === "DELETE") {
+    const user = await requireUser(request, env); return user instanceof Response ? user : json(await deleteDevice(env, user.id, decodeURIComponent(deviceMatch[1])));
+  }
+  if (url.pathname === "/api/v1/sync/batch" && request.method === "POST") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    const body = await request.json().catch(() => null) as { mutations?: unknown } | null;
+    try { return json(await syncBatch(env, user.id, body?.mutations), 201); }
+    catch { return errorJson("INVALID_SYNC_BATCH", "离线同步批次无效。", 400); }
+  }
+  if (url.pathname === "/api/v1/sync/changes" && request.method === "GET") {
+    const user = await requireUser(request, env); return user instanceof Response ? user : json(await syncChanges(env, user.id, Number(url.searchParams.get("cursor") || 0)));
+  }
+  if (url.pathname === "/api/v1/health/connections" && request.method === "POST") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    try { return json({ connection: await upsertHealthConnection(env, user.id, await request.json() as Record<string, unknown>) }, 201); }
+    catch { return errorJson("INVALID_HEALTH_CONNECTION", "健康数据连接无效。", 400); }
+  }
+  if (url.pathname === "/api/v1/health/connections" && request.method === "GET") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    const rows = await env.DB!.prepare("SELECT id,platform,permissions_json,status,created_at,updated_at FROM health_connections WHERE user_id=? ORDER BY updated_at DESC").bind(user.id).all();
+    return json({ connections: (rows.results || []).map((row) => ({ ...row, permissions: JSON.parse(String((row as Record<string, unknown>).permissions_json || "[]")) })) });
+  }
+  const healthImportMatch = url.pathname.match(/^\/api\/v1\/health\/connections\/([^/]+)\/observations$/);
+  if (healthImportMatch && request.method === "POST") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    const body = await request.json().catch(() => null) as { observations?: unknown } | null;
+    try { return json(await importHealthObservations(env, user.id, decodeURIComponent(healthImportMatch[1]), body?.observations as never), 201); }
+    catch { return errorJson("INVALID_HEALTH_BATCH", "健康数据批次无效。", 400); }
+  }
+  const healthConnectionMatch = url.pathname.match(/^\/api\/v1\/health\/connections\/([^/]+)$/);
+  if (healthConnectionMatch && request.method === "DELETE") {
+    const user = await requireUser(request, env); return user instanceof Response ? user : json(await deleteHealthConnection(env, user.id, decodeURIComponent(healthConnectionMatch[1])));
+  }
+  if (url.pathname === "/api/v1/notification-preferences" && request.method === "GET") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    const row = await env.DB!.prepare("SELECT training,coach,reviews,nutrition,billing,quiet_start,quiet_end FROM notification_preferences WHERE user_id=?").bind(user.id).first<Record<string, unknown>>();
+    return json({ preferences: row || { training: 1, coach: 1, reviews: 1, nutrition: 0, billing: 1, quiet_start: "22:00", quiet_end: "08:00" } });
+  }
+  if (url.pathname === "/api/v1/notification-preferences" && request.method === "PUT") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+    if (!body || !/^\d{2}:\d{2}$/.test(String(body.quietStart || "")) || !/^\d{2}:\d{2}$/.test(String(body.quietEnd || ""))) return errorJson("INVALID_NOTIFICATION_PREFERENCES", "通知偏好设置无效。", 400);
+    await env.DB!.prepare(`INSERT INTO notification_preferences (user_id,training,coach,reviews,nutrition,billing,quiet_start,quiet_end,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET training=excluded.training,coach=excluded.coach,reviews=excluded.reviews,nutrition=excluded.nutrition,billing=excluded.billing,quiet_start=excluded.quiet_start,quiet_end=excluded.quiet_end,updated_at=excluded.updated_at`)
+      .bind(user.id, body.training === false ? 0 : 1, body.coach === false ? 0 : 1, body.reviews === false ? 0 : 1, body.nutrition === true ? 1 : 0, body.billing === false ? 0 : 1, body.quietStart, body.quietEnd, new Date().toISOString()).run();
+    return json({ ok: true });
   }
 
   if (request.method === "POST" && url.pathname === "/api/v1/meals/upload") {
@@ -705,6 +921,12 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
     if (user instanceof Response) return user;
     const plan = await planForUser(env, user.id, decodeURIComponent(planMatch[1]));
     return plan ? json(plan) : errorJson("PLAN_NOT_FOUND", "没有找到该计划。", 404);
+  }
+  const planActivateMatch = url.pathname.match(/^\/api\/v1\/plans\/([^/]+)\/activate$/);
+  if (planActivateMatch && request.method === "POST") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    try { return json(await activatePlan(env, user.id, decodeURIComponent(planActivateMatch[1]))); }
+    catch { return errorJson("PLAN_VERSION_NOT_FOUND", "没有找到可启用的计划草案。", 404); }
   }
   if (url.pathname === "/api/v1/measurements" && request.method === "GET") {
     const user = await requireUser(request, env);

@@ -1,0 +1,55 @@
+{
+  "expo": {
+    "name": "Cmine Fit",
+    "slug": "cmine-fit",
+    "scheme": "cminefit",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "plugins": [
+      "expo-router",
+      ["expo-secure-store", { "configureAndroidBackup": true }],
+      ["expo-notifications", { "defaultChannel": "training" }],
+      ["expo-sqlite", { "enableFTS": true }],
+      ["react-native-health", {
+        "healthSharePermission": "Cmine Fit 读取你授权的训练、活动、心率摘要和身体数据，用于训练进度和周度复盘。",
+        "healthUpdatePermission": "只有在你主动选择时，Cmine Fit 才会写回已完成训练。",
+        "isClinicalDataEnabled": false
+      }],
+      "react-native-health-connect"
+    ],
+    "ios": {
+      "bundleIdentifier": "com.chwjh.cminefit",
+      "associatedDomains": ["applinks:fit.chwjh.com"],
+      "infoPlist": {
+        "NSHealthShareUsageDescription": "Cmine Fit 读取你授权的训练、活动、心率摘要和身体数据，用于训练进度和周度复盘。",
+        "NSHealthUpdateUsageDescription": "只有在你主动选择时，Cmine Fit 才会写回已完成训练。"
+      }
+    },
+    "android": {
+      "package": "com.chwjh.cminefit",
+      "permissions": [
+        "android.permission.health.READ_STEPS",
+        "android.permission.health.READ_ACTIVE_CALORIES_BURNED",
+        "android.permission.health.READ_EXERCISE",
+        "android.permission.health.READ_HEART_RATE",
+        "android.permission.health.READ_RESTING_HEART_RATE",
+        "android.permission.health.READ_WEIGHT",
+        "android.permission.health.READ_BODY_FAT"
+      ],
+      "intentFilters": [{
+        "action": "VIEW",
+        "autoVerify": true,
+        "data": [{ "scheme": "https", "host": "fit.chwjh.com", "pathPrefix": "/auth/mobile/callback" }],
+        "category": ["BROWSABLE", "DEFAULT"]
+      }]
+    },
+    "extra": {
+      "apiOrigin": "https://fit.chwjh.com",
+      "cmineIssuer": "https://identity.chwjh.com",
+      "cmineClientId": "",
+      "revenueCatAppleKey": "",
+      "revenueCatGoogleKey": ""
+    }
+  }
+}

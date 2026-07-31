@@ -68,6 +68,16 @@ export type MealVisionResult = {
   usage: { inputTokens: number | null; outputTokens: number | null };
 };
 
+export type CoachChatResult = {
+  reply: string;
+  actions: Array<{ type: "plan_adjustment" | "log_workout" | "log_measurement" | "create_meal_draft" | "schedule_review"; title: string; description: string }>;
+  provider: string;
+  model: string;
+  requestId: string | null;
+  estimatedCostUsd: number;
+  usage: { inputTokens: number | null; outputTokens: number | null };
+};
+
 const responseSchema = (exerciseIds: string[]) => ({
   type: "object",
   additionalProperties: false,
@@ -356,6 +366,7 @@ function applyAiPlan(profile: Profile, base: CoachPlan, output: AiPlanOutput): C
   if (sorted.filter((day) => !day.rest_day).length !== profile.days) throw new Error("AI_TRAINING_DAYS_INVALID");
   const expectedTrainingDays = new Set(base.schedule.filter((day) => !day.restDay).map((day) => day.dayIndex));
   if (sorted.some((day) => day.rest_day === expectedTrainingDays.has(day.day_index))) throw new Error("AI_TRAINING_SPACING_INVALID");
+  const maximumSessionMinutes = Math.max(20, Math.min(180, Number(profile.sessionMinutes || 90)));
   const schedule: WorkoutDay[] = sorted.map((day, index) => {
     if (day.rest_day) {
       return {
@@ -379,7 +390,7 @@ function applyAiPlan(profile: Profile, base: CoachPlan, output: AiPlanOutput): C
     if (exercises.length < (profile.equipment === "bodyweight" ? 2 : 3)) throw new Error("AI_EXERCISES_INVALID");
     return {
       dayIndex: index, title: { zh: day.title_zh, en: day.title_en },
-      focus: { zh: day.focus_zh, en: day.focus_en }, duration: Math.max(20, Math.min(90, day.duration_minutes)), exercises,
+      focus: { zh: day.focus_zh, en: day.focus_en }, duration: Math.max(20, Math.min(maximumSessionMinutes, day.duration_minutes)), exercises,
     };
   });
   return {
@@ -488,6 +499,48 @@ export async function generateMealVision(env: WorkerEnv, imageDataUrl: string, t
     } catch (error) {
       lastError = error;
     }
+  }
+  throw lastError instanceof Error ? lastError : new Error("AI_GENERATION_FAILED");
+}
+
+export async function generateCoachChat(env: WorkerEnv, input: {
+  message: string;
+  locale: "zh" | "en";
+  context: Record<string, unknown>;
+  history: Array<{ role: "user" | "assistant"; content: string }>;
+  safetyIdentifier: string;
+}, tier: ProductTier): Promise<CoachChatResult> {
+  await assertAiBudget(env);
+  const routes = (await routesFor(env, "coach_chat", tier)).slice(0, 2);
+  if (!routes.length) throw new Error("AI_NOT_CONFIGURED");
+  const schema = {
+    type: "object", additionalProperties: false, required: ["reply", "actions"],
+    properties: {
+      reply: { type: "string", minLength: 2, maxLength: 1800 },
+      actions: { type: "array", maxItems: 3, items: {
+        type: "object", additionalProperties: false, required: ["type", "title", "description"],
+        properties: {
+          type: { type: "string", enum: ["plan_adjustment", "log_workout", "log_measurement", "create_meal_draft", "schedule_review"] },
+          title: { type: "string", minLength: 2, maxLength: 80 },
+          description: { type: "string", minLength: 2, maxLength: 240 },
+        },
+      } },
+    },
+  };
+  const system = `You are Cmine Fit Coach, a careful long-term fitness assistant. Answer in ${input.locale === "zh" ? "natural Simplified Chinese" : "natural English"}. Use the supplied user context, but do not invent completed workouts or health facts. Never diagnose disease. Do not expose private reasoning. If the user reports meaningful pain, advise stopping the relevant movement and seeking qualified care. You may propose actions, but the application will require explicit confirmation before any mutation.`;
+  const user = JSON.stringify({ message: input.message, context: input.context, recent_messages: input.history.slice(-12) });
+  let lastError: unknown = null;
+  for (const route of routes) {
+    try {
+      const result = await runProvider(env, route, { system, user, schemaName: "cmine_fit_coach", schema, maxTokens: 2400, safetyIdentifier: input.safetyIdentifier });
+      const output = parseJson<{ reply: string; actions: CoachChatResult["actions"] }>(result.text);
+      if (typeof output.reply !== "string" || !Array.isArray(output.actions)) throw new Error("AI_SCHEMA_INVALID");
+      return {
+        reply: output.reply.slice(0, 1800), actions: output.actions.slice(0, 3), provider: route.provider, model: route.model,
+        requestId: result.requestId, estimatedCostUsd: estimatedCost(route.model, result.inputTokens, result.outputTokens),
+        usage: { inputTokens: result.inputTokens, outputTokens: result.outputTokens },
+      };
+    } catch (error) { lastError = error; }
   }
   throw lastError instanceof Error ? lastError : new Error("AI_GENERATION_FAILED");
 }

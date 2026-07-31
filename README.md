@@ -14,7 +14,8 @@ Cmine Fit 是一套包含自主轻量版与专业增强版的 AI 健身教练产
 - 用户中心：今日训练、RPE/疼痛反馈、计划历史、身体趋势、营养汇总、会员与额度、积分流水、数据导出与账号删除
 - 管理后台：用户与留存、订阅与退款、AI 成本/延迟/失败切换、饭菜识别质量、模型路由、预算额度、公告和审计
 - PWA：移动端导航、Web App Manifest 与可安装能力
-- 原生 App 接口：共享 API、Cmine PKCE、权益、餐食和训练记录接口已与 Web 解耦，供后续 Expo/React Native、RevenueCat、HealthKit/Health Connect 使用
+- 原生 App：`apps/mobile` 已提供 Expo Router 五模块、Cmine PKCE、SecureStore、SQLite 离线队列、RevenueCat、推送、HealthKit 与 Health Connect 开发构建；商店能力按供应商配置启用
+- 长期 Coach：连续会话、SSE、用户确认操作卡、周度复盘、停滞判断、不可变计划版本、差异确认和回退数据链路
 - 契约测试：覆盖无密钥状态、跨站写入、管理员权限、AI 路由、结构化响应、支付签名与营养确认边界
 
 未配置外部凭据时，产品不会伪装成已经调用 AI 或已经登录。完整计划只在 LLM 成功生成并通过服务端校验后展示。
@@ -52,6 +53,9 @@ Cmine Fit 是一套包含自主轻量版与专业增强版的 AI 健身教练产
 - `PUBLIC_ORIGIN`：生产环境固定为 `https://fit.chwjh.com`
 - `ADMIN_EMAILS`：逗号分隔的 Cmine Fit 管理员引导名单；仅在 Cmine ID 已验证登录后授予产品管理员角色
 - `REWARD_AD_PROVIDER`：未接激励广告时留空，前端不会显示假入口
+- `REVENUECAT_WEBHOOK_SECRET` / `REVENUECAT_PROJECT_ID`：移动订阅回调与项目标识
+- `CMINE_MOBILE_CLIENT_IDS`：允许访问 Fit API 的 Cmine ID Public Client ID 列表
+- `MAINTENANCE_SECRET`：Sites 与每日清理 Worker 共用的 HMAC Secret
 
 Cmine ID 需精确登记每个生产域名的回调：
 
@@ -79,7 +83,7 @@ Apache-2.0 授权，不依赖账号、数据库或网络。仓库其余部分继
 许可证，专业版的账号、历史、进度、运营、权益与长期 Coach 能力不属于
 `coach-core`。
 
-完整架构见 [产品架构](docs/PRODUCT_ARCHITECTURE.zh-CN.md)，健康与法律边界见 [免责声明草案](docs/LEGAL_DISCLAIMER.zh-CN.md)。
+完整架构见 [产品架构](docs/PRODUCT_ARCHITECTURE.zh-CN.md)，当前模块和发布闸门见 [长期产品模块](docs/LONG_TERM_PRODUCT_MODULES.zh-CN.md)，健康与法律边界见 [免责声明草案](docs/LEGAL_DISCLAIMER.zh-CN.md)。
 
 ## 安全边界
 

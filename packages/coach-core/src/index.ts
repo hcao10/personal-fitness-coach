@@ -4,6 +4,8 @@ export type Sex = "female" | "male";
 export type Activity = "sedentary" | "light" | "moderate" | "active";
 export type Experience = "beginner" | "intermediate" | "advanced";
 export type Equipment = "bodyweight" | "dumbbell" | "gym";
+export type TrainingLocation = "home" | "gym" | "outdoors" | "mixed";
+export type DietaryPreference = "balanced" | "vegetarian" | "high_protein" | "none";
 
 export type Profile = {
   sex: Sex;
@@ -17,6 +19,10 @@ export type Profile = {
   days: number;
   equipment: Equipment;
   limitations: string;
+  sessionMinutes?: number;
+  trainingLocation?: TrainingLocation;
+  dietaryPreference?: DietaryPreference;
+  exclusions?: string;
 };
 
 export type Exercise = {
@@ -163,7 +169,8 @@ function buildSchedule(profile: Profile): WorkoutDay[] {
       reps: exercise.id === "deadBug" ? "8/side" : prescription.reps,
       rest: prescription.rest,
     }));
-    return { dayIndex, title: seed.title, focus: seed.focus, duration: 38 + exercises.length * 3, exercises };
+    const requestedDuration = Math.max(25, Math.min(120, Number(profile.sessionMinutes || 50)));
+    return { dayIndex, title: seed.title, focus: seed.focus, duration: Math.min(requestedDuration, 38 + exercises.length * 3), exercises };
   });
 }
 
@@ -203,5 +210,6 @@ export function generatePlan(profile: Profile): CoachPlan {
 export const defaultProfile: Profile = {
   sex: "female", age: 28, height: 165, weight: 60, targetWeight: 56,
   activity: "moderate", goal: "arms", experience: "beginner", days: 4,
-  equipment: "gym", limitations: "",
+  equipment: "gym", limitations: "", sessionMinutes: 50, trainingLocation: "gym",
+  dietaryPreference: "balanced", exclusions: "",
 };

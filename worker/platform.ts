@@ -73,4 +73,11 @@ export interface WorkerEnv {
   PUBLIC_ORIGIN?: string;
   ADMIN_EMAILS?: string;
   REWARD_AD_PROVIDER?: string;
+  REVENUECAT_WEBHOOK_SECRET?: string;
+  REVENUECAT_PROJECT_ID?: string;
+  EXPO_ACCESS_TOKEN?: string;
+  CMINE_MOBILE_CLIENT_IDS?: string;
+  MAINTENANCE_SECRET?: string;
+  APPLE_APP_TEAM_ID?: string;
+  ANDROID_APP_SHA256_CERT_FINGERPRINT?: string;
 }

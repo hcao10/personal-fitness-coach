@@ -1,0 +1,14 @@
+name = "cmine-fit-automation"
+main = "src/index.ts"
+compatibility_date = "2026-04-01"
+account_id = "eec4d223ffc55199e88ae515a67323fe"
+
+[triggers]
+crons = ["17 3 * * *"]
+
+[vars]
+FIT_ORIGIN = "https://fit.chwjh.com"
+
+[observability]
+enabled = true
+head_sampling_rate = 0.1

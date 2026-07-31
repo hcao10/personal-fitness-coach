@@ -227,7 +227,65 @@ export async function savePlan(env: WorkerEnv, userId: string, profile: Profile,
   const id = crypto.randomUUID();
   await db.prepare("INSERT INTO plans (id, user_id, profile_json, plan_json, source, model, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
     .bind(id, userId, JSON.stringify(profile), JSON.stringify(plan), source, model, now).run();
+  const activeCycle = await db.prepare("SELECT id, active_version_id FROM plan_cycles WHERE user_id=? AND status='active' ORDER BY started_at DESC LIMIT 1")
+    .bind(userId).first<{ id: string; active_version_id: string | null }>();
+  if (!activeCycle) {
+    const cycleId = crypto.randomUUID(); const versionId = crypto.randomUUID();
+    await db.batch([
+      db.prepare(`INSERT INTO plan_cycles (id,user_id,goal,status,active_version_id,started_at) VALUES (?,?,?,'active',?,?)`)
+        .bind(cycleId, userId, profile.goal, versionId, now),
+      db.prepare(`INSERT INTO plan_versions
+        (id,cycle_id,user_id,plan_id,version_number,status,change_summary_json,created_at,activated_at)
+        VALUES (?,?,?,?,1,'active','[]',?,?)`).bind(versionId, cycleId, userId, id, now, now),
+      db.prepare(`INSERT INTO plan_activation_events
+        (id,user_id,cycle_id,version_id,reason,created_at) VALUES (?,?,?,?,?,?)`)
+        .bind(crypto.randomUUID(), userId, cycleId, versionId, "first_plan", now),
+    ]);
+  } else {
+    const next = await db.prepare("SELECT COALESCE(MAX(version_number),0)+1 AS value FROM plan_versions WHERE cycle_id=?")
+      .bind(activeCycle.id).first<{ value: number }>();
+    await db.prepare(`INSERT INTO plan_versions
+      (id,cycle_id,user_id,plan_id,version_number,parent_version_id,status,change_summary_json,created_at)
+      VALUES (?,?,?,?,?,?, 'draft','[]',?)`)
+      .bind(crypto.randomUUID(), activeCycle.id, userId, id, Number(next?.value || 1), activeCycle.active_version_id, now).run();
+  }
   return id;
+}
+
+export async function activePlanForUser(env: WorkerEnv, userId: string) {
+  const row = await requireDb(env).prepare(`SELECT p.id,p.profile_json,p.plan_json,p.source,p.model,p.created_at
+    FROM plan_cycles c JOIN plan_versions v ON v.id=c.active_version_id JOIN plans p ON p.id=v.plan_id
+    WHERE c.user_id=? AND c.status='active' LIMIT 1`).bind(userId).first<PlanRow>();
+  if (row) return publicPlan(row);
+  return (await listPlansForUser(env, userId, 1))[0] || null;
+}
+
+export async function planVersionStatus(env: WorkerEnv, userId: string, planId: string) {
+  const row = await requireDb(env).prepare(`SELECT v.id,v.cycle_id,v.version_number,v.status,v.change_summary_json,v.created_at
+    FROM plan_versions v WHERE v.user_id=? AND v.plan_id=?`).bind(userId, planId)
+    .first<{ id: string; cycle_id: string; version_number: number; status: string; change_summary_json: string; created_at: string }>();
+  return row ? { id: row.id, cycleId: row.cycle_id, versionNumber: row.version_number, status: row.status,
+    changeSummary: parseJson<string[]>(row.change_summary_json) || [], createdAt: row.created_at } : null;
+}
+
+export async function activatePlan(env: WorkerEnv, userId: string, planId: string, reason = "user_confirmed") {
+  const db = requireDb(env); const now = new Date().toISOString();
+  const version = await db.prepare(`SELECT id,cycle_id,status FROM plan_versions WHERE user_id=? AND plan_id=?`)
+    .bind(userId, planId).first<{ id: string; cycle_id: string; status: string }>();
+  if (!version) throw new Error("PLAN_VERSION_NOT_FOUND");
+  const cycle = await db.prepare("SELECT active_version_id FROM plan_cycles WHERE id=? AND user_id=?")
+    .bind(version.cycle_id, userId).first<{ active_version_id: string | null }>();
+  if (!cycle) throw new Error("PLAN_CYCLE_NOT_FOUND");
+  if (cycle.active_version_id === version.id) return { active: true, duplicate: true, versionId: version.id };
+  await db.batch([
+    db.prepare("UPDATE plan_versions SET status='archived' WHERE cycle_id=? AND status='active'").bind(version.cycle_id),
+    db.prepare("UPDATE plan_versions SET status='active',activated_at=? WHERE id=? AND user_id=?").bind(now, version.id, userId),
+    db.prepare("UPDATE plan_cycles SET active_version_id=? WHERE id=? AND user_id=?").bind(version.id, version.cycle_id, userId),
+    db.prepare(`INSERT INTO plan_activation_events
+      (id,user_id,cycle_id,version_id,previous_version_id,reason,created_at) VALUES (?,?,?,?,?,?,?)`)
+      .bind(crypto.randomUUID(), userId, version.cycle_id, version.id, cycle.active_version_id, reason, now),
+  ]);
+  return { active: true, duplicate: false, versionId: version.id, previousVersionId: cycle.active_version_id };
 }
 
 export async function listPlansForUser(env: WorkerEnv, userId: string, limit = 20): Promise<ReturnType<typeof publicPlan>[]> {
@@ -346,9 +404,10 @@ export async function progressForUser(env: WorkerEnv, userId: string) {
 
 export async function accountSnapshot(env: WorkerEnv, user: StoredUser) {
   const today = new Date().toISOString().slice(0, 10);
-  const [profile, plans, measurements, progress, points, ledger, product, meals, nutritionToday] = await Promise.all([
+  const [profile, plans, activePlan, measurements, progress, points, ledger, product, meals, nutritionToday] = await Promise.all([
     profileForUser(env, user.id),
     listPlansForUser(env, user.id, 12),
+    activePlanForUser(env, user.id),
     measurementsForUser(env, user.id, 24),
     progressForUser(env, user.id),
     pointsForUser(env, user.id),
@@ -358,9 +417,9 @@ export async function accountSnapshot(env: WorkerEnv, user: StoredUser) {
     dailyNutrition(env, user.id, today),
   ]);
   return {
-    user: { sub: user.sub, email: user.email, name: user.name, picture: user.picture, locale: user.locale, timezone: user.timezone },
+    user: { id: user.id, sub: user.sub, email: user.email, name: user.name, picture: user.picture, locale: user.locale, timezone: user.timezone },
     profile,
-    latestPlan: plans[0] || null,
+    latestPlan: activePlan || plans[0] || null,
     plans,
     measurements,
     progress,
@@ -410,6 +469,7 @@ export async function adminOverview(env: WorkerEnv) {
     users, activeUsers, plans, consents, sessions, completions, measurements, generations, failedGenerations,
     recentUsers, recentPlans, recentRuns, subscriptions, revenue, failedBilling, meals, mealAnalyses,
     failedMealAnalyses, lowConfidenceMeals, aiCost, recentBilling, recentAudits, routes, redemptions,
+    onboardingCompleted, coachConversations, coachMessages, weeklyReviews, acceptedReviews, devices, maintenance,
   ] = await Promise.all([
     db.prepare("SELECT COUNT(*) AS value FROM users").first<{ value: number }>(),
     db.prepare("SELECT COUNT(*) AS value FROM users WHERE status = 'active'").first<{ value: number }>(),
@@ -442,6 +502,13 @@ export async function adminOverview(env: WorkerEnv) {
     db.prepare("SELECT id, task, tier, priority, provider, model, enabled, updated_at FROM ai_routes ORDER BY task, tier, priority")
       .all<Record<string, unknown>>(),
     db.prepare("SELECT COUNT(*) AS value FROM point_redemptions").first<{ value: number }>(),
+    db.prepare("SELECT COUNT(*) AS value FROM users WHERE onboarding_status='completed'").first<{ value: number }>(),
+    db.prepare("SELECT COUNT(*) AS value FROM coach_conversations").first<{ value: number }>(),
+    db.prepare("SELECT COUNT(*) AS value FROM coach_messages WHERE role='user'").first<{ value: number }>(),
+    db.prepare("SELECT COUNT(*) AS value FROM weekly_reviews").first<{ value: number }>(),
+    db.prepare("SELECT COUNT(*) AS value FROM weekly_reviews WHERE status='accepted'").first<{ value: number }>(),
+    db.prepare("SELECT COUNT(*) AS value FROM devices").first<{ value: number }>(),
+    db.prepare("SELECT id,job,status,processed,failed,started_at,completed_at FROM maintenance_runs WHERE job='daily' ORDER BY started_at DESC LIMIT 8").all<Record<string, unknown>>(),
   ]);
   const generationCount = Number(generations?.value || 0);
   const failureCount = Number(failedGenerations?.value || 0);
@@ -467,6 +534,12 @@ export async function adminOverview(env: WorkerEnv) {
       lowConfidenceMeals: Number(lowConfidenceMeals?.value || 0),
       aiCostUsd: Number(Number(aiCost?.value || 0).toFixed(4)),
       redemptions: Number(redemptions?.value || 0),
+      onboardingCompleted: Number(onboardingCompleted?.value || 0),
+      coachConversations: Number(coachConversations?.value || 0),
+      coachMessages: Number(coachMessages?.value || 0),
+      weeklyReviews: Number(weeklyReviews?.value || 0),
+      acceptedReviews: Number(acceptedReviews?.value || 0),
+      devices: Number(devices?.value || 0),
     },
     recentUsers: (recentUsers.results || []).map((row) => ({ ...row, createdAt: row.created_at })),
     recentPlans: (recentPlans.results || []).map((row) => ({ id: row.id, userId: row.user_id, source: row.source, model: row.model, createdAt: row.created_at })),
@@ -480,6 +553,7 @@ export async function adminOverview(env: WorkerEnv) {
       detail: parseJson<unknown>(row.detail_json as string | null),
     })),
     aiRoutes: (routes.results || []).map((row) => ({ ...row, enabled: Boolean(row.enabled) })),
+    recentMaintenance: maintenance.results || [],
   };
 }
 
@@ -551,7 +625,7 @@ export async function updateAiRoute(env: WorkerEnv, routeId: string, input: {
 
 export async function exportUserData(env: WorkerEnv, user: StoredUser) {
   const db = requireDb(env);
-  const [snapshot, consents, workouts, completions] = await Promise.all([
+  const [snapshot, consents, workouts, completions, conversations, messages, reviews, planVersions, devices, healthConnections, healthObservations] = await Promise.all([
     accountSnapshot(env, user),
     db.prepare("SELECT disclaimer_version, locale, consented_at FROM consents WHERE user_id = ? ORDER BY consented_at DESC")
       .bind(user.id).all<Record<string, unknown>>(),
@@ -559,8 +633,17 @@ export async function exportUserData(env: WorkerEnv, user: StoredUser) {
       .bind(user.id).all<Record<string, unknown>>(),
     db.prepare("SELECT plan_id, day_index, exercise_id, completed_at FROM workout_completions WHERE user_id = ? ORDER BY completed_at DESC")
       .bind(user.id).all<Record<string, unknown>>(),
+    db.prepare("SELECT id,title,status,created_at,updated_at FROM coach_conversations WHERE user_id=? ORDER BY updated_at DESC").bind(user.id).all<Record<string, unknown>>(),
+    db.prepare("SELECT conversation_id,role,content,created_at FROM coach_messages WHERE user_id=? ORDER BY created_at").bind(user.id).all<Record<string, unknown>>(),
+    db.prepare("SELECT week_start,status,checkin_json,metrics_json,recommendation_json,plateau,created_at,updated_at FROM weekly_reviews WHERE user_id=? ORDER BY week_start DESC").bind(user.id).all<Record<string, unknown>>(),
+    db.prepare("SELECT cycle_id,plan_id,version_number,status,change_summary_json,created_at,activated_at FROM plan_versions WHERE user_id=? ORDER BY created_at DESC").bind(user.id).all<Record<string, unknown>>(),
+    db.prepare("SELECT id,platform,name,last_seen_at,created_at FROM devices WHERE user_id=? ORDER BY created_at DESC").bind(user.id).all<Record<string, unknown>>(),
+    db.prepare("SELECT id,platform,permissions_json,status,created_at,updated_at FROM health_connections WHERE user_id=?").bind(user.id).all<Record<string, unknown>>(),
+    db.prepare("SELECT connection_id,source_record_id,type,value,unit,observed_at,source_name FROM health_observations WHERE user_id=? ORDER BY observed_at DESC").bind(user.id).all<Record<string, unknown>>(),
   ]);
-  return { exportedAt: new Date().toISOString(), ...snapshot, consents: consents.results || [], workouts: workouts.results || [], completions: completions.results || [] };
+  return { exportedAt: new Date().toISOString(), ...snapshot, consents: consents.results || [], workouts: workouts.results || [], completions: completions.results || [],
+    coach: { conversations: conversations.results || [], messages: messages.results || [] }, reviews: reviews.results || [], planVersions: planVersions.results || [],
+    devices: devices.results || [], health: { connections: healthConnections.results || [], observations: healthObservations.results || [] } };
 }
 
 export async function deleteUserData(env: WorkerEnv, userId: string): Promise<void> {
