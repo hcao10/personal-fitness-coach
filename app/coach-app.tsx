@@ -191,7 +191,7 @@ export default function CoachApp() {
         <div className="hero-copy">
           <div className="edition-pills"><span>{t.aspiration}</span><i>+</i><span>{t.expertPlan}</span></div>
           <p className="eyebrow"><span /> {t.eyebrow}</p>
-          <h1><s>{t.titleA}</s><br /><em>{t.titleB}</em></h1>
+          <h1><s>{t.titleA}</s><br /><em>{lang === "zh" ? <>为您定制的专属<br />计划如下：</> : t.titleB}</em></h1>
           <p className="hero-subtitle">{t.subtitle}</p>
           <div className="trust-row">
             <div className="face-stack" aria-hidden="true"><span>J</span><span>M</span><span>A</span></div>
