@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { EXERCISES, generatePlan, isExerciseAllowed, type CoachPlan, type Profile, type WorkoutDay } from "../app/lib/coach";
+import { decoratePlanSchedule, EXERCISES, generatePlan, isExerciseAllowed, type CoachPlan, type Profile, type WorkoutDay } from "../app/lib/coach";
 import type { WorkerEnv } from "./platform";
 import type { ProductTier } from "./product";
 
@@ -70,7 +70,16 @@ export type MealVisionResult = {
 
 export type CoachChatResult = {
   reply: string;
-  actions: Array<{ type: "plan_adjustment" | "log_workout" | "log_measurement" | "create_meal_draft" | "schedule_review"; title: string; description: string }>;
+  intent: string;
+  basis: Array<{ label: string; value: string; observedAt?: string; source?: string }>;
+  limitations: string[];
+  sourceIds: string[];
+  actions: Array<{
+    type: "replace_exercise" | "shorten_session" | "adjust_load" | "reschedule_workout" | "plan_adjustment" | "log_workout" | "log_measurement" | "create_meal_draft" | "schedule_review";
+    title: string; description: string; before: string; after: string; reason: string; impact: string[]; reversible: boolean;
+    exercise_id?: string; replacement_exercise_id?: string; duration_minutes?: number; target_date?: string;
+    load_multiplier?: number; set_multiplier?: number;
+  }>;
   provider: string;
   model: string;
   requestId: string | null;
@@ -195,7 +204,7 @@ async function routesFor(env: WorkerEnv, task: "training_plan" | "meal_vision" |
       { provider: "compatible", model: env.AI_COMPAT_VISION_MODEL || "Qwen3-VL-8B-Instruct", priority: 3 },
     ],
     coach_chat: [
-      { provider: "cloudflare", model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast", priority: 1 },
+      { provider: "cloudflare", model: tier === "pro" ? "@cf/meta/llama-3.3-70b-instruct-fp8-fast" : "@cf/meta/llama-3.1-8b-instruct-fast", priority: 1 },
       { provider: "openai", model: env.OPENAI_MODEL || "gpt-5.6", priority: 2 },
     ],
   };
@@ -338,6 +347,84 @@ async function runProvider(env: WorkerEnv, route: AiRoute, options: {
   };
 }
 
+function decodedReplyPrefix(raw: string): string {
+  const match = /"reply"\s*:\s*"/.exec(raw);
+  if (!match) return "";
+  let index = match.index + match[0].length; let value = "";
+  while (index < raw.length) {
+    const character = raw[index];
+    if (character === '"') break;
+    if (character !== "\\") { value += character; index += 1; continue; }
+    if (index + 1 >= raw.length) break;
+    const escaped = raw[index + 1];
+    const simple: Record<string, string> = { '"': '"', "\\": "\\", "/": "/", b: "\b", f: "\f", n: "\n", r: "\r", t: "\t" };
+    if (escaped === "u") {
+      const code = raw.slice(index + 2, index + 6);
+      if (!/^[0-9a-fA-F]{4}$/.test(code)) break;
+      value += String.fromCharCode(Number.parseInt(code, 16)); index += 6; continue;
+    }
+    value += simple[escaped] ?? escaped; index += 2;
+  }
+  return value;
+}
+
+async function runProviderStream(env: WorkerEnv, route: AiRoute, options: {
+  system: string; user: string; schemaName: string; schema: Record<string, unknown>; maxTokens: number; safetyIdentifier?: string;
+}, onReplyDelta: (delta: string) => void): Promise<ProviderResult> {
+  const openai = route.provider === "openai";
+  const url = openai ? env.OPENAI_BASE_URL || "https://api.openai.com/v1/responses" : route.provider === "cloudflare"
+    ? env.CLOUDFLARE_AI_GATEWAY_URL || `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_AI_ACCOUNT_ID}/ai/v1/chat/completions`
+    : `${env.AI_COMPAT_BASE_URL!.replace(/\/$/, "")}/chat/completions`;
+  const token = openai ? env.OPENAI_API_KEY : route.provider === "cloudflare"
+    ? env.CLOUDFLARE_AI_GATEWAY_TOKEN || env.CLOUDFLARE_AI_TOKEN : env.AI_COMPAT_API_KEY;
+  const body = openai ? {
+    model: route.model, store: false, stream: true, max_output_tokens: options.maxTokens,
+    reasoning: { effort: env.OPENAI_REASONING_EFFORT || "medium" },
+    ...(options.safetyIdentifier ? { safety_identifier: options.safetyIdentifier.slice(0, 64) } : {}),
+    input: [{ role: "system", content: options.system }, { role: "user", content: options.user }],
+    text: { format: { type: "json_schema", name: options.schemaName, strict: true, schema: options.schema } },
+  } : {
+    model: route.model, stream: true, stream_options: { include_usage: true },
+    messages: [{ role: "system", content: options.system }, { role: "user", content: options.user }],
+    max_completion_tokens: options.maxTokens,
+    response_format: { type: "json_schema", json_schema: { name: options.schemaName, strict: true, schema: options.schema } },
+  };
+  const response = await fetchWithRetry(url, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body) });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null) as Record<string, any> | null;
+    throw new Error(`AI_REQUEST_FAILED:${response.status}:${payload?.error?.message || "unknown"}`);
+  }
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("text/event-stream") || !response.body) {
+    const payload = await response.json().catch(() => null) as Record<string, any> | null;
+    const text = payload ? (openai ? extractOpenAiText(payload) : contentFromChat(payload)) : null;
+    if (!text) throw new Error("AI_EMPTY_RESPONSE");
+    const reply = decodedReplyPrefix(text); if (reply) onReplyDelta(reply);
+    return { text, requestId: payload?.id || response.headers.get("x-request-id"), inputTokens: payload?.usage?.input_tokens ?? payload?.usage?.prompt_tokens ?? null, outputTokens: payload?.usage?.output_tokens ?? payload?.usage?.completion_tokens ?? null };
+  }
+  const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = ""; let rawText = ""; let emitted = "";
+  let requestId: string | null = response.headers.get("x-request-id") || response.headers.get("cf-ray"); let inputTokens: number | null = null; let outputTokens: number | null = null;
+  while (true) {
+    const { done, value } = await reader.read(); if (done) break;
+    buffer += decoder.decode(value, { stream: true }); const blocks = buffer.split("\n\n"); buffer = blocks.pop() || "";
+    for (const block of blocks) {
+      const data = block.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("\n");
+      if (!data || data === "[DONE]") continue;
+      let payload: Record<string, any>; try { payload = JSON.parse(data); } catch { continue; }
+      requestId = payload.response?.id || payload.id || requestId;
+      inputTokens = payload.response?.usage?.input_tokens ?? payload.usage?.input_tokens ?? payload.usage?.prompt_tokens ?? inputTokens;
+      outputTokens = payload.response?.usage?.output_tokens ?? payload.usage?.output_tokens ?? payload.usage?.completion_tokens ?? outputTokens;
+      const chunk = payload.delta ?? payload.choices?.[0]?.delta?.content ?? payload.result?.response ?? "";
+      if (typeof chunk !== "string" || !chunk) continue;
+      rawText += chunk;
+      const decoded = decodedReplyPrefix(rawText);
+      if (decoded.length > emitted.length) { onReplyDelta(decoded.slice(emitted.length)); emitted = decoded; }
+    }
+  }
+  if (!rawText) throw new Error("AI_EMPTY_RESPONSE");
+  return { text: rawText, requestId, inputTokens, outputTokens };
+}
+
 function estimatedCost(model: string, inputTokens: number | null, outputTokens: number | null): number {
   const prices: Array<[string, number, number]> = [
     ["llama-3.1-8b", 0.045, 0.335],
@@ -393,14 +480,20 @@ function applyAiPlan(profile: Profile, base: CoachPlan, output: AiPlanOutput): C
       focus: { zh: day.focus_zh, en: day.focus_en }, duration: Math.max(20, Math.min(maximumSessionMinutes, day.duration_minutes)), exercises,
     };
   });
+  const staged = decoratePlanSchedule(profile, schedule);
   return {
     ...base,
-    schedule,
+    schedule: staged.schedule,
+    phase: staged.phase,
     insights: {
       summary: { zh: output.summary_zh, en: output.summary_en },
       planRationale: { zh: output.plan_rationale_zh.slice(0, 3), en: output.plan_rationale_en.slice(0, 3) },
       coachNotes: { zh: output.coach_notes_zh.slice(0, 3), en: output.coach_notes_en.slice(0, 3) },
       dietGuidance: { zh: output.diet_guidance_zh.slice(0, 3), en: output.diet_guidance_en.slice(0, 3) },
+      stopConditions: {
+        zh: ["疼痛达到 4/10 或持续加重时停止相关动作。", "出现胸痛、晕厥、呼吸困难或无法承重时停止训练并及时求助。"],
+        en: ["Stop the movement if pain reaches 4/10 or keeps worsening.", "Stop training and seek timely help for chest pain, fainting, breathing difficulty, or inability to bear weight."],
+      },
     },
   };
 }
@@ -509,34 +602,51 @@ export async function generateCoachChat(env: WorkerEnv, input: {
   context: Record<string, unknown>;
   history: Array<{ role: "user" | "assistant"; content: string }>;
   safetyIdentifier: string;
+  knowledge?: Array<{ id: string; title: string; summary: string; publisher: string; url: string }>;
+  onDelta?: (delta: string) => void;
 }, tier: ProductTier): Promise<CoachChatResult> {
   await assertAiBudget(env);
   const routes = (await routesFor(env, "coach_chat", tier)).slice(0, 2);
   if (!routes.length) throw new Error("AI_NOT_CONFIGURED");
   const schema = {
-    type: "object", additionalProperties: false, required: ["reply", "actions"],
+    type: "object", additionalProperties: false, required: ["reply", "intent", "basis", "limitations", "source_ids", "actions"],
     properties: {
       reply: { type: "string", minLength: 2, maxLength: 1800 },
+      intent: { type: "string", enum: ["explain_plan", "adjust_today", "exercise_help", "nutrition", "progress", "general_knowledge", "safety"] },
+      basis: { type: "array", maxItems: 5, items: { type: "object", additionalProperties: false, required: ["label", "value", "observed_at", "source"], properties: {
+        label: { type: "string", maxLength: 50 }, value: { type: "string", maxLength: 100 }, observed_at: { type: ["string", "null"], maxLength: 40 }, source: { type: ["string", "null"], maxLength: 60 },
+      } } },
+      limitations: { type: "array", maxItems: 3, items: { type: "string", maxLength: 160 } },
+      source_ids: { type: "array", maxItems: 3, items: { type: "string", maxLength: 80 } },
       actions: { type: "array", maxItems: 3, items: {
-        type: "object", additionalProperties: false, required: ["type", "title", "description"],
+        type: "object", additionalProperties: false, required: ["type", "title", "description", "before", "after", "reason", "impact", "reversible", "exercise_id", "replacement_exercise_id", "duration_minutes", "target_date", "load_multiplier", "set_multiplier"],
         properties: {
-          type: { type: "string", enum: ["plan_adjustment", "log_workout", "log_measurement", "create_meal_draft", "schedule_review"] },
+          type: { type: "string", enum: ["replace_exercise", "shorten_session", "adjust_load", "reschedule_workout", "plan_adjustment", "log_workout", "log_measurement", "create_meal_draft", "schedule_review"] },
           title: { type: "string", minLength: 2, maxLength: 80 },
           description: { type: "string", minLength: 2, maxLength: 240 },
+          before: { type: "string", maxLength: 160 }, after: { type: "string", maxLength: 160 }, reason: { type: "string", maxLength: 200 },
+          impact: { type: "array", maxItems: 4, items: { type: "string", maxLength: 100 } }, reversible: { type: "boolean" },
+          exercise_id: { type: ["string", "null"], maxLength: 80 }, replacement_exercise_id: { type: ["string", "null"], maxLength: 80 },
+          duration_minutes: { type: ["integer", "null"], minimum: 10, maximum: 180 }, target_date: { type: ["string", "null"], maxLength: 10 },
+          load_multiplier: { type: ["number", "null"], minimum: 0.8, maximum: 1.05 }, set_multiplier: { type: ["number", "null"], minimum: 0.8, maximum: 1.1 },
         },
       } },
     },
   };
-  const system = `You are Cmine Fit Coach, a careful long-term fitness assistant. Answer in ${input.locale === "zh" ? "natural Simplified Chinese" : "natural English"}. Use the supplied user context, but do not invent completed workouts or health facts. Never diagnose disease. Do not expose private reasoning. If the user reports meaningful pain, advise stopping the relevant movement and seeking qualified care. You may propose actions, but the application will require explicit confirmation before any mutation.`;
-  const user = JSON.stringify({ message: input.message, context: input.context, recent_messages: input.history.slice(-12) });
+  const system = `You are Cmine Fit Coach, a careful long-term fitness assistant. Answer in ${input.locale === "zh" ? "natural Simplified Chinese" : "natural English"}. Structure the reply as: direct conclusion, personal evidence, action today, and limitations when relevant. Use only supplied facts and source IDs. Do not invent completed workouts, health facts, citations, or precision. Never diagnose disease or expose private reasoning. Pain >=4/10 must never lead to greater intensity. High-risk symptoms require stopping training and timely professional help. Proposed actions are previews that require explicit user confirmation. Every action must describe before, after, reason, impact and reversibility. Use null for action fields that do not apply.`;
+  const user = JSON.stringify({ message: input.message, context: input.context, recent_messages: input.history.slice(-12), reviewed_knowledge: input.knowledge || [] });
   let lastError: unknown = null;
   for (const route of routes) {
     try {
-      const result = await runProvider(env, route, { system, user, schemaName: "cmine_fit_coach", schema, maxTokens: 2400, safetyIdentifier: input.safetyIdentifier });
-      const output = parseJson<{ reply: string; actions: CoachChatResult["actions"] }>(result.text);
-      if (typeof output.reply !== "string" || !Array.isArray(output.actions)) throw new Error("AI_SCHEMA_INVALID");
+      const result = input.onDelta
+        ? await runProviderStream(env, route, { system, user, schemaName: "cmine_fit_coach", schema, maxTokens: 2600, safetyIdentifier: input.safetyIdentifier }, input.onDelta)
+        : await runProvider(env, route, { system, user, schemaName: "cmine_fit_coach", schema, maxTokens: 2600, safetyIdentifier: input.safetyIdentifier });
+      const output = parseJson<{ reply: string; intent: string; basis: Array<{ label: string; value: string; observed_at?: string | null; source?: string | null }>; limitations: string[]; source_ids: string[]; actions: CoachChatResult["actions"] }>(result.text);
+      if (typeof output.reply !== "string" || !Array.isArray(output.actions) || !Array.isArray(output.basis) || !Array.isArray(output.limitations)) throw new Error("AI_SCHEMA_INVALID");
+      const allowedSources = new Set((input.knowledge || []).map((item) => item.id));
       return {
-        reply: output.reply.slice(0, 1800), actions: output.actions.slice(0, 3), provider: route.provider, model: route.model,
+        reply: output.reply.slice(0, 1800), intent: output.intent, basis: output.basis.slice(0, 5).map((item) => ({ label: item.label, value: item.value, observedAt: item.observed_at || undefined, source: item.source || undefined })),
+        limitations: output.limitations.slice(0, 3), sourceIds: (output.source_ids || []).filter((id) => allowedSources.has(id)).slice(0, 3), actions: output.actions.slice(0, 3), provider: route.provider, model: route.model,
         requestId: result.requestId, estimatedCostUsd: estimatedCost(route.model, result.inputTokens, result.outputTokens),
         usage: { inputTokens: result.inputTokens, outputTokens: result.outputTokens },
       };

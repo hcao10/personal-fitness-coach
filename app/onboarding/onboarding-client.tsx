@@ -8,10 +8,15 @@ import { beginCmineLogin, getCmineSession } from "../lib/auth";
 const steps = ["开始", "目标", "身体资料", "训练条件", "安全与限制", "饮食偏好", "确认"];
 type Draft = Profile & { sessionMinutes: number; dietaryPreference: string; exclusions: string; trainingTrack: TrainingTrack; beginnerBarrier: BeginnerBarrier; trainingAgeMonths: number; currentSplit: string; weakPoints: string; acceptsWeightGain: boolean };
 const initial: Draft = { ...defaultProfile, sessionMinutes: 30, dietaryPreference: "balanced", exclusions: "", trainingTrack: "beginner_fat_loss", beginnerBarrier: "confidence", trainingAgeMonths: 0, currentSplit: "", weakPoints: "", acceptsWeightGain: false };
+const localDate = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+const recommendedStartDate = () => { const date = new Date(); if (date.getHours() >= 15) date.setDate(date.getDate() + 1); return localDate(date); };
 
 export default function OnboardingClient() {
   const [step, setStep] = useState(0); const [draft, setDraft] = useState<Draft>(initial);
   const [loading, setLoading] = useState(true); const [saving, setSaving] = useState(false); const [consent, setConsent] = useState(false); const [message, setMessage] = useState("");
+  const [startDate, setStartDate] = useState(recommendedStartDate);
+  const [dateOptions] = useState(() => { const today = new Date(); const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1); return { today: localDate(today), tomorrow: localDate(tomorrow) }; });
+  const [timezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
   const estimate = useMemo(() => generatePlan(draft), [draft]);
   const patch = <K extends keyof Draft>(key: K, value: Draft[K]) => setDraft((current) => ({ ...current, [key]: value }));
 
@@ -42,7 +47,7 @@ export default function OnboardingClient() {
     const completed = await fetch("/api/v1/onboarding/complete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ profile: draft, consent: true, locale: "zh" }) });
     if (!completed.ok) { const error = await completed.json().catch(() => null) as { message?: string } | null; setMessage(error?.message || "资料确认失败，请重试。"); setSaving(false); return; }
     sessionStorage.removeItem("cmine_fit_intake_draft");
-    const generated = await fetch("/api/v1/plans", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ profile: draft, consent: true }) });
+    const generated = await fetch("/api/v1/plans", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ profile: draft, consent: true, startDate, timezone }) });
     setSaving(false);
     if (!generated.ok) { setMessage("资料已经保存。AI 暂时无法生成计划，你可以稍后从“今日”重试。"); return; }
     window.location.assign("/today");
@@ -86,6 +91,7 @@ export default function OnboardingClient() {
         </Step>}
         {step === 6 && <Step title="确认后生成专属计划" note="这些指标由确定性规则计算，完整训练安排由 AI 编排并再次通过安全校验。">
           <div className="onboarding-summary"><article><span>每日热量</span><b>{estimate.calories}</b><small>kcal</small></article><article><span>蛋白质</span><b>{estimate.protein}</b><small>g</small></article><article><span>每周训练</span><b>{draft.days}</b><small>天</small></article><article><span>建议周期</span><b>{estimate.weeks}</b><small>周</small></article></div>
+          <div className="onboarding-start-date"><div><b>计划从哪天开始？</b><p>下午较晚完成建档时默认从明天开始。启用后系统会按真实日期逐日追踪，不再把周一固定当作第一天。</p></div><button className={startDate === dateOptions.today ? "active" : ""} onClick={() => setStartDate(dateOptions.today)}>今天</button><button className={startDate === dateOptions.tomorrow ? "active" : ""} onClick={() => setStartDate(dateOptions.tomorrow)}>明天</button><input type="date" aria-label="计划开始日期" min={dateOptions.today} value={startDate} onChange={(event) => setStartDate(event.target.value)} /></div>
           <label className="consent-row"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>我理解 Cmine Fit 提供一般训练与营养信息，不替代医疗诊断；出现异常疼痛时会停止相关训练。</span></label>
           <Nav step={step} saving={saving} back={() => setStep(5)} next={() => void complete()} final />
         </Step>}

@@ -342,6 +342,9 @@ export const planCycles = sqliteTable("plan_cycles", {
   goal: text("goal").notNull(),
   status: text("status").notNull().default("active"),
   activeVersionId: text("active_version_id"),
+  startDate: text("start_date"),
+  timezone: text("timezone").notNull().default("UTC"),
+  phaseWeeks: integer("phase_weeks").notNull().default(4),
   startedAt: text("started_at").notNull(),
   endedAt: text("ended_at"),
 }, (table) => [index("plan_cycles_user_status_idx").on(table.userId, table.status)]);
@@ -372,6 +375,39 @@ export const planActivationEvents = sqliteTable("plan_activation_events", {
   createdAt: text("created_at").notNull(),
 }, (table) => [index("plan_activation_events_user_time_idx").on(table.userId, table.createdAt)]);
 
+export const workoutOccurrences = sqliteTable("workout_occurrences", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  cycleId: text("cycle_id").notNull().references(() => planCycles.id, { onDelete: "cascade" }),
+  versionId: text("version_id").notNull().references(() => planVersions.id, { onDelete: "cascade" }),
+  planId: text("plan_id").notNull().references(() => plans.id, { onDelete: "cascade" }),
+  dayIndex: integer("day_index").notNull(),
+  scheduledDate: text("scheduled_date").notNull(),
+  status: text("status").notNull().default("scheduled"),
+  mode: text("mode").notNull().default("standard"),
+  rescheduledFromId: text("rescheduled_from_id"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [
+  uniqueIndex("workout_occurrences_version_day_unique").on(table.versionId, table.scheduledDate, table.dayIndex),
+  index("workout_occurrences_user_date_idx").on(table.userId, table.scheduledDate),
+]);
+
+export const workoutOccurrenceSessions = sqliteTable("workout_occurrence_sessions", {
+  id: text("id").primaryKey(),
+  occurrenceId: text("occurrence_id").notNull().references(() => workoutOccurrences.id, { onDelete: "cascade" }).unique(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  planId: text("plan_id").notNull().references(() => plans.id, { onDelete: "cascade" }),
+  status: text("status").notNull().default("completed"),
+  durationMinutes: integer("duration_minutes"),
+  rpe: integer("rpe"),
+  pain: integer("pain").notNull().default(0),
+  notes: text("notes"),
+  startedAt: text("started_at"),
+  completedAt: text("completed_at"),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [index("workout_occurrence_sessions_user_time_idx").on(table.userId, table.completedAt)]);
+
 export const coachConversations = sqliteTable("coach_conversations", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
@@ -388,6 +424,7 @@ export const coachMessages = sqliteTable("coach_messages", {
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   role: text("role").notNull(),
   content: text("content").notNull(),
+  metadataJson: text("metadata_json").notNull().default("{}"),
   clientMutationId: text("client_mutation_id"),
   createdAt: text("created_at").notNull(),
 }, (table) => [
@@ -415,10 +452,123 @@ export const coachActionProposals = sqliteTable("coach_action_proposals", {
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   actionType: text("action_type").notNull(),
   payloadJson: text("payload_json").notNull(),
+  baseVersionId: text("base_version_id"),
+  reasonCodesJson: text("reason_codes_json").notNull().default("[]"),
+  impactJson: text("impact_json").notNull().default("{}"),
+  reversible: integer("reversible", { mode: "boolean" }).notNull().default(true),
+  expiresAt: text("expires_at"),
   status: text("status").notNull().default("pending"),
   decidedAt: text("decided_at"),
   createdAt: text("created_at").notNull(),
 }, (table) => [index("coach_actions_user_status_idx").on(table.userId, table.status)]);
+
+export const coachActionExecutions = sqliteTable("coach_action_executions", {
+  id: text("id").primaryKey(),
+  actionId: text("action_id").notNull().references(() => coachActionProposals.id, { onDelete: "cascade" }).unique(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  status: text("status").notNull(),
+  resultJson: text("result_json").notNull().default("{}"),
+  errorCode: text("error_code"),
+  executedAt: text("executed_at").notNull(),
+});
+
+export const coachMemories = sqliteTable("coach_memories", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  memoryType: text("memory_type").notNull(),
+  memoryKey: text("memory_key").notNull(),
+  value: text("value").notNull(),
+  source: text("source").notNull().default("user"),
+  confidence: real("confidence").notNull().default(1),
+  status: text("status").notNull().default("active"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [uniqueIndex("coach_memories_user_key_unique").on(table.userId, table.memoryKey)]);
+
+export const coachPreferences = sqliteTable("coach_preferences", {
+  userId: text("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+  memoryEnabled: integer("memory_enabled", { mode: "boolean" }).notNull().default(true),
+  coachingMode: text("coaching_mode").notNull().default("personalized"),
+  tone: text("tone").notNull().default("supportive"),
+  proactiveEnabled: integer("proactive_enabled", { mode: "boolean" }).notNull().default(true),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const coachConversationSummaries = sqliteTable("coach_conversation_summaries", {
+  id: text("id").primaryKey(),
+  conversationId: text("conversation_id").notNull().references(() => coachConversations.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  summary: text("summary").notNull(),
+  throughMessageId: text("through_message_id"),
+  createdAt: text("created_at").notNull(),
+}, (table) => [index("coach_summaries_conversation_time_idx").on(table.conversationId, table.createdAt)]);
+
+export const coachDailyBriefs = sqliteTable("coach_daily_briefs", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  localDate: text("local_date").notNull(),
+  payloadJson: text("payload_json").notNull(),
+  dataFreshnessJson: text("data_freshness_json").notNull().default("{}"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [uniqueIndex("coach_daily_briefs_user_date_unique").on(table.userId, table.localDate)]);
+
+export const coachCheckins = sqliteTable("coach_checkins", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  occurrenceId: text("occurrence_id").references(() => workoutOccurrences.id, { onDelete: "set null" }),
+  energy: integer("energy").notNull(),
+  soreness: integer("soreness").notNull(),
+  pain: integer("pain").notNull(),
+  availableMinutes: integer("available_minutes").notNull(),
+  note: text("note"),
+  recommendationJson: text("recommendation_json").notNull(),
+  createdAt: text("created_at").notNull(),
+}, (table) => [index("coach_checkins_user_time_idx").on(table.userId, table.createdAt)]);
+
+export const coachFeedback = sqliteTable("coach_feedback", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  messageId: text("message_id").notNull().references(() => coachMessages.id, { onDelete: "cascade" }),
+  rating: integer("rating").notNull(),
+  reason: text("reason"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [uniqueIndex("coach_feedback_user_message_unique").on(table.userId, table.messageId)]);
+
+export const knowledgeSources = sqliteTable("knowledge_sources", {
+  id: text("id").primaryKey(),
+  title: text("title").notNull(),
+  publisher: text("publisher").notNull(),
+  url: text("url").notNull(),
+  locale: text("locale").notNull().default("en"),
+  status: text("status").notNull().default("active"),
+  reviewedAt: text("reviewed_at").notNull(),
+});
+
+export const knowledgeArticles = sqliteTable("knowledge_articles", {
+  id: text("id").primaryKey(),
+  sourceId: text("source_id").notNull().references(() => knowledgeSources.id, { onDelete: "cascade" }),
+  topic: text("topic").notNull(),
+  title: text("title").notNull(),
+  summary: text("summary").notNull(),
+  keywords: text("keywords").notNull(),
+  status: text("status").notNull().default("active"),
+  reviewedAt: text("reviewed_at").notNull(),
+}, (table) => [index("knowledge_articles_topic_idx").on(table.topic)]);
+
+export const coachEvaluationRuns = sqliteTable("coach_evaluation_runs", {
+  id: text("id").primaryKey(),
+  task: text("task").notNull(),
+  provider: text("provider"),
+  model: text("model"),
+  schemaValid: integer("schema_valid", { mode: "boolean" }).notNull().default(false),
+  safetyPassed: integer("safety_passed", { mode: "boolean" }).notNull().default(false),
+  actionValid: integer("action_valid", { mode: "boolean" }).notNull().default(false),
+  latencyMs: integer("latency_ms").notNull().default(0),
+  detailJson: text("detail_json").notNull().default("{}"),
+  createdAt: text("created_at").notNull(),
+}, (table) => [index("coach_evaluations_task_time_idx").on(table.task, table.createdAt)]);
 
 export const weeklyReviews = sqliteTable("weekly_reviews", {
   id: text("id").primaryKey(),
@@ -540,6 +690,22 @@ export const workoutSets = sqliteTable("workout_sets", {
   uniqueIndex("workout_sets_plan_day_exercise_set_unique").on(table.userId, table.planId, table.dayIndex, table.exerciseId, table.setIndex),
   uniqueIndex("workout_sets_user_mutation_unique").on(table.userId, table.clientMutationId),
   index("workout_sets_user_time_idx").on(table.userId, table.updatedAt),
+]);
+
+export const workoutOccurrenceSets = sqliteTable("workout_occurrence_sets", {
+  id: text("id").primaryKey(),
+  occurrenceId: text("occurrence_id").notNull().references(() => workoutOccurrences.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  planId: text("plan_id").notNull().references(() => plans.id, { onDelete: "cascade" }),
+  dayIndex: integer("day_index").notNull(), exerciseId: text("exercise_id").notNull(), setIndex: integer("set_index").notNull(),
+  setType: text("set_type").notNull().default("working"), targetReps: text("target_reps"), weightKg: real("weight_kg"),
+  reps: integer("reps"), rir: real("rir"), rpe: real("rpe"),
+  completed: integer("completed", { mode: "boolean" }).notNull().default(false), clientMutationId: text("client_mutation_id"),
+  createdAt: text("created_at").notNull(), updatedAt: text("updated_at").notNull(),
+}, (table) => [
+  uniqueIndex("workout_occurrence_sets_unique").on(table.occurrenceId, table.exerciseId, table.setIndex),
+  uniqueIndex("workout_occurrence_sets_mutation_unique").on(table.userId, table.clientMutationId),
+  index("workout_occurrence_sets_user_time_idx").on(table.userId, table.updatedAt),
 ]);
 
 export const coachRecordDrafts = sqliteTable("coach_record_drafts", {

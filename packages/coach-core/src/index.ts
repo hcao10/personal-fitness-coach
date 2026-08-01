@@ -60,17 +60,29 @@ export type WorkoutDay = {
   duration: number;
   exercises: PlannedExercise[];
   restDay?: boolean;
+  variants?: {
+    short: { duration: number; exerciseIds: string[]; note: { zh: string; en: string } };
+    recovery: { duration: number; exerciseIds: string[]; intensityScale: number; note: { zh: string; en: string } };
+  };
+};
+export type PlanPhase = {
+  kind: "habit_foundation" | "hypertrophy_build" | "general_build";
+  lengthWeeks: number;
+  currentWeek: number;
+  weeklyFocus: Array<{ zh: string; en: string }>;
 };
 export type CoachPlan = {
   bmr: number; tdee: number; calories: number; calorieDelta: number; bmi: number;
   weeks: number; protein: number; carbs: number; fat: number;
   track?: TrainingTrack;
+  phase?: PlanPhase;
   schedule: WorkoutDay[]; confidence: "high" | "medium";
   insights?: {
     summary: { zh: string; en: string };
     planRationale: { zh: string[]; en: string[] };
     coachNotes: { zh: string[]; en: string[] };
     dietGuidance: { zh: string[]; en: string[] };
+    stopConditions?: { zh: string[]; en: string[] };
   };
 };
 
@@ -174,6 +186,50 @@ function trainingSlots(days: number): number[] {
   return slots[Math.min(6, Math.max(2, days))] ?? slots[4];
 }
 
+function variantsForDay(day: WorkoutDay): WorkoutDay["variants"] {
+  const exerciseIds = day.exercises.map((exercise) => exercise.id);
+  return {
+    short: {
+      duration: Math.min(20, day.duration),
+      exerciseIds: exerciseIds.slice(0, Math.max(1, Math.min(2, exerciseIds.length))),
+      note: { zh: "保留最重要的动作，完成比完美更重要。", en: "Keep the highest-value movements; completion matters more than perfection." },
+    },
+    recovery: {
+      duration: Math.min(20, day.duration),
+      exerciseIds: exerciseIds.slice(0, 1),
+      intensityScale: 0.7,
+      note: { zh: "降低强度并优先动作质量；疼痛达到 4/10 时停止相关动作。", en: "Reduce intensity and prioritize control; stop the movement if pain reaches 4/10." },
+    },
+  };
+}
+
+export function decoratePlanSchedule(profile: Profile, schedule: WorkoutDay[]): Pick<CoachPlan, "phase" | "schedule"> {
+  const track = resolveTrainingTrack(profile);
+  const phase: PlanPhase = track === "beginner_fat_loss"
+    ? { kind: "habit_foundation", lengthWeeks: 4, currentWeek: 1, weeklyFocus: [
+        { zh: "熟悉动作与建立记录习惯", en: "Learn movements and build a logging habit" },
+        { zh: "稳定训练频率与日常活动", en: "Stabilize training frequency and daily activity" },
+        { zh: "恢复允许时小幅进阶", en: "Progress gently when recovery allows" },
+        { zh: "复盘执行并规划下一阶段", en: "Review adherence and plan the next phase" },
+      ] }
+    : track === "intermediate_hypertrophy"
+      ? { kind: "hypertrophy_build", lengthWeeks: 6, currentWeek: 1, weeklyFocus: [
+          { zh: "建立训练量与动作基线", en: "Establish volume and movement baselines" },
+          { zh: "在目标 RIR 内增加有效次数", en: "Add productive reps within target RIR" },
+          { zh: "稳定主要动作的负荷", en: "Stabilize loads on primary lifts" },
+          { zh: "根据恢复调整薄弱部位训练量", en: "Adjust weak-point volume around recovery" },
+          { zh: "验证渐进负荷与完成率", en: "Validate progressive overload and adherence" },
+          { zh: "阶段复盘或减量", en: "Review the phase or deload" },
+        ] }
+      : { kind: "general_build", lengthWeeks: 4, currentWeek: 1, weeklyFocus: [
+          { zh: "建立训练基线", en: "Establish a training baseline" },
+          { zh: "稳定执行", en: "Build consistency" },
+          { zh: "小幅进阶", en: "Progress gradually" },
+          { zh: "阶段复盘", en: "Review the phase" },
+        ] };
+  return { phase, schedule: schedule.map((day) => ({ ...day, variants: variantsForDay(day) })) };
+}
+
 function buildSchedule(profile: Profile): WorkoutDay[] {
   const track = resolveTrainingTrack(profile);
   const allowedDays = track === "beginner_fat_loss" ? Math.min(4, profile.days) : profile.days;
@@ -234,10 +290,11 @@ export function generatePlan(profile: Profile): CoachPlan {
   const protein = Math.round(weight * proteinMultiplier);
   const fat = Math.round(weight * 0.8);
   const carbs = Math.max(70, Math.round((calories - protein * 4 - fat * 9) / 4));
+  const staged = decoratePlanSchedule(profile, buildSchedule(profile));
   return {
     bmr: Math.round(bmr), tdee: Math.round(tdee), calories, calorieDelta,
     bmi: Number((weight / ((height / 100) ** 2)).toFixed(1)), weeks, protein, carbs, fat,
-    schedule: buildSchedule(profile), confidence: profile.limitations.trim() ? "medium" : "high", track,
+    schedule: staged.schedule, phase: staged.phase, confidence: profile.limitations.trim() ? "medium" : "high", track,
   };
 }
 

@@ -25,8 +25,10 @@ import {
   recordConsent,
   recordGenerationRun,
   recordWorkoutCompletion,
+  rescheduleOccurrence,
   savePlan,
   saveProfile,
+  saveWorkoutOccurrenceSession,
   saveWorkoutSession,
   settingValue,
   updateAdminSetting,
@@ -67,6 +69,7 @@ import type { WorkerEnv } from "./platform";
 import { cookie, parseCookies, randomToken, safeReturnPath, sha256, signPayload, verifyPayload } from "./security";
 import { completeOnboarding, onboardingSnapshot, saveOnboardingDraft, skipOnboarding } from "./modules/onboarding";
 import { createConversation, conversationMessages, decideCoachAction, listConversations, sendCoachMessage } from "./modules/coach";
+import { coachHome, coachMemorySnapshot, deleteCoachMemory, saveCoachCheckin, saveCoachFeedback, updateCoachPreferences, upsertCoachMemory } from "./modules/coach-orchestrator";
 import { decideReview, generateReview, listReviews, reviewDetail, saveReviewCheckin } from "./modules/reviews";
 import { deleteDevice, deleteHealthConnection, importHealthObservations, registerDevice, syncBatch, syncChanges, upsertHealthConnection } from "./modules/mobile";
 import { processRevenueCatEvent, revenueCatConfigured, verifyRevenueCatWebhook } from "./modules/revenuecat";
@@ -77,19 +80,23 @@ const json = (body: unknown, status = 200, headers?: HeadersInit) => Response.js
   headers: { "cache-control": "no-store", ...headers },
 });
 const errorJson = (error: string, message: string, status: number) => json({ error, message }, status);
-function coachStream(result: { assistantMessage: { id: string; content: string; actions?: unknown[] }; duplicate?: boolean }) {
+function coachStream(run: (emit: (event: string, data: unknown) => void) => Promise<{ assistantMessage: { id: string; content: string; actions?: unknown[]; intent?: string; basis?: unknown[]; limitations?: string[]; sources?: unknown[] }; duplicate?: boolean }>) {
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
-    start(controller) {
-      const content = result.assistantMessage.content;
-      for (let index = 0; index < content.length; index += 48) {
-        controller.enqueue(encoder.encode(`event: message.delta\ndata: ${JSON.stringify({ delta: content.slice(index, index + 48) })}\n\n`));
-      }
-      for (const action of result.assistantMessage.actions || []) {
-        controller.enqueue(encoder.encode(`event: action.proposed\ndata: ${JSON.stringify(action)}\n\n`));
-      }
-      controller.enqueue(encoder.encode(`event: message.completed\ndata: ${JSON.stringify({ id: result.assistantMessage.id, duplicate: Boolean(result.duplicate) })}\n\n`));
-      controller.close();
+    async start(controller) {
+      let emitted = false;
+      const emit = (event: string, data: unknown) => { emitted = emitted || event === "message.delta"; controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)); };
+      try {
+        emit("message.started", { at: new Date().toISOString() });
+        const result = await run(emit);
+        if (!emitted && result.assistantMessage.content) emit("message.delta", { delta: result.assistantMessage.content });
+        emit("message.metadata", { intent: result.assistantMessage.intent, basis: result.assistantMessage.basis || [], limitations: result.assistantMessage.limitations || [], sources: result.assistantMessage.sources || [] });
+        for (const action of result.assistantMessage.actions || []) emit("action.proposed", action);
+        emit("message.completed", { id: result.assistantMessage.id, duplicate: Boolean(result.duplicate) });
+      } catch (error) {
+        const code = error instanceof Error ? error.message.split(":")[0] : "COACH_FAILED";
+        emit("message.error", { error: code, message: code === "COACH_LIMIT_REACHED" ? "本周期的 Coach 体验额度已用完。" : "Coach 暂时无法完成回复，请稍后再试。" });
+      } finally { controller.close(); }
     },
   });
   return new Response(stream, { headers: { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-store", connection: "keep-alive" } });
@@ -104,7 +111,7 @@ const beginnerBarriers = new Set<BeginnerBarrier>(["time", "confidence", "consis
 const editableSettings = new Set([
   "announcement", "maintenance_mode", "disclaimer_version",
   "ai_daily_warning_usd", "ai_daily_hard_usd", "ai_monthly_warning_usd", "ai_monthly_hard_usd",
-  "free_plan_limit", "free_meal_scan_limit", "pro_plan_limit", "pro_meal_scan_limit", "pro_coach_message_limit",
+  "free_plan_limit", "free_meal_scan_limit", "free_coach_message_limit", "pro_plan_limit", "pro_meal_scan_limit", "pro_coach_message_limit",
 ]);
 
 function profileFrom(value: unknown): Profile | null {
@@ -311,13 +318,20 @@ async function authCallback(request: Request, env: WorkerEnv): Promise<Response>
 }
 
 async function planRequest(request: Request, env: WorkerEnv): Promise<Response> {
-  const body = await request.json().catch(() => null) as { profile?: unknown; consent?: unknown } | null;
+  const body = await request.json().catch(() => null) as { profile?: unknown; consent?: unknown; startDate?: unknown; timezone?: unknown } | null;
   const profile = profileFrom(body?.profile);
   if (!profile) return errorJson("INVALID_PROFILE", "训练档案不完整或超出安全范围。", 400);
   if (body?.consent !== true) return errorJson("CONSENT_REQUIRED", "生成前需要确认健康免责声明与数据处理说明。", 412);
   const required = await requireUser(request, env);
   if (required instanceof Response) return required;
   const user = required;
+  const requestedTimezone = typeof body?.timezone === "string" && body.timezone.length <= 80 ? body.timezone : user.timezone;
+  const requestedStartDate = typeof body?.startDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.startDate) ? body.startDate : undefined;
+  try { new Intl.DateTimeFormat("en", { timeZone: requestedTimezone }).format(new Date()); }
+  catch { return errorJson("INVALID_TIMEZONE", "设备时区无效，请重新选择开始日期。", 400); }
+  if (env.DB && requestedTimezone !== user.timezone) {
+    await env.DB.prepare("UPDATE users SET timezone=?,updated_at=? WHERE id=?").bind(requestedTimezone, new Date().toISOString(), user.id).run();
+  }
   if (await settingValue<boolean>(env, "maintenance_mode", false)) {
     return errorJson("MAINTENANCE_MODE", "AI 教练正在进行短暂维护，请稍后再试。", 503);
   }
@@ -329,6 +343,9 @@ async function planRequest(request: Request, env: WorkerEnv): Promise<Response> 
   if (cached) {
     try {
       const result = JSON.parse(cached.result_json) as Record<string, unknown>;
+      if (requestedStartDate && typeof result.planId === "string" && result.planStatus === "active") {
+        await activatePlan(env, user.id, result.planId, "schedule_start_selected", { startDate: requestedStartDate, timezone: requestedTimezone });
+      }
       await recordGenerationRun(env, {
         userId: user.id,
         status: "succeeded",
@@ -357,7 +374,8 @@ async function planRequest(request: Request, env: WorkerEnv): Promise<Response> 
   }
   try {
     const result = await generateLlmPlan(env, profile, user.id, tier);
-    const planId = env.DB ? await savePlan(env, user.id, profile, result.plan, result.source, result.model) : null;
+    const planId = env.DB ? await savePlan(env, user.id, profile, result.plan, result.source, result.model, { startDate: requestedStartDate, timezone: requestedTimezone,
+      changeSummary: ["更新阶段目标与本周训练", "根据训练条件重新编排动作", "保留安全与恢复边界"] }) : null;
     const version = planId ? await planVersionStatus(env, user.id, planId) : null;
     const publicResult = {
       plan: result.plan,
@@ -680,6 +698,36 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
   if (url.pathname === "/api/v1/coach/conversations" && request.method === "GET") {
     const user = await requireUser(request, env); return user instanceof Response ? user : json({ conversations: await listConversations(env, user.id) });
   }
+  if (url.pathname === "/api/v1/coach/home" && request.method === "GET") {
+    const user = await requireUser(request, env); return user instanceof Response ? user : json(await coachHome(env, user));
+  }
+  if ((url.pathname === "/api/v1/coach/check-ins" || url.pathname === "/api/v1/coach/session-adapt/preview") && request.method === "POST") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    try { return json({ checkin: await saveCoachCheckin(env, user, await request.json() as Record<string, unknown>) }, 201); }
+    catch { return errorJson("INVALID_CHECKIN", "训练前状态超出有效范围。", 400); }
+  }
+  if (url.pathname === "/api/v1/coach/memory" && request.method === "GET") {
+    const user = await requireUser(request, env); return user instanceof Response ? user : json({ ...(await coachMemorySnapshot(env, user.id)), pro: await tierForUser(env, user.id) === "pro" });
+  }
+  if (url.pathname === "/api/v1/coach/memory" && request.method === "PUT") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+    if (!body) return errorJson("INVALID_MEMORY", "Coach 记忆内容无效。", 400);
+    if (body.kind !== "preferences" && await tierForUser(env, user.id) !== "pro") return errorJson("PRO_REQUIRED", "完整 Coach 记忆是专业版能力。", 403);
+    try { return json(body.kind === "preferences" ? await updateCoachPreferences(env, user.id, body) : await upsertCoachMemory(env, user.id, body)); }
+    catch { return errorJson("INVALID_MEMORY", "Coach 记忆内容无效。", 400); }
+  }
+  if (url.pathname === "/api/v1/coach/memory" && request.method === "DELETE") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    const id = url.searchParams.get("id");
+    return json(await deleteCoachMemory(env, user.id, id));
+  }
+  const coachFeedbackMatch = url.pathname.match(/^\/api\/v1\/coach\/messages\/([^/]+)\/feedback$/);
+  if (coachFeedbackMatch && request.method === "POST") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    try { return json(await saveCoachFeedback(env, user.id, decodeURIComponent(coachFeedbackMatch[1]), await request.json() as Record<string, unknown>), 201); }
+    catch { return errorJson("MESSAGE_NOT_FOUND", "没有找到这条 Coach 回复。", 404); }
+  }
   if (url.pathname === "/api/v1/coach/conversations" && request.method === "POST") {
     const user = await requireUser(request, env); if (user instanceof Response) return user;
     const body = await request.json().catch(() => ({})) as { title?: unknown };
@@ -695,21 +743,17 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
     const user = await requireUser(request, env); if (user instanceof Response) return user;
     const body = await request.json().catch(() => null) as { message?: unknown; clientMutationId?: unknown } | null;
     if (typeof body?.message !== "string") return errorJson("MESSAGE_REQUIRED", "请输入要发送给 Coach 的内容。", 400);
-    try {
-      const result = await sendCoachMessage(env, user, decodeURIComponent(coachMessagesMatch[1]), { message: body.message,
-        clientMutationId: typeof body.clientMutationId === "string" ? body.clientMutationId.slice(0, 100) : null });
-      return coachStream(result);
-    } catch (error) {
-      const code = error instanceof Error ? error.message.split(":")[0] : "COACH_FAILED";
-      const status = code === "COACH_LIMIT_REACHED" ? 403 : code === "CONVERSATION_NOT_FOUND" ? 404 : code === "AI_BUDGET_EXHAUSTED" ? 429 : 502;
-      return errorJson(code, code === "COACH_LIMIT_REACHED" ? "连续 Coach 是 Pro 权益；请升级或检查本月额度。" : "Coach 暂时无法完成回复，请稍后重试。", status);
-    }
+    const message = body.message;
+    const conversationId = decodeURIComponent(coachMessagesMatch[1]);
+    return coachStream((emit) => sendCoachMessage(env, user, conversationId, { message,
+      clientMutationId: typeof body.clientMutationId === "string" ? body.clientMutationId.slice(0, 100) : null,
+      onDelta: (delta) => emit("message.delta", { delta }) }));
   }
   const coachActionMatch = url.pathname.match(/^\/api\/v1\/coach\/actions\/([^/]+)\/(accept|reject)$/);
   if (coachActionMatch && request.method === "POST") {
     const user = await requireUser(request, env); if (user instanceof Response) return user;
     try { return json(await decideCoachAction(env, user.id, decodeURIComponent(coachActionMatch[1]), coachActionMatch[2] === "accept" ? "accepted" : "rejected")); }
-    catch { return errorJson("ACTION_NOT_FOUND", "没有找到这条 Coach 建议。", 404); }
+    catch (error) { const code = error instanceof Error ? error.message : "ACTION_NOT_FOUND"; return errorJson(code, code.includes("NOT_FOUND") ? "没有找到这条 Coach 建议。" : "这条建议已过期或无法安全执行。", code.includes("NOT_FOUND") ? 404 : 409); }
   }
 
   if (url.pathname === "/api/v1/reviews" && request.method === "GET") {
@@ -1015,10 +1059,13 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
     const plan = await planForUser(env, user.id, decodeURIComponent(planMatch[1]));
     return plan ? json(plan) : errorJson("PLAN_NOT_FOUND", "没有找到该计划。", 404);
   }
-  const planActivateMatch = url.pathname.match(/^\/api\/v1\/plans\/([^/]+)\/activate$/);
+  const planActivateMatch = url.pathname.match(/^\/api\/v1\/plans\/([^/]+)\/(activate|confirm|rollback)$/);
   if (planActivateMatch && request.method === "POST") {
     const user = await requireUser(request, env); if (user instanceof Response) return user;
-    try { return json(await activatePlan(env, user.id, decodeURIComponent(planActivateMatch[1]))); }
+    const body = await request.json().catch(() => ({})) as Record<string, unknown>;
+    const startDate = typeof body.startDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.startDate) ? body.startDate : undefined;
+    const timezone = typeof body.timezone === "string" && body.timezone.length <= 80 ? body.timezone : user.timezone;
+    try { return json(await activatePlan(env, user.id, decodeURIComponent(planActivateMatch[1]), planActivateMatch[2] === "rollback" ? "user_rollback" : "user_confirmed", { startDate, timezone })); }
     catch { return errorJson("PLAN_VERSION_NOT_FOUND", "没有找到可启用的计划草案。", 404); }
   }
   if (url.pathname === "/api/v1/measurements" && request.method === "GET") {
@@ -1048,14 +1095,17 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
       return errorJson("INVALID_WORKOUT", "训练反馈超出有效范围。", 400);
     }
     try {
-      await saveWorkoutSession(env, user.id, decodeURIComponent(workoutMatch[1]), {
+      const planId = decodeURIComponent(workoutMatch[1]);
+      const sessionInput = {
         dayIndex,
         status: workoutMatch[2] === "complete" ? "completed" : "in_progress",
         durationMinutes,
         rpe,
         pain: Math.max(0, Math.min(10, Number(body?.pain || 0))),
         notes: typeof body?.notes === "string" ? body.notes.trim().slice(0, 500) : "",
-      });
+      } as const;
+      if (typeof body?.occurrenceId === "string") await saveWorkoutOccurrenceSession(env, user.id, planId, body.occurrenceId, sessionInput);
+      else await saveWorkoutSession(env, user.id, planId, sessionInput);
       return json({ ok: true }, 201);
     } catch {
       return errorJson("PLAN_NOT_FOUND", "没有找到对应计划。", 404);
@@ -1067,7 +1117,7 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
     const user = await requireUser(request, env); if (user instanceof Response) return user;
     const dayIndex = Number(url.searchParams.get("dayIndex"));
     if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex > 6) return errorJson("INVALID_WORKOUT_DAY", "训练日期无效。", 400);
-    try { return json(await workoutSetsForDay(env, user.id, decodeURIComponent(workoutSetsMatch[1]), dayIndex)); }
+    try { return json(await workoutSetsForDay(env, user.id, decodeURIComponent(workoutSetsMatch[1]), dayIndex, url.searchParams.get("occurrenceId"))); }
     catch { return errorJson("PLAN_NOT_FOUND", "没有找到对应计划。", 404); }
   }
   if (workoutSetsMatch && request.method === "POST") {
@@ -1075,6 +1125,7 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
     const body = await request.json().catch(() => null) as Record<string, unknown> | null;
     const numberOrNull = (value: unknown) => value === null || value === undefined || value === "" ? null : Number(value);
     const input: WorkoutSetInput = {
+      occurrenceId: typeof body?.occurrenceId === "string" ? body.occurrenceId : null,
       dayIndex: Number(body?.dayIndex), exerciseId: typeof body?.exerciseId === "string" ? body.exerciseId : "",
       setIndex: Number(body?.setIndex), setType: (["warmup", "working", "dropset", "failure"].includes(String(body?.setType)) ? body?.setType : "working") as WorkoutSetInput["setType"],
       targetReps: typeof body?.targetReps === "string" ? body.targetReps.slice(0, 30) : null,
@@ -1090,6 +1141,18 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
     if (!valid) return errorJson("INVALID_WORKOUT_SET", "组次记录超出有效范围。", 400);
     try { return json({ set: await upsertWorkoutSet(env, user.id, decodeURIComponent(workoutSetsMatch[1]), input) }, 201); }
     catch { return errorJson("PLAN_EXERCISE_NOT_FOUND", "该动作不属于当前计划。", 404); }
+  }
+
+  const occurrenceRescheduleMatch = url.pathname.match(/^\/api\/v1\/workouts\/occurrences\/([^/]+)\/reschedule$/);
+  if (occurrenceRescheduleMatch && request.method === "POST") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    const body = await request.json().catch(() => null) as { scheduledDate?: unknown } | null;
+    if (typeof body?.scheduledDate !== "string") return errorJson("INVALID_DATE", "请选择新的训练日期。", 400);
+    try { return json({ occurrence: await rescheduleOccurrence(env, user.id, decodeURIComponent(occurrenceRescheduleMatch[1]), body.scheduledDate) }); }
+    catch (error) {
+      const code = error instanceof Error ? error.message : "RESCHEDULE_FAILED";
+      return errorJson(code, code === "DATE_CONFLICT" ? "该日期已经有训练安排，请选择其他日期。" : "暂时无法修改训练日期。", code === "DATE_CONFLICT" ? 409 : 400);
+    }
   }
 
   return errorJson("NOT_FOUND", "没有找到该接口。", 404);

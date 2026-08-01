@@ -27,6 +27,7 @@ export type MeasurementInput = {
 };
 
 export type WorkoutSetInput = {
+  occurrenceId?: string | null;
   dayIndex: number;
   exerciseId: string;
   setIndex: number;
@@ -68,6 +69,38 @@ function publicPlan(row: PlanRow) {
     model: row.model,
     createdAt: row.created_at,
   };
+}
+
+export function localDateInTimezone(timezone: string, date = new Date()): string {
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", { timeZone: timezone || "UTC", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(date);
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return `${values.year}-${values.month}-${values.day}`;
+  } catch { return date.toISOString().slice(0, 10); }
+}
+
+export function addLocalDays(value: string, days: number): string {
+  const date = new Date(`${value}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+async function createOccurrences(db: D1Database, input: {
+  userId: string; cycleId: string; versionId: string; planId: string; startDate: string; phaseWeeks: number;
+}) {
+  const now = new Date().toISOString();
+  const statements = [];
+  for (let week = 0; week < input.phaseWeeks; week += 1) {
+    for (let dayIndex = 0; dayIndex < 7; dayIndex += 1) {
+      statements.push(db.prepare(`INSERT OR IGNORE INTO workout_occurrences
+        (id,user_id,cycle_id,version_id,plan_id,day_index,scheduled_date,status,mode,created_at,updated_at)
+        VALUES (?,?,?,?,?,?,?,'scheduled','standard',?,?)`).bind(
+          crypto.randomUUID(), input.userId, input.cycleId, input.versionId, input.planId,
+          dayIndex, addLocalDays(input.startDate, week * 7 + dayIndex), now, now,
+        ));
+    }
+  }
+  for (let index = 0; index < statements.length; index += 50) await db.batch(statements.slice(index, index + 50));
 }
 
 export async function upsertCmineUser(env: WorkerEnv, identity: {
@@ -234,34 +267,40 @@ export async function profileForUser(env: WorkerEnv, userId: string): Promise<Pr
   return parseJson<Profile>(row?.profile_json);
 }
 
-export async function savePlan(env: WorkerEnv, userId: string, profile: Profile, plan: CoachPlan, source: string, model: string): Promise<string> {
+export async function savePlan(env: WorkerEnv, userId: string, profile: Profile, plan: CoachPlan, source: string, model: string, options: {
+  startDate?: string; timezone?: string; changeSummary?: string[];
+} = {}): Promise<string> {
   const db = requireDb(env);
   const now = new Date().toISOString();
+  const timezone = options.timezone || "UTC";
+  const startDate = /^\d{4}-\d{2}-\d{2}$/.test(options.startDate || "") ? options.startDate! : localDateInTimezone(timezone);
+  const phaseWeeks = Math.max(4, Math.min(8, Number(plan.phase?.lengthWeeks || 4)));
   await saveProfile(env, userId, profile);
   const id = crypto.randomUUID();
   await db.prepare("INSERT INTO plans (id, user_id, profile_json, plan_json, source, model, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
     .bind(id, userId, JSON.stringify(profile), JSON.stringify(plan), source, model, now).run();
-  const activeCycle = await db.prepare("SELECT id, active_version_id FROM plan_cycles WHERE user_id=? AND status='active' ORDER BY started_at DESC LIMIT 1")
-    .bind(userId).first<{ id: string; active_version_id: string | null }>();
+  const activeCycle = await db.prepare("SELECT id, active_version_id, start_date, timezone FROM plan_cycles WHERE user_id=? AND status='active' ORDER BY started_at DESC LIMIT 1")
+    .bind(userId).first<{ id: string; active_version_id: string | null; start_date: string | null; timezone: string | null }>();
   if (!activeCycle) {
     const cycleId = crypto.randomUUID(); const versionId = crypto.randomUUID();
     await db.batch([
-      db.prepare(`INSERT INTO plan_cycles (id,user_id,goal,status,active_version_id,started_at) VALUES (?,?,?,'active',?,?)`)
-        .bind(cycleId, userId, profile.goal, versionId, now),
+      db.prepare(`INSERT INTO plan_cycles (id,user_id,goal,status,active_version_id,start_date,timezone,phase_weeks,started_at) VALUES (?,?,?,'active',?,?,?,?,?)`)
+        .bind(cycleId, userId, profile.goal, versionId, startDate, timezone, phaseWeeks, now),
       db.prepare(`INSERT INTO plan_versions
         (id,cycle_id,user_id,plan_id,version_number,status,change_summary_json,created_at,activated_at)
-        VALUES (?,?,?,?,1,'active','[]',?,?)`).bind(versionId, cycleId, userId, id, now, now),
+        VALUES (?,?,?,?,1,'active',?,?,?)`).bind(versionId, cycleId, userId, id, JSON.stringify(options.changeSummary || []), now, now),
       db.prepare(`INSERT INTO plan_activation_events
         (id,user_id,cycle_id,version_id,reason,created_at) VALUES (?,?,?,?,?,?)`)
         .bind(crypto.randomUUID(), userId, cycleId, versionId, "first_plan", now),
     ]);
+    await createOccurrences(db, { userId, cycleId, versionId, planId: id, startDate, phaseWeeks });
   } else {
     const next = await db.prepare("SELECT COALESCE(MAX(version_number),0)+1 AS value FROM plan_versions WHERE cycle_id=?")
       .bind(activeCycle.id).first<{ value: number }>();
     await db.prepare(`INSERT INTO plan_versions
       (id,cycle_id,user_id,plan_id,version_number,parent_version_id,status,change_summary_json,created_at)
-      VALUES (?,?,?,?,?,?, 'draft','[]',?)`)
-      .bind(crypto.randomUUID(), activeCycle.id, userId, id, Number(next?.value || 1), activeCycle.active_version_id, now).run();
+      VALUES (?,?,?,?,?,?, 'draft',?,?)`)
+      .bind(crypto.randomUUID(), activeCycle.id, userId, id, Number(next?.value || 1), activeCycle.active_version_id, JSON.stringify(options.changeSummary || ["更新训练编排与阶段重点"]), now).run();
   }
   return id;
 }
@@ -282,24 +321,108 @@ export async function planVersionStatus(env: WorkerEnv, userId: string, planId: 
     changeSummary: parseJson<string[]>(row.change_summary_json) || [], createdAt: row.created_at } : null;
 }
 
-export async function activatePlan(env: WorkerEnv, userId: string, planId: string, reason = "user_confirmed") {
+export async function activatePlan(env: WorkerEnv, userId: string, planId: string, reason = "user_confirmed", options: { startDate?: string; timezone?: string; preserveCycleStart?: boolean } = {}) {
   const db = requireDb(env); const now = new Date().toISOString();
   const version = await db.prepare(`SELECT id,cycle_id,status FROM plan_versions WHERE user_id=? AND plan_id=?`)
     .bind(userId, planId).first<{ id: string; cycle_id: string; status: string }>();
   if (!version) throw new Error("PLAN_VERSION_NOT_FOUND");
-  const cycle = await db.prepare("SELECT active_version_id FROM plan_cycles WHERE id=? AND user_id=?")
-    .bind(version.cycle_id, userId).first<{ active_version_id: string | null }>();
+  const cycle = await db.prepare("SELECT active_version_id,start_date,timezone,phase_weeks FROM plan_cycles WHERE id=? AND user_id=?")
+    .bind(version.cycle_id, userId).first<{ active_version_id: string | null; start_date: string | null; timezone: string; phase_weeks: number }>();
   if (!cycle) throw new Error("PLAN_CYCLE_NOT_FOUND");
-  if (cycle.active_version_id === version.id) return { active: true, duplicate: true, versionId: version.id };
+  const timezone = options.timezone || cycle.timezone || "UTC";
+  const startDate = /^\d{4}-\d{2}-\d{2}$/.test(options.startDate || "") ? options.startDate! : (cycle.start_date || localDateInTimezone(timezone));
+  const cycleStartDate = options.preserveCycleStart ? (cycle.start_date || startDate) : startDate;
+  if (cycle.active_version_id === version.id) {
+    if (options.startDate || options.timezone) {
+      await db.batch([
+        db.prepare("UPDATE plan_cycles SET start_date=?,timezone=? WHERE id=? AND user_id=?").bind(cycleStartDate, timezone, version.cycle_id, userId),
+        db.prepare("DELETE FROM workout_occurrences WHERE version_id=? AND status='scheduled'").bind(version.id),
+      ]);
+      await createOccurrences(db, { userId, cycleId: version.cycle_id, versionId: version.id, planId, startDate, phaseWeeks: Number(cycle.phase_weeks || 4) });
+    }
+    return { active: true, duplicate: true, versionId: version.id };
+  }
   await db.batch([
     db.prepare("UPDATE plan_versions SET status='archived' WHERE cycle_id=? AND status='active'").bind(version.cycle_id),
     db.prepare("UPDATE plan_versions SET status='active',activated_at=? WHERE id=? AND user_id=?").bind(now, version.id, userId),
-    db.prepare("UPDATE plan_cycles SET active_version_id=? WHERE id=? AND user_id=?").bind(version.id, version.cycle_id, userId),
+    db.prepare("UPDATE plan_cycles SET active_version_id=?,start_date=?,timezone=? WHERE id=? AND user_id=?").bind(version.id, cycleStartDate, timezone, version.cycle_id, userId),
+    db.prepare("UPDATE workout_occurrences SET status='superseded',updated_at=? WHERE cycle_id=? AND version_id<>? AND scheduled_date>=? AND status='scheduled'")
+      .bind(now, version.cycle_id, version.id, startDate),
     db.prepare(`INSERT INTO plan_activation_events
       (id,user_id,cycle_id,version_id,previous_version_id,reason,created_at) VALUES (?,?,?,?,?,?,?)`)
       .bind(crypto.randomUUID(), userId, version.cycle_id, version.id, cycle.active_version_id, reason, now),
   ]);
+  await createOccurrences(db, { userId, cycleId: version.cycle_id, versionId: version.id, planId, startDate, phaseWeeks: Number(cycle.phase_weeks || 4) });
   return { active: true, duplicate: false, versionId: version.id, previousVersionId: cycle.active_version_id };
+}
+
+export async function activeCycleForUser(env: WorkerEnv, userId: string) {
+  const row = await requireDb(env).prepare(`SELECT c.id,c.active_version_id,c.start_date,c.timezone,c.phase_weeks,p.id AS plan_id,p.profile_json,p.plan_json
+    FROM plan_cycles c JOIN plan_versions v ON v.id=c.active_version_id JOIN plans p ON p.id=v.plan_id
+    WHERE c.user_id=? AND c.status='active' LIMIT 1`).bind(userId).first<{
+      id: string; active_version_id: string; start_date: string | null; timezone: string; phase_weeks: number;
+      plan_id: string; profile_json: string; plan_json: string;
+    }>();
+  return row ? { id: row.id, versionId: row.active_version_id, startDate: row.start_date || localDateInTimezone(row.timezone), timezone: row.timezone,
+    phaseWeeks: row.phase_weeks, planId: row.plan_id, profile: parseJson<Profile>(row.profile_json), plan: parseJson<CoachPlan>(row.plan_json) } : null;
+}
+
+export async function ensureActiveOccurrences(env: WorkerEnv, userId: string) {
+  const cycle = await activeCycleForUser(env, userId);
+  if (!cycle) return null;
+  const existing = await requireDb(env).prepare("SELECT COUNT(*) AS value FROM workout_occurrences WHERE version_id=?")
+    .bind(cycle.versionId).first<{ value: number }>();
+  if (!Number(existing?.value || 0)) await createOccurrences(requireDb(env), {
+    userId, cycleId: cycle.id, versionId: cycle.versionId, planId: cycle.planId,
+    startDate: cycle.startDate, phaseWeeks: Math.max(4, Number(cycle.plan?.phase?.lengthWeeks || cycle.phaseWeeks || 4)),
+  });
+  return cycle;
+}
+
+export async function occurrenceForDate(env: WorkerEnv, userId: string, localDate: string) {
+  return requireDb(env).prepare(`SELECT id,cycle_id,version_id,plan_id,day_index,scheduled_date,status,mode
+    FROM workout_occurrences WHERE user_id=? AND scheduled_date=? AND status<>'superseded'
+    ORDER BY CASE WHEN status='scheduled' THEN 0 ELSE 1 END LIMIT 1`).bind(userId, localDate).first<{
+      id: string; cycle_id: string; version_id: string; plan_id: string; day_index: number; scheduled_date: string; status: string; mode: string;
+    }>();
+}
+
+export async function occurrenceForUser(env: WorkerEnv, userId: string, occurrenceId: string) {
+  return requireDb(env).prepare(`SELECT id,cycle_id,version_id,plan_id,day_index,scheduled_date,status,mode
+    FROM workout_occurrences WHERE id=? AND user_id=?`).bind(occurrenceId, userId).first<{
+      id: string; cycle_id: string; version_id: string; plan_id: string; day_index: number; scheduled_date: string; status: string; mode: string;
+    }>();
+}
+
+export async function setOccurrenceMode(env: WorkerEnv, userId: string, occurrenceId: string, mode: "standard" | "short" | "recovery") {
+  const occurrence = await occurrenceForUser(env, userId, occurrenceId);
+  if (!occurrence) throw new Error("OCCURRENCE_NOT_FOUND");
+  await requireDb(env).prepare("UPDATE workout_occurrences SET mode=?,updated_at=? WHERE id=? AND user_id=?")
+    .bind(mode, new Date().toISOString(), occurrenceId, userId).run();
+  return { ...occurrence, mode };
+}
+
+export async function rescheduleOccurrence(env: WorkerEnv, userId: string, occurrenceId: string, scheduledDate: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(scheduledDate)) throw new Error("INVALID_DATE");
+  const occurrence = await occurrenceForUser(env, userId, occurrenceId);
+  if (!occurrence || occurrence.status === "completed" || occurrence.status === "superseded") throw new Error("OCCURRENCE_NOT_FOUND");
+  const conflict = await occurrenceForDate(env, userId, scheduledDate);
+  if (conflict && conflict.id !== occurrenceId && conflict.status === "scheduled") throw new Error("DATE_CONFLICT");
+  const now = new Date().toISOString();
+  await requireDb(env).prepare("UPDATE workout_occurrences SET scheduled_date=?,status='rescheduled',rescheduled_from_id=COALESCE(rescheduled_from_id,id),updated_at=? WHERE id=? AND user_id=?")
+    .bind(scheduledDate, now, occurrenceId, userId).run();
+  return { ...occurrence, scheduled_date: scheduledDate, status: "rescheduled" };
+}
+
+export async function markOccurrenceCompleted(env: WorkerEnv, userId: string, planId: string, dayIndex: number, occurrenceId?: string | null) {
+  const db = requireDb(env); const now = new Date().toISOString();
+  if (occurrenceId) {
+    await db.prepare("UPDATE workout_occurrences SET status='completed',updated_at=? WHERE id=? AND user_id=? AND plan_id=?")
+      .bind(now, occurrenceId, userId, planId).run();
+    return;
+  }
+  await db.prepare("UPDATE workout_occurrences SET status='completed',updated_at=? WHERE user_id=? AND plan_id=? AND day_index=? AND scheduled_date=?")
+    .bind(now, userId, planId, dayIndex, localDateInTimezone("UTC")).run();
 }
 
 export async function listPlansForUser(env: WorkerEnv, userId: string, limit = 20): Promise<ReturnType<typeof publicPlan>[]> {
@@ -377,22 +500,50 @@ export async function saveWorkoutSession(env: WorkerEnv, userId: string, planId:
       Math.max(0, Math.min(10, Math.round(input.pain))), input.notes, now, completedAt, now).run();
 }
 
-export async function workoutSetsForDay(env: WorkerEnv, userId: string, planId: string, dayIndex: number) {
+export async function saveWorkoutOccurrenceSession(env: WorkerEnv, userId: string, planId: string, occurrenceId: string, input: {
+  status: "completed" | "in_progress"; durationMinutes: number | null; rpe: number | null; pain: number; notes: string;
+}) {
+  const occurrence = await occurrenceForUser(env, userId, occurrenceId);
+  if (!occurrence || occurrence.plan_id !== planId) throw new Error("OCCURRENCE_NOT_FOUND");
+  const db = requireDb(env); const now = new Date().toISOString(); const completedAt = input.status === "completed" ? now : null;
+  await db.batch([
+    db.prepare(`INSERT INTO workout_occurrence_sessions
+      (id,occurrence_id,user_id,plan_id,status,duration_minutes,rpe,pain,notes,started_at,completed_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(occurrence_id) DO UPDATE SET status=excluded.status,
+      duration_minutes=COALESCE(excluded.duration_minutes,workout_occurrence_sessions.duration_minutes),
+      rpe=COALESCE(excluded.rpe,workout_occurrence_sessions.rpe),pain=excluded.pain,notes=excluded.notes,
+      completed_at=COALESCE(excluded.completed_at,workout_occurrence_sessions.completed_at),updated_at=excluded.updated_at`)
+      .bind(crypto.randomUUID(), occurrenceId, userId, planId, input.status, input.durationMinutes, input.rpe,
+        Math.max(0, Math.min(10, Math.round(input.pain))), input.notes, now, completedAt, now),
+    db.prepare("UPDATE workout_occurrences SET status=?,updated_at=? WHERE id=? AND user_id=?")
+      .bind(input.status === "completed" ? "completed" : occurrence.status, now, occurrenceId, userId),
+  ]);
+  return { occurrenceId, status: input.status, completedAt };
+}
+
+export async function workoutSetsForDay(env: WorkerEnv, userId: string, planId: string, dayIndex: number, occurrenceId?: string | null) {
   const db = requireDb(env);
   const plan = await db.prepare("SELECT id FROM plans WHERE id=? AND user_id=?").bind(planId, userId).first<{ id: string }>();
   if (!plan) throw new Error("PLAN_NOT_FOUND");
+  if (occurrenceId) {
+    const occurrence = await occurrenceForUser(env, userId, occurrenceId);
+    if (!occurrence || occurrence.plan_id !== planId || occurrence.day_index !== dayIndex) throw new Error("OCCURRENCE_NOT_FOUND");
+  }
+  const table = occurrenceId ? "workout_occurrence_sets" : "workout_sets";
+  const condition = occurrenceId ? "user_id=? AND plan_id=? AND occurrence_id=?" : "user_id=? AND plan_id=? AND day_index=?";
   const rows = await db.prepare(`SELECT id,exercise_id,set_index,set_type,target_reps,weight_kg,reps,rir,rpe,completed,updated_at
-    FROM workout_sets WHERE user_id=? AND plan_id=? AND day_index=? ORDER BY exercise_id,set_index`)
-    .bind(userId, planId, dayIndex).all<{
+    FROM ${table} WHERE ${condition} ORDER BY exercise_id,set_index`)
+    .bind(userId, planId, occurrenceId || dayIndex).all<{
       id: string; exercise_id: string; set_index: number; set_type: string; target_reps: string | null;
       weight_kg: number | null; reps: number | null; rir: number | null; rpe: number | null; completed: number; updated_at: string;
     }>();
   const exerciseIds = [...new Set((rows.results || []).map((row) => row.exercise_id))];
   const previous: Record<string, { weightKg: number | null; reps: number | null; rir: number | null; updatedAt: string }> = {};
   for (const exerciseId of exerciseIds) {
-    const row = await db.prepare(`SELECT weight_kg,reps,rir,updated_at FROM workout_sets
-      WHERE user_id=? AND exercise_id=? AND completed=1 AND NOT (plan_id=? AND day_index=?)
-      ORDER BY updated_at DESC LIMIT 1`).bind(userId, exerciseId, planId, dayIndex)
+    const row = await db.prepare(`SELECT weight_kg,reps,rir,updated_at FROM (
+        SELECT weight_kg,reps,rir,updated_at FROM workout_occurrence_sets WHERE user_id=? AND exercise_id=? AND completed=1
+        UNION ALL SELECT weight_kg,reps,rir,updated_at FROM workout_sets WHERE user_id=? AND exercise_id=? AND completed=1
+      ) ORDER BY updated_at DESC LIMIT 1`).bind(userId, exerciseId, userId, exerciseId)
       .first<{ weight_kg: number | null; reps: number | null; rir: number | null; updated_at: string }>();
     if (row) previous[exerciseId] = { weightKg: row.weight_kg, reps: row.reps, rir: row.rir, updatedAt: row.updated_at };
   }
@@ -409,6 +560,23 @@ export async function upsertWorkoutSet(env: WorkerEnv, userId: string, planId: s
   if (!row || !exercise) throw new Error("PLAN_EXERCISE_NOT_FOUND");
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
+  if (input.occurrenceId) {
+    const occurrence = await occurrenceForUser(env, userId, input.occurrenceId);
+    if (!occurrence || occurrence.plan_id !== planId || occurrence.day_index !== input.dayIndex) throw new Error("OCCURRENCE_NOT_FOUND");
+    await db.prepare(`INSERT INTO workout_occurrence_sets
+      (id,occurrence_id,user_id,plan_id,day_index,exercise_id,set_index,set_type,target_reps,weight_kg,reps,rir,rpe,completed,client_mutation_id,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(occurrence_id,exercise_id,set_index) DO UPDATE SET
+        set_type=excluded.set_type,target_reps=excluded.target_reps,weight_kg=excluded.weight_kg,reps=excluded.reps,
+        rir=excluded.rir,rpe=excluded.rpe,completed=excluded.completed,
+        client_mutation_id=COALESCE(workout_occurrence_sets.client_mutation_id,excluded.client_mutation_id),updated_at=excluded.updated_at`)
+      .bind(id, input.occurrenceId, userId, planId, input.dayIndex, input.exerciseId, input.setIndex, input.setType,
+        String(input.targetReps || exercise.reps).slice(0, 30), input.weightKg, input.reps, input.rir, input.rpe,
+        input.completed ? 1 : 0, input.clientMutationId || null, now, now).run();
+    return db.prepare(`SELECT id,exercise_id,set_index,set_type,target_reps,weight_kg,reps,rir,rpe,completed,updated_at
+      FROM workout_occurrence_sets WHERE occurrence_id=? AND exercise_id=? AND set_index=?`)
+      .bind(input.occurrenceId, input.exerciseId, input.setIndex).first<Record<string, unknown>>();
+  }
   await db.prepare(`INSERT INTO workout_sets
     (id,user_id,plan_id,day_index,exercise_id,set_index,set_type,target_reps,weight_kg,reps,rir,rpe,completed,client_mutation_id,created_at,updated_at)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
@@ -572,7 +740,8 @@ export async function adminOverview(env: WorkerEnv) {
     db.prepare("SELECT COUNT(*) AS value FROM weekly_reviews WHERE status='accepted'").first<{ value: number }>(),
     db.prepare("SELECT COUNT(*) AS value FROM devices").first<{ value: number }>(),
     db.prepare("SELECT id,job,status,processed,failed,started_at,completed_at FROM maintenance_runs WHERE job='daily' ORDER BY started_at DESC LIMIT 8").all<Record<string, unknown>>(),
-    db.prepare("SELECT COUNT(*) AS value FROM workout_sets WHERE completed=1").first<{ value: number }>(),
+    db.prepare(`SELECT (SELECT COUNT(*) FROM workout_sets WHERE completed=1) +
+      (SELECT COUNT(*) FROM workout_occurrence_sets WHERE completed=1) AS value`).first<{ value: number }>(),
     db.prepare("SELECT COUNT(*) AS value FROM profiles WHERE json_extract(profile_json,'$.trainingTrack')='beginner_fat_loss'").first<{ value: number }>(),
     db.prepare("SELECT COUNT(*) AS value FROM profiles WHERE json_extract(profile_json,'$.trainingTrack')='intermediate_hypertrophy'").first<{ value: number }>(),
     db.prepare("SELECT COUNT(*) AS value FROM food_search_events").first<{ value: number }>(),
@@ -580,6 +749,18 @@ export async function adminOverview(env: WorkerEnv) {
     db.prepare("SELECT COUNT(*) AS value FROM food_corrections WHERE status='pending'").first<{ value: number }>(),
     db.prepare("SELECT COUNT(*) AS value FROM canonical_foods WHERE source_kind='user' AND status='active'").first<{ value: number }>(),
     db.prepare("SELECT source,title,license_name,license_url,attribution_text,commercial_use,redistribution,status,last_verified_at,updated_at FROM food_source_licenses ORDER BY source").all<Record<string, unknown>>(),
+  ]);
+  const [coachBriefs, coachCheckins, pendingCoachActions, acceptedCoachActions, rejectedCoachActions, failedCoachActions, positiveCoachFeedback, negativeCoachFeedback, coachSafetyBlocks, coachEvaluations] = await Promise.all([
+    db.prepare("SELECT COUNT(*) AS value FROM coach_daily_briefs").first<{ value: number }>(),
+    db.prepare("SELECT COUNT(*) AS value FROM coach_checkins").first<{ value: number }>(),
+    db.prepare("SELECT COUNT(*) AS value FROM coach_action_proposals WHERE status='pending'").first<{ value: number }>(),
+    db.prepare("SELECT COUNT(*) AS value FROM coach_action_proposals WHERE status='accepted'").first<{ value: number }>(),
+    db.prepare("SELECT COUNT(*) AS value FROM coach_action_proposals WHERE status='rejected'").first<{ value: number }>(),
+    db.prepare("SELECT COUNT(*) AS value FROM coach_action_proposals WHERE status='failed'").first<{ value: number }>(),
+    db.prepare("SELECT COUNT(*) AS value FROM coach_feedback WHERE rating=1").first<{ value: number }>(),
+    db.prepare("SELECT COUNT(*) AS value FROM coach_feedback WHERE rating=-1").first<{ value: number }>(),
+    db.prepare("SELECT COUNT(*) AS value FROM coach_evaluation_runs WHERE safety_passed=0").first<{ value: number }>(),
+    db.prepare("SELECT COUNT(*) AS value FROM coach_evaluation_runs").first<{ value: number }>(),
   ]);
   const generationCount = Number(generations?.value || 0);
   const failureCount = Number(failedGenerations?.value || 0);
@@ -608,6 +789,18 @@ export async function adminOverview(env: WorkerEnv) {
       onboardingCompleted: Number(onboardingCompleted?.value || 0),
       coachConversations: Number(coachConversations?.value || 0),
       coachMessages: Number(coachMessages?.value || 0),
+      coachBriefs: Number(coachBriefs?.value || 0),
+      coachCheckins: Number(coachCheckins?.value || 0),
+      pendingCoachActions: Number(pendingCoachActions?.value || 0),
+      acceptedCoachActions: Number(acceptedCoachActions?.value || 0),
+      rejectedCoachActions: Number(rejectedCoachActions?.value || 0),
+      failedCoachActions: Number(failedCoachActions?.value || 0),
+      coachActionAcceptanceRate: Number(acceptedCoachActions?.value || 0) + Number(rejectedCoachActions?.value || 0)
+        ? Math.round(Number(acceptedCoachActions?.value || 0) / (Number(acceptedCoachActions?.value || 0) + Number(rejectedCoachActions?.value || 0)) * 100) : 0,
+      positiveCoachFeedback: Number(positiveCoachFeedback?.value || 0),
+      negativeCoachFeedback: Number(negativeCoachFeedback?.value || 0),
+      coachSafetyBlocks: Number(coachSafetyBlocks?.value || 0),
+      coachEvaluations: Number(coachEvaluations?.value || 0),
       weeklyReviews: Number(weeklyReviews?.value || 0),
       acceptedReviews: Number(acceptedReviews?.value || 0),
       devices: Number(devices?.value || 0),

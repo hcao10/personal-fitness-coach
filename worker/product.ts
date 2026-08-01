@@ -4,7 +4,7 @@ export type Capability = "plan.generate" | "meal.scan" | "coach.chat" | "adaptiv
 export type ProductTier = "free" | "pro";
 
 const proCapabilities: Capability[] = ["plan.generate", "meal.scan", "coach.chat", "adaptive.review", "data.export"];
-const freeCapabilities: Capability[] = ["plan.generate", "meal.scan", "data.export"];
+const freeCapabilities: Capability[] = ["plan.generate", "meal.scan", "coach.chat", "data.export"];
 
 function periodKey(date = new Date()): string {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
@@ -39,6 +39,7 @@ export async function limitForCapability(env: WorkerEnv, tier: ProductTier, capa
     free: {
       "plan.generate": ["free_plan_limit", 2],
       "meal.scan": ["free_meal_scan_limit", 5],
+      "coach.chat": ["free_coach_message_limit", 10],
       "data.export": ["free_export_limit", 10],
     },
     pro: {

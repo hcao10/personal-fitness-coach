@@ -154,6 +154,11 @@ export default function AdminDashboard() {
       <article><span>完成训练组</span><b>{metrics?.workoutSets ?? "—"}</b><small>真实逐组记录</small></article>
     </div>
 
+    <section className="admin-panel" id="coach-operations">
+      <div className="admin-section-title"><div><span>01B / COACH QUALITY</span><h2>Coach 产品闭环</h2></div><p>简报、状态检查、建议确认和安全拦截均来自真实事件，不以聊天条数代替产品效果。</p></div>
+      <div className="nutrition-admin-metrics"><article><span>每日简报</span><b>{metrics?.coachBriefs ?? 0}</b></article><article><span>训练前检查</span><b>{metrics?.coachCheckins ?? 0}</b></article><article><span>建议待处理</span><b>{metrics?.pendingCoachActions ?? 0}</b></article><article><span>建议接受率</span><b>{metrics?.coachActionAcceptanceRate ?? 0}%</b></article><article><span>执行失败</span><b>{metrics?.failedCoachActions ?? 0}</b></article><article><span>有帮助反馈</span><b>{metrics?.positiveCoachFeedback ?? 0}</b></article><article><span>需改进反馈</span><b>{metrics?.negativeCoachFeedback ?? 0}</b></article><article><span>安全拦截</span><b>{metrics?.coachSafetyBlocks ?? 0}</b></article></div>
+    </section>
+
     <section className="admin-panel" id="modules">
       <div className="admin-section-title"><div><span>02 / SYSTEM</span><h2>服务端模块</h2></div><p>状态来自当前生产环境，配置完成后才显示运行中。</p></div>
       <div className="module-table">{modules.map((module) => <article key={module.name}>
@@ -225,6 +230,7 @@ export default function AdminDashboard() {
           ["ai_monthly_hard_usd", "每月硬成本上限（USD）", 50],
           ["free_plan_limit", "免费版计划额度", 2],
           ["free_meal_scan_limit", "免费版饭菜识别额度", 5],
+          ["free_coach_message_limit", "免费版 Coach 体验消息", 10],
           ["pro_plan_limit", "Pro 计划额度", 30],
           ["pro_meal_scan_limit", "Pro 饭菜识别额度", 100],
           ["pro_coach_message_limit", "Pro Coach 消息额度", 200],

@@ -120,6 +120,48 @@ test("dual-track training records real sets and food provenance", async () => {
   assert.match(api, /\/api\/v1\/meal-templates/);
 });
 
+test("AI Coach closed loop stores real dates, memory, briefs, feedback, and idempotent actions", async () => {
+  const migration = await readFile(new URL("../drizzle/0007_ai_coach_closed_loop.sql", import.meta.url), "utf8");
+  for (const table of ["workout_occurrences", "workout_occurrence_sessions", "workout_occurrence_sets", "coach_action_executions", "coach_memories", "coach_preferences", "coach_conversation_summaries", "coach_daily_briefs", "coach_checkins", "coach_feedback", "knowledge_sources", "knowledge_articles", "coach_evaluation_runs"]) {
+    assert.match(migration, new RegExp(`CREATE TABLE ${table}`));
+  }
+  assert.match(migration, /free_coach_message_limit','10'/);
+  const api = await readFile(new URL("../worker/api.ts", import.meta.url), "utf8");
+  assert.match(api, /\/api\/v1\/coach\/home/);
+  assert.match(api, /\/api\/v1\/coach\/check-ins/);
+  assert.match(api, /\/api\/v1\/coach\/memory/);
+  assert.match(api, /occurrenceRescheduleMatch/);
+  assert.match(api, /message\.delta/);
+});
+
+test("Coach uses provider streaming, reviewed knowledge, and user-confirmed versioned changes", async () => {
+  const llm = await readFile(new URL("../worker/llm.ts", import.meta.url), "utf8");
+  const coach = await readFile(new URL("../worker/modules/coach.ts", import.meta.url), "utf8");
+  const core = await readFile(new URL("../packages/coach-core/src/index.ts", import.meta.url), "utf8");
+  assert.match(llm, /runProviderStream/);
+  assert.match(llm, /onDelta/);
+  assert.match(llm, /source_ids/);
+  assert.match(coach, /base_version_id/);
+  assert.match(coach, /coach_action_executions/);
+  assert.match(coach, /status: "draft"/);
+  assert.match(core, /habit_foundation/);
+  assert.match(core, /hypertrophy_build/);
+  assert.match(core, /variants/);
+  assert.match(core, /stopConditions/);
+});
+
+test("today experience follows the selected start date and records each weekly occurrence separately", async () => {
+  const today = await readFile(new URL("../app/today/today-client.tsx", import.meta.url), "utf8");
+  const onboarding = await readFile(new URL("../app/onboarding/onboarding-client.tsx", import.meta.url), "utf8");
+  assert.match(today, /occurrenceId/);
+  assert.match(today, /30 秒状态检查/);
+  assert.match(today, /恢复版/);
+  assert.match(today, /动作要点与注意事项/);
+  assert.match(today, /exercise-media-modal/);
+  assert.match(onboarding, /计划从哪天开始/);
+  assert.match(onboarding, /startDate, timezone/);
+});
+
 test("food search avoids LLM nutrition values and labels source quality", async () => {
   const nutrition = await readFile(new URL("../worker/nutrition.ts", import.meta.url), "utf8");
   assert.match(nutrition, /sourceKind/);

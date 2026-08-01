@@ -2,7 +2,7 @@ import { calculateWeeklyReview, recommendReview } from "../../packages/domain/sr
 import type { CoachPlan, Profile } from "../../packages/coach-core/src";
 import type { WorkerEnv } from "../platform";
 import type { StoredUser } from "../db";
-import { activatePlan, activePlanForUser, savePlan } from "../db";
+import { activatePlan, activeCycleForUser, activePlanForUser, addLocalDays, localDateInTimezone, savePlan } from "../db";
 import { consumeCapability, refundCapability } from "../product";
 import { generateCoachChat } from "../llm";
 
@@ -12,10 +12,15 @@ function mondayOf(date = new Date()) {
   return value;
 }
 function parseJson<T>(value: string | null): T | null { try { return value ? JSON.parse(value) as T : null; } catch { return null; } }
+function dateDifference(start: string, end: string) { return Math.floor((new Date(`${end}T00:00:00Z`).getTime() - new Date(`${start}T00:00:00Z`).getTime()) / 86_400_000); }
 
 export async function ensureCurrentReview(env: WorkerEnv, userId: string) {
   if (!env.DB) throw new Error("DATABASE_NOT_CONFIGURED");
-  const weekStart = mondayOf().toISOString().slice(0, 10); const now = new Date().toISOString();
+  const cycle = await activeCycleForUser(env, userId);
+  const localToday = cycle ? localDateInTimezone(cycle.timezone) : new Date().toISOString().slice(0, 10);
+  const elapsed = cycle ? Math.max(0, dateDifference(cycle.startDate, localToday)) : 0;
+  const weekStart = cycle ? addLocalDays(cycle.startDate, Math.floor(elapsed / 7) * 7) : mondayOf().toISOString().slice(0, 10);
+  const now = new Date().toISOString();
   await env.DB.prepare(`INSERT OR IGNORE INTO weekly_reviews (id,user_id,week_start,status,created_at,updated_at)
     VALUES (?,?,?,'due',?,?)`).bind(crypto.randomUUID(), userId, weekStart, now, now).run();
   return env.DB.prepare(`SELECT id,week_start,status,checkin_json,metrics_json,recommendation_json,plateau,created_at,updated_at
@@ -56,32 +61,39 @@ export async function generateReview(env: WorkerEnv, user: StoredUser, id: strin
   if (!review) throw new Error("REVIEW_NOT_FOUND");
   const quota = await consumeCapability(env, user.id, "adaptive.review");
   if (!quota.ok) throw new Error("REVIEW_LIMIT_REACHED");
-  const start = new Date(`${review.week_start}T00:00:00.000Z`); const end = new Date(start.getTime() + 7 * 86400_000);
+  const start = new Date(`${review.week_start}T00:00:00.000Z`); const end = new Date(start.getTime() + 7 * 86400_000); const endDate = end.toISOString().slice(0, 10);
   const active = await activePlanForUser(env, user.id);
   if (!active?.profile || !active.plan) { await refundCapability(env, user.id, "adaptive.review"); throw new Error("ACTIVE_PLAN_REQUIRED"); }
   const historyStart = new Date(start.getTime() - 21 * 86400_000);
-  const [sessions, measurements, previous, sets, previousSets, nutrition] = await Promise.all([
+  const [occurrenceSessions, legacySessions, measurements, previous, sets, previousSets, nutrition, planned] = await Promise.all([
+    env.DB.prepare(`SELECT s.rpe,s.pain,s.completed_at FROM workout_occurrence_sessions s JOIN workout_occurrences o ON o.id=s.occurrence_id
+      WHERE s.user_id=? AND s.status='completed' AND o.scheduled_date>=? AND o.scheduled_date<?`).bind(user.id, review.week_start, endDate).all<{ rpe: number | null; pain: number; completed_at: string }>(),
     env.DB.prepare(`SELECT rpe,pain,completed_at FROM workout_sessions WHERE user_id=? AND status='completed'
       AND completed_at>=? AND completed_at<?`).bind(user.id, start.toISOString(), end.toISOString()).all<{ rpe: number | null; pain: number; completed_at: string }>(),
     env.DB.prepare(`SELECT weight_kg,measured_at FROM measurements WHERE user_id=? AND measured_at>=?
       ORDER BY measured_at`).bind(user.id, new Date(start.getTime() - 21 * 86400_000).toISOString()).all<{ weight_kg: number | null; measured_at: string }>(),
     env.DB.prepare(`SELECT metrics_json FROM weekly_reviews WHERE user_id=? AND week_start<? AND status IN ('generated','accepted','rejected')
       ORDER BY week_start DESC LIMIT 3`).bind(user.id, review.week_start).all<{ metrics_json: string }>(),
-    env.DB.prepare(`SELECT weight_kg,reps,rir,completed,updated_at FROM workout_sets WHERE user_id=? AND updated_at>=? AND updated_at<?`)
-      .bind(user.id, start.toISOString(), end.toISOString()).all<{ weight_kg: number | null; reps: number | null; rir: number | null; completed: number; updated_at: string }>(),
-    env.DB.prepare(`SELECT weight_kg,reps,completed,updated_at FROM workout_sets WHERE user_id=? AND updated_at>=? AND updated_at<?`)
-      .bind(user.id, historyStart.toISOString(), start.toISOString()).all<{ weight_kg: number | null; reps: number | null; completed: number; updated_at: string }>(),
+    env.DB.prepare(`SELECT s.weight_kg,s.reps,s.rir,s.completed,s.updated_at FROM workout_occurrence_sets s JOIN workout_occurrences o ON o.id=s.occurrence_id
+      WHERE s.user_id=? AND o.scheduled_date>=? AND o.scheduled_date<?`).bind(user.id, review.week_start, endDate).all<{ weight_kg: number | null; reps: number | null; rir: number | null; completed: number; updated_at: string }>(),
+    env.DB.prepare(`SELECT s.weight_kg,s.reps,s.completed,s.updated_at FROM workout_occurrence_sets s JOIN workout_occurrences o ON o.id=s.occurrence_id
+      WHERE s.user_id=? AND o.scheduled_date>=? AND o.scheduled_date<?`).bind(user.id, historyStart.toISOString().slice(0, 10), review.week_start).all<{ weight_kg: number | null; reps: number | null; completed: number; updated_at: string }>(),
     env.DB.prepare(`SELECT substr(eaten_at,1,10) AS day,SUM(calories) AS calories,SUM(protein_g) AS protein_g FROM meal_logs
       WHERE user_id=? AND status='confirmed' AND eaten_at>=? AND eaten_at<? GROUP BY substr(eaten_at,1,10)`)
       .bind(user.id, start.toISOString(), end.toISOString()).all<{ day: string; calories: number; protein_g: number }>(),
+    env.DB.prepare(`SELECT COUNT(*) AS value FROM workout_occurrences o JOIN plans p ON p.id=o.plan_id
+      WHERE o.user_id=? AND o.scheduled_date>=? AND o.scheduled_date<? AND o.status<>'superseded'
+      AND COALESCE(json_extract(p.plan_json,'$.schedule[' || o.day_index || '].restDay'),0)=0`)
+      .bind(user.id, review.week_start, endDate).first<{ value: number }>(),
   ]);
+  const sessions = Number(occurrenceSessions.results?.length || 0) ? occurrenceSessions : legacySessions;
   const consecutive = (previous.results || []).filter((row) => parseJson<{ eligible?: boolean }>(row.metrics_json)?.eligible).length + 1;
   const previousWeeklyVolumes = [0, 0, 0];
   for (const row of previousSets.results || []) {
     const bucket = Math.min(2, Math.max(0, Math.floor((new Date(row.updated_at).getTime() - historyStart.getTime()) / (7 * 86400_000))));
     if (row.completed) previousWeeklyVolumes[bucket] += Number(row.weight_kg || 0) * Number(row.reps || 0);
   }
-  const metrics = calculateWeeklyReview({ plannedSessions: active.profile.days,
+  const metrics = calculateWeeklyReview({ plannedSessions: Math.max(1, Number(planned?.value || active.profile.days)),
     sessions: (sessions.results || []).map((row) => ({ rpe: row.rpe, pain: row.pain, completedAt: row.completed_at })),
     measurements: (measurements.results || []).map((row) => ({ weightKg: row.weight_kg, measuredAt: row.measured_at })), consecutiveEligibleWeeks: consecutive,
     sets: (sets.results || []).map((row) => ({ weightKg: row.weight_kg, reps: row.reps, rir: row.rir, completed: Boolean(row.completed) })),
@@ -117,10 +129,11 @@ export async function decideReview(env: WorkerEnv, userId: string, id: string, d
   let planId: string | null = null;
   if (decision === "accepted") {
     const recommendation = parseJson<{ volumeMultiplier?: number; loadMultiplier?: number }>(row.recommendation_json);
-    const active = await activePlanForUser(env, userId);
+    const [active, cycle] = await Promise.all([activePlanForUser(env, userId), activeCycleForUser(env, userId)]);
     if (active?.plan && active.profile) {
-      planId = await savePlan(env, userId, active.profile as Profile, adjustedPlan(active.plan as CoachPlan, Number(recommendation?.volumeMultiplier || 1), Number(recommendation?.loadMultiplier || 1)), "adaptive_review", "rules+coach");
-      await activatePlan(env, userId, planId, `weekly_review:${id}`);
+      const effectiveDate = cycle ? addLocalDays(cycle.startDate, Math.max(7, (Math.floor(Math.max(0, dateDifference(cycle.startDate, localDateInTimezone(cycle.timezone))) / 7) + 1) * 7)) : undefined;
+      planId = await savePlan(env, userId, active.profile as Profile, adjustedPlan(active.plan as CoachPlan, Number(recommendation?.volumeMultiplier || 1), Number(recommendation?.loadMultiplier || 1)), "adaptive_review", "rules+coach", { changeSummary: ["根据周度完成率与恢复状态调整训练量", "单周组数变化保持在 10% 安全边界内"] });
+      await activatePlan(env, userId, planId, `weekly_review:${id}`, { startDate: effectiveDate, timezone: cycle?.timezone, preserveCycleStart: true });
     }
   }
   await env.DB.prepare("UPDATE weekly_reviews SET status=?,updated_at=? WHERE id=? AND user_id=?")

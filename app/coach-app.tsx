@@ -14,6 +14,10 @@ const goalOptions: { value: Goal; zh: string; en: string }[] = [
   { value: "strength", zh: "提升力量", en: "Strength" },
 ];
 const dayNames = { zh: ["周一", "周二", "周三", "周四", "周五", "周六", "周日"], en: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] };
+const localDate = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+const recommendedStartDate = () => { const date = new Date(); if (date.getHours() >= 15) date.setDate(date.getDate() + 1); return localDate(date); };
+const scheduleDateLabel = (start: string, index: number, lang: DisplayLanguage) => { const date = new Date(`${start}T12:00:00`); date.setDate(date.getDate() + index); return date.toLocaleDateString(lang === "zh" ? "zh-CN" : "en-US", { month: "short", day: "numeric", weekday: "short" }); };
+const shiftLocalDate = (start: string, days: number) => { const date = new Date(`${start}T12:00:00`); date.setDate(date.getDate() + days); return localDate(date); };
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
   return <span className="field-label">{children}</span>;
@@ -44,6 +48,9 @@ export default function CoachApp() {
   const [adClaimed, setAdClaimed] = useState(false);
   const [toast, setToast] = useState("");
   const [user, setUser] = useState<CmineUser | null>(null);
+  const [startDate, setStartDate] = useState(recommendedStartDate);
+  const [dateOptions] = useState(() => { const today = new Date(); const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1); return { today: localDate(today), tomorrow: localDate(tomorrow) }; });
+  const [timezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
   const planRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
@@ -65,10 +72,10 @@ export default function CoachApp() {
           setPlanId(account.latestPlan.id);
           setPlanStatus("active");
           setPlanReady(true);
-          const today = (new Date().getDay() + 6) % 7;
-          setActiveDay(account.latestPlan.plan.schedule[today]?.restDay
-            ? Math.max(0, account.latestPlan.plan.schedule.findIndex((day) => !day.restDay))
-            : today);
+          const homeResponse = await fetch("/api/v1/coach/home", { cache: "no-store" }).catch(() => null);
+          const coachHome = homeResponse?.ok ? await homeResponse.json() as { today?: { dayIndex?: number; scheduledDate?: string } | null } : null;
+          setActiveDay(Math.max(0, Math.min(6, Number(coachHome?.today?.dayIndex || 0))));
+          if (coachHome?.today?.scheduledDate) setStartDate(shiftLocalDate(coachHome.today.scheduledDate, -Number(coachHome.today.dayIndex || 0)));
         } else if (account.profile) {
           setPlan(generatePlan(account.profile));
         }
@@ -110,7 +117,7 @@ export default function CoachApp() {
     setGenerating(true);
     let revealPlan = false;
     try {
-      const response = await fetch("/api/plans", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ profile, consent: accepted === true }) });
+      const response = await fetch("/api/plans", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ profile, consent: accepted === true, startDate, timezone }) });
       const result = await response.json() as { plan?: CoachPlan; planId?: string | null; planStatus?: "active" | "draft"; source?: "llm"; message?: string };
       if (response.ok && result.plan) {
         setPlan(result.plan);
@@ -119,8 +126,7 @@ export default function CoachApp() {
         setCompleted(new Set());
         setPlanReady(true);
         revealPlan = true;
-        const firstTrainingDay = result.plan.schedule.findIndex((day) => !day.restDay);
-        setActiveDay(Math.max(0, firstTrainingDay));
+        setActiveDay(0);
         setToast(result.planStatus === "draft" ? (lang === "zh" ? "新计划已生成草案；确认后才会替换当前计划" : "Your new plan is a draft until you confirm it") : (lang === "zh" ? "AI 已完成个性化计划，并通过规则校验" : "Your AI plan passed the safety checks"));
       } else {
         setPlanReady(false);
@@ -148,7 +154,7 @@ export default function CoachApp() {
   };
   const activateDraft = async () => {
     if (!planId) return;
-    const response = await fetch(`/api/v1/plans/${encodeURIComponent(planId)}/activate`, { method: "POST" });
+    const response = await fetch(`/api/v1/plans/${encodeURIComponent(planId)}/activate`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ startDate, timezone }) });
     if (!response.ok) { setToast(lang === "zh" ? "计划草案启用失败，请重试" : "Could not activate this plan"); return; }
     setPlanStatus("active"); setToast(lang === "zh" ? "新计划已经启用，旧版本仍保留在历史中" : "The new plan is active; the previous version remains in history");
   };
@@ -270,6 +276,7 @@ export default function CoachApp() {
                 <label><FieldLabel>{lang === "zh" ? "忌口、过敏或不吃的食物" : "Exclusions or allergies"}</FieldLabel><input value={profile.exclusions || ""} onChange={(e) => patchProfile("exclusions", e.target.value)} placeholder={lang === "zh" ? "例如：乳糖不耐、花生过敏" : "e.g. lactose, peanut allergy"} /></label>
               </div>
             </div>
+            {user && <div className="plan-start-picker"><div><FieldLabel>{lang === "zh" ? "计划从哪天开始" : "Plan start date"}</FieldLabel><p>{lang === "zh" ? "下午较晚生成时默认从明天开始；你也可以改成今天或其他日期。" : "Plans made later in the day start tomorrow by default. You can change this."}</p></div><button type="button" className={startDate === dateOptions.today ? "active" : ""} onClick={() => setStartDate(dateOptions.today)}>{lang === "zh" ? "今天" : "Today"}</button><button type="button" className={startDate === dateOptions.tomorrow ? "active" : ""} onClick={() => setStartDate(dateOptions.tomorrow)}>{lang === "zh" ? "明天" : "Tomorrow"}</button><input aria-label={lang === "zh" ? "计划开始日期" : "Plan start date"} type="date" value={startDate} min={dateOptions.today} onChange={(event) => setStartDate(event.target.value)} /></div>}
             <button className="primary-cta" onClick={buildPlan} disabled={generating}><span>{generating ? (lang === "zh" ? "AI 正在规划…" : "AI is planning…") : !user ? (lang === "zh" ? "查看我的计划预览" : "Preview my plan") : t.generate}</span><b>{generating ? "···" : "→"}</b></button>
             <p className="privacy-line">◉ {!user ? (lang === "zh" ? "预览只在当前浏览器计算，不上传身体或伤病资料" : "Preview calculations stay in this browser; body and injury data are not uploaded") : (lang === "zh" ? "生成时会安全提交训练资料并保存计划历史" : "Generation securely submits this profile and saves plan history")}</p>
           </div>
@@ -282,7 +289,7 @@ export default function CoachApp() {
               <div><span>{t.protein}<small>{lang === "zh" ? "约" : "About"} {(plan.protein / profile.weight).toFixed(1)}g/kg</small></span><b>{plan.protein}<em> g</em></b></div>
               <div><span>{t.weekPlan}<small>{profile.days} {lang === "zh" ? "个训练日" : "training days"}</small></span><b>{Math.round(plan.schedule.reduce((sum, day) => sum + day.duration, 0) / 60)}<em> h</em></b></div>
             </div>
-            <div className="week-strip">{plan.schedule.map((day, index) => <div key={index} className={day.restDay ? "" : "training"}><span>{dayNames[lang][index]}</span><b>{day.restDay ? "·" : "●"}</b></div>)}</div>
+            <div className="week-strip">{plan.schedule.map((day, index) => <div key={index} className={day.restDay ? "" : "training"}><span>{user ? scheduleDateLabel(startDate, index, lang) : dayNames[lang][index]}</span><b>{day.restDay ? "·" : "●"}</b></div>)}</div>
             <div className="preview-note"><span>↗</span><p>{plan.insights?.summary[lang] || (lang === "zh" ? "完成生成后，AI 会围绕「" + goalLabel + "」安排训练日、动作、组次和恢复。" : "After generation, AI will arrange your days, exercises, volume, and recovery around this goal.")}</p></div>
             {anonymousPreview && !user && <div className="anonymous-plan-preview">
               <div className="preview-day-sample">
@@ -303,6 +310,7 @@ export default function CoachApp() {
       {planReady && <section className="plan-section" id="plan" ref={planRef}>
         <div className="section-heading light"><p>02 / YOUR PLAN</p><div><h2>{t.planTitle}</h2><span>{t.planSub}</span></div></div><div className="plan-source-pill llm">{lang === "zh" ? "AI 个性化计划 · 已通过安全校验" : "AI PERSONALIZED · SAFETY CHECKED"}</div>
         {planStatus === "draft" && <div className="plan-draft-banner"><div><span>DRAFT / 待确认</span><p>{lang === "zh" ? "这是新计划草案。启用前，你当前正在执行的计划不会改变。" : "This is a draft. Your active plan will not change until you confirm."}</p></div><button onClick={() => void activateDraft()}>{lang === "zh" ? "确认并启用新计划" : "Confirm and activate"} →</button></div>}
+        {plan.phase && <div className="plan-phase-overview"><div><span>{lang === "zh" ? "当前阶段" : "CURRENT PHASE"}</span><h3>{plan.phase.kind === "habit_foundation" ? (lang === "zh" ? "4 周习惯基础期" : "4-week habit foundation") : plan.phase.kind === "hypertrophy_build" ? (lang === "zh" ? "6 周增肌构建期" : "6-week hypertrophy build") : (lang === "zh" ? "4 周基础构建期" : "4-week foundation")}</h3><p>{plan.phase.weeklyFocus.map((item, index) => `${index + 1}. ${item[lang]}`).join("  ·  ")}</p></div><aside><small>{lang === "zh" ? "计划开始" : "START"}</small><b>{scheduleDateLabel(startDate, 0, lang)}</b><small>{lang === "zh" ? "数据完整度" : "DATA COMPLETENESS"}</small><b>{plan.confidence === "high" ? (lang === "zh" ? "较完整" : "High") : (lang === "zh" ? "仍有不确定项" : "Some gaps")}</b></aside></div>}
         <div className="nutrition-grid">
           <article className="nutrition-main">
             <div className="card-kicker">{t.nutrition}</div>
@@ -320,7 +328,7 @@ export default function CoachApp() {
           <div className="week-main">
             <div className="week-heading"><div><span>03 / TRAINING</span><h3>{t.weekPlan}</h3></div><button onClick={() => document.getElementById("coach")?.scrollIntoView({ behavior: "smooth" })}>{t.update} ↗</button></div>
             <div className="day-tabs" role="tablist">
-              {plan.schedule.map((day, index) => <button key={index} role="tab" aria-selected={activeDay === index} className={activeDay === index ? "active" : ""} onClick={() => setActiveDay(index)}><span>{dayNames[lang][index]}</span><b>{day.restDay ? "REST" : day.duration + "M"}</b></button>)}
+              {plan.schedule.map((day, index) => <button key={index} role="tab" aria-selected={activeDay === index} className={activeDay === index ? "active" : ""} onClick={() => setActiveDay(index)}><span>{scheduleDateLabel(startDate, index, lang)}</span><b>{day.restDay ? "REST" : day.duration + "M"}</b></button>)}
             </div>
             <div className="workout-head"><div><p>{currentDay.focus[lang]}</p><h3>{currentDay.title[lang]}</h3></div><div><span>{currentDay.restDay ? "—" : currentDay.exercises.length}</span><small>{currentDay.restDay ? t.recovery : lang === "zh" ? "个动作" : "exercises"}</small></div></div>
             {currentDay.restDay ? (
