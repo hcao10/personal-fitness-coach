@@ -104,6 +104,31 @@ test("payments and nutrition enforce signed events and user confirmation", async
   assert.match(nutrition, /FoodData Central|api\.nal\.usda\.gov/);
 });
 
+test("dual-track training records real sets and food provenance", async () => {
+  const migration = await readFile(new URL("../drizzle/0006_dual_track_training_food_search.sql", import.meta.url), "utf8");
+  for (const table of ["workout_sets", "coach_record_drafts", "canonical_foods", "food_source_records", "food_aliases", "food_nutrients", "food_source_licenses", "food_corrections", "food_search_events", "recipes", "recipe_items", "meal_templates"]) {
+    assert.match(migration, new RegExp(`CREATE TABLE ${table}`));
+  }
+  const core = await readFile(new URL("../packages/coach-core/src/index.ts", import.meta.url), "utf8");
+  assert.match(core, /beginner_fat_loss/);
+  assert.match(core, /intermediate_hypertrophy/);
+  assert.match(core, /suggestedLoadMultiplier/);
+  const api = await readFile(new URL("../worker/api.ts", import.meta.url), "utf8");
+  assert.match(api, /workoutSetsMatch/);
+  assert.match(api, /\/api\/v1\/foods\/custom/);
+  assert.match(api, /\/api\/v1\/recipes/);
+  assert.match(api, /\/api\/v1\/meal-templates/);
+});
+
+test("food search avoids LLM nutrition values and labels source quality", async () => {
+  const nutrition = await readFile(new URL("../worker/nutrition.ts", import.meta.url), "utf8");
+  assert.match(nutrition, /sourceKind/);
+  assert.match(nutrition, /Open Food Facts contributors/);
+  assert.match(nutrition, /USDA FoodData Central/);
+  assert.match(nutrition, /food_search_events/);
+  assert.doesNotMatch(nutrition, /generateCoachChat/);
+});
+
 test("admin authentication uses Cmine roles and contains no GPT identity dependency", async () => {
   const api = await readFile(new URL("../worker/api.ts", import.meta.url), "utf8");
   const adminPage = await readFile(new URL("../app/admin/page.tsx", import.meta.url), "utf8");

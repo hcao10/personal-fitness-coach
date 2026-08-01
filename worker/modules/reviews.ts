@@ -59,18 +59,34 @@ export async function generateReview(env: WorkerEnv, user: StoredUser, id: strin
   const start = new Date(`${review.week_start}T00:00:00.000Z`); const end = new Date(start.getTime() + 7 * 86400_000);
   const active = await activePlanForUser(env, user.id);
   if (!active?.profile || !active.plan) { await refundCapability(env, user.id, "adaptive.review"); throw new Error("ACTIVE_PLAN_REQUIRED"); }
-  const [sessions, measurements, previous] = await Promise.all([
+  const historyStart = new Date(start.getTime() - 21 * 86400_000);
+  const [sessions, measurements, previous, sets, previousSets, nutrition] = await Promise.all([
     env.DB.prepare(`SELECT rpe,pain,completed_at FROM workout_sessions WHERE user_id=? AND status='completed'
       AND completed_at>=? AND completed_at<?`).bind(user.id, start.toISOString(), end.toISOString()).all<{ rpe: number | null; pain: number; completed_at: string }>(),
     env.DB.prepare(`SELECT weight_kg,measured_at FROM measurements WHERE user_id=? AND measured_at>=?
       ORDER BY measured_at`).bind(user.id, new Date(start.getTime() - 21 * 86400_000).toISOString()).all<{ weight_kg: number | null; measured_at: string }>(),
     env.DB.prepare(`SELECT metrics_json FROM weekly_reviews WHERE user_id=? AND week_start<? AND status IN ('generated','accepted','rejected')
       ORDER BY week_start DESC LIMIT 3`).bind(user.id, review.week_start).all<{ metrics_json: string }>(),
+    env.DB.prepare(`SELECT weight_kg,reps,rir,completed,updated_at FROM workout_sets WHERE user_id=? AND updated_at>=? AND updated_at<?`)
+      .bind(user.id, start.toISOString(), end.toISOString()).all<{ weight_kg: number | null; reps: number | null; rir: number | null; completed: number; updated_at: string }>(),
+    env.DB.prepare(`SELECT weight_kg,reps,completed,updated_at FROM workout_sets WHERE user_id=? AND updated_at>=? AND updated_at<?`)
+      .bind(user.id, historyStart.toISOString(), start.toISOString()).all<{ weight_kg: number | null; reps: number | null; completed: number; updated_at: string }>(),
+    env.DB.prepare(`SELECT substr(eaten_at,1,10) AS day,SUM(calories) AS calories,SUM(protein_g) AS protein_g FROM meal_logs
+      WHERE user_id=? AND status='confirmed' AND eaten_at>=? AND eaten_at<? GROUP BY substr(eaten_at,1,10)`)
+      .bind(user.id, start.toISOString(), end.toISOString()).all<{ day: string; calories: number; protein_g: number }>(),
   ]);
   const consecutive = (previous.results || []).filter((row) => parseJson<{ eligible?: boolean }>(row.metrics_json)?.eligible).length + 1;
+  const previousWeeklyVolumes = [0, 0, 0];
+  for (const row of previousSets.results || []) {
+    const bucket = Math.min(2, Math.max(0, Math.floor((new Date(row.updated_at).getTime() - historyStart.getTime()) / (7 * 86400_000))));
+    if (row.completed) previousWeeklyVolumes[bucket] += Number(row.weight_kg || 0) * Number(row.reps || 0);
+  }
   const metrics = calculateWeeklyReview({ plannedSessions: active.profile.days,
     sessions: (sessions.results || []).map((row) => ({ rpe: row.rpe, pain: row.pain, completedAt: row.completed_at })),
-    measurements: (measurements.results || []).map((row) => ({ weightKg: row.weight_kg, measuredAt: row.measured_at })), consecutiveEligibleWeeks: consecutive }, active.profile.goal);
+    measurements: (measurements.results || []).map((row) => ({ weightKg: row.weight_kg, measuredAt: row.measured_at })), consecutiveEligibleWeeks: consecutive,
+    sets: (sets.results || []).map((row) => ({ weightKg: row.weight_kg, reps: row.reps, rir: row.rir, completed: Boolean(row.completed) })),
+    previousWeeklyVolumes, nutritionDays: (nutrition.results || []).map((row) => ({ calories: Number(row.calories || 0), proteinG: Number(row.protein_g || 0) })),
+    calorieTarget: active.plan.calories, proteinTarget: active.plan.protein }, active.profile.goal);
   const recommendation = recommendReview(metrics);
   let explanation = recommendation.explanation;
   try {
@@ -85,9 +101,10 @@ export async function generateReview(env: WorkerEnv, user: StoredUser, id: strin
   return { id, metrics, recommendation: stored, status: "generated", quota };
 }
 
-function adjustedPlan(plan: CoachPlan, multiplier: number): CoachPlan {
+function adjustedPlan(plan: CoachPlan, multiplier: number, loadMultiplier: number): CoachPlan {
   return { ...plan, schedule: plan.schedule.map((day) => ({ ...day, exercises: day.exercises.map((exercise) => ({
-    ...exercise, sets: Math.max(2, Math.min(5, Math.round(exercise.sets * multiplier))),
+    ...exercise, sets: Math.max(2, Math.min(5, Math.round(exercise.sets * Math.max(.9, Math.min(1.1, multiplier))))),
+    suggestedLoadMultiplier: Math.max(.95, Math.min(1.05, loadMultiplier)),
   })) })) };
 }
 
@@ -99,10 +116,10 @@ export async function decideReview(env: WorkerEnv, userId: string, id: string, d
   if (row.status === "accepted" || row.status === "rejected") return { id, status: row.status, duplicate: true };
   let planId: string | null = null;
   if (decision === "accepted") {
-    const recommendation = parseJson<{ volumeMultiplier?: number }>(row.recommendation_json);
+    const recommendation = parseJson<{ volumeMultiplier?: number; loadMultiplier?: number }>(row.recommendation_json);
     const active = await activePlanForUser(env, userId);
     if (active?.plan && active.profile) {
-      planId = await savePlan(env, userId, active.profile as Profile, adjustedPlan(active.plan as CoachPlan, Number(recommendation?.volumeMultiplier || 1)), "adaptive_review", "rules+coach");
+      planId = await savePlan(env, userId, active.profile as Profile, adjustedPlan(active.plan as CoachPlan, Number(recommendation?.volumeMultiplier || 1), Number(recommendation?.loadMultiplier || 1)), "adaptive_review", "rules+coach");
       await activatePlan(env, userId, planId, `weekly_review:${id}`);
     }
   }

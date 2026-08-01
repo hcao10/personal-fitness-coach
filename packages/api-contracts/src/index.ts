@@ -19,6 +19,13 @@ export type ReviewMetrics = {
   averageRpe: number | null;
   maxPain: number;
   weightTrendKgPerWeek: number | null;
+  completedSets: number;
+  trainingVolumeKg: number;
+  averageRir: number | null;
+  volumeTrendPct: number | null;
+  nutritionDays: number;
+  calorieAdherencePct: number | null;
+  proteinAdherencePct: number | null;
   consecutiveEligibleWeeks: number;
   plateau: boolean;
 };
@@ -46,7 +53,7 @@ export type PlanVersion = {
 export type SyncMutation = {
   mutationId: string;
   deviceId: string;
-  entityType: "workout_session" | "measurement" | "meal_draft" | "coach_draft";
+  entityType: "workout_session" | "workout_set" | "measurement" | "meal_draft" | "coach_draft";
   entityId: string;
   operation: "upsert" | "delete";
   baseVersion?: number;

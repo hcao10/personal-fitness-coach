@@ -26,6 +26,20 @@ export type MeasurementInput = {
   measuredAt: string;
 };
 
+export type WorkoutSetInput = {
+  dayIndex: number;
+  exerciseId: string;
+  setIndex: number;
+  setType: "warmup" | "working" | "dropset" | "failure";
+  targetReps?: string | null;
+  weightKg: number | null;
+  reps: number | null;
+  rir: number | null;
+  rpe: number | null;
+  completed: boolean;
+  clientMutationId?: string | null;
+};
+
 type PlanRow = {
   id: string;
   profile_json: string;
@@ -344,7 +358,7 @@ export async function saveWorkoutSession(env: WorkerEnv, userId: string, planId:
   status: "completed" | "in_progress";
   durationMinutes: number | null;
   rpe: number | null;
-  pain: boolean;
+  pain: number;
   notes: string;
 }): Promise<void> {
   const db = requireDb(env);
@@ -360,7 +374,55 @@ export async function saveWorkoutSession(env: WorkerEnv, userId: string, planId:
       rpe=COALESCE(excluded.rpe, workout_sessions.rpe), pain=excluded.pain, notes=excluded.notes,
       completed_at=COALESCE(excluded.completed_at, workout_sessions.completed_at), updated_at=excluded.updated_at`)
     .bind(crypto.randomUUID(), userId, planId, input.dayIndex, input.status, input.durationMinutes, input.rpe,
-      input.pain ? 1 : 0, input.notes, now, completedAt, now).run();
+      Math.max(0, Math.min(10, Math.round(input.pain))), input.notes, now, completedAt, now).run();
+}
+
+export async function workoutSetsForDay(env: WorkerEnv, userId: string, planId: string, dayIndex: number) {
+  const db = requireDb(env);
+  const plan = await db.prepare("SELECT id FROM plans WHERE id=? AND user_id=?").bind(planId, userId).first<{ id: string }>();
+  if (!plan) throw new Error("PLAN_NOT_FOUND");
+  const rows = await db.prepare(`SELECT id,exercise_id,set_index,set_type,target_reps,weight_kg,reps,rir,rpe,completed,updated_at
+    FROM workout_sets WHERE user_id=? AND plan_id=? AND day_index=? ORDER BY exercise_id,set_index`)
+    .bind(userId, planId, dayIndex).all<{
+      id: string; exercise_id: string; set_index: number; set_type: string; target_reps: string | null;
+      weight_kg: number | null; reps: number | null; rir: number | null; rpe: number | null; completed: number; updated_at: string;
+    }>();
+  const exerciseIds = [...new Set((rows.results || []).map((row) => row.exercise_id))];
+  const previous: Record<string, { weightKg: number | null; reps: number | null; rir: number | null; updatedAt: string }> = {};
+  for (const exerciseId of exerciseIds) {
+    const row = await db.prepare(`SELECT weight_kg,reps,rir,updated_at FROM workout_sets
+      WHERE user_id=? AND exercise_id=? AND completed=1 AND NOT (plan_id=? AND day_index=?)
+      ORDER BY updated_at DESC LIMIT 1`).bind(userId, exerciseId, planId, dayIndex)
+      .first<{ weight_kg: number | null; reps: number | null; rir: number | null; updated_at: string }>();
+    if (row) previous[exerciseId] = { weightKg: row.weight_kg, reps: row.reps, rir: row.rir, updatedAt: row.updated_at };
+  }
+  return { sets: (rows.results || []).map((row) => ({ id: row.id, exerciseId: row.exercise_id, setIndex: row.set_index,
+    setType: row.set_type, targetReps: row.target_reps, weightKg: row.weight_kg, reps: row.reps, rir: row.rir,
+    rpe: row.rpe, completed: Boolean(row.completed), updatedAt: row.updated_at })), previous };
+}
+
+export async function upsertWorkoutSet(env: WorkerEnv, userId: string, planId: string, input: WorkoutSetInput) {
+  const db = requireDb(env);
+  const row = await db.prepare("SELECT plan_json FROM plans WHERE id=? AND user_id=?").bind(planId, userId).first<{ plan_json: string }>();
+  const plan = parseJson<CoachPlan>(row?.plan_json);
+  const exercise = plan?.schedule.find((day) => day.dayIndex === input.dayIndex)?.exercises.find((item) => item.id === input.exerciseId);
+  if (!row || !exercise) throw new Error("PLAN_EXERCISE_NOT_FOUND");
+  const now = new Date().toISOString();
+  const id = crypto.randomUUID();
+  await db.prepare(`INSERT INTO workout_sets
+    (id,user_id,plan_id,day_index,exercise_id,set_index,set_type,target_reps,weight_kg,reps,rir,rpe,completed,client_mutation_id,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(user_id,plan_id,day_index,exercise_id,set_index) DO UPDATE SET
+      set_type=excluded.set_type,target_reps=excluded.target_reps,weight_kg=excluded.weight_kg,reps=excluded.reps,
+      rir=excluded.rir,rpe=excluded.rpe,completed=excluded.completed,
+      client_mutation_id=COALESCE(workout_sets.client_mutation_id,excluded.client_mutation_id),updated_at=excluded.updated_at`)
+    .bind(id, userId, planId, input.dayIndex, input.exerciseId, input.setIndex, input.setType,
+      String(input.targetReps || exercise.reps).slice(0, 30), input.weightKg, input.reps, input.rir, input.rpe,
+      input.completed ? 1 : 0, input.clientMutationId || null, now, now).run();
+  const stored = await db.prepare(`SELECT id,exercise_id,set_index,set_type,target_reps,weight_kg,reps,rir,rpe,completed,updated_at
+    FROM workout_sets WHERE user_id=? AND plan_id=? AND day_index=? AND exercise_id=? AND set_index=?`)
+    .bind(userId, planId, input.dayIndex, input.exerciseId, input.setIndex).first<Record<string, unknown>>();
+  return stored;
 }
 
 export async function addMeasurement(env: WorkerEnv, userId: string, input: MeasurementInput) {
@@ -470,6 +532,7 @@ export async function adminOverview(env: WorkerEnv) {
     recentUsers, recentPlans, recentRuns, subscriptions, revenue, failedBilling, meals, mealAnalyses,
     failedMealAnalyses, lowConfidenceMeals, aiCost, recentBilling, recentAudits, routes, redemptions,
     onboardingCompleted, coachConversations, coachMessages, weeklyReviews, acceptedReviews, devices, maintenance,
+    workoutSets, beginnerProfiles, hypertrophyProfiles, foodSearches, zeroFoodSearches, pendingFoodCorrections, customFoods, foodSources,
   ] = await Promise.all([
     db.prepare("SELECT COUNT(*) AS value FROM users").first<{ value: number }>(),
     db.prepare("SELECT COUNT(*) AS value FROM users WHERE status = 'active'").first<{ value: number }>(),
@@ -509,6 +572,14 @@ export async function adminOverview(env: WorkerEnv) {
     db.prepare("SELECT COUNT(*) AS value FROM weekly_reviews WHERE status='accepted'").first<{ value: number }>(),
     db.prepare("SELECT COUNT(*) AS value FROM devices").first<{ value: number }>(),
     db.prepare("SELECT id,job,status,processed,failed,started_at,completed_at FROM maintenance_runs WHERE job='daily' ORDER BY started_at DESC LIMIT 8").all<Record<string, unknown>>(),
+    db.prepare("SELECT COUNT(*) AS value FROM workout_sets WHERE completed=1").first<{ value: number }>(),
+    db.prepare("SELECT COUNT(*) AS value FROM profiles WHERE json_extract(profile_json,'$.trainingTrack')='beginner_fat_loss'").first<{ value: number }>(),
+    db.prepare("SELECT COUNT(*) AS value FROM profiles WHERE json_extract(profile_json,'$.trainingTrack')='intermediate_hypertrophy'").first<{ value: number }>(),
+    db.prepare("SELECT COUNT(*) AS value FROM food_search_events").first<{ value: number }>(),
+    db.prepare("SELECT COUNT(*) AS value FROM food_search_events WHERE result_count=0").first<{ value: number }>(),
+    db.prepare("SELECT COUNT(*) AS value FROM food_corrections WHERE status='pending'").first<{ value: number }>(),
+    db.prepare("SELECT COUNT(*) AS value FROM canonical_foods WHERE source_kind='user' AND status='active'").first<{ value: number }>(),
+    db.prepare("SELECT source,title,license_name,license_url,attribution_text,commercial_use,redistribution,status,last_verified_at,updated_at FROM food_source_licenses ORDER BY source").all<Record<string, unknown>>(),
   ]);
   const generationCount = Number(generations?.value || 0);
   const failureCount = Number(failedGenerations?.value || 0);
@@ -540,6 +611,13 @@ export async function adminOverview(env: WorkerEnv) {
       weeklyReviews: Number(weeklyReviews?.value || 0),
       acceptedReviews: Number(acceptedReviews?.value || 0),
       devices: Number(devices?.value || 0),
+      workoutSets: Number(workoutSets?.value || 0),
+      beginnerProfiles: Number(beginnerProfiles?.value || 0),
+      hypertrophyProfiles: Number(hypertrophyProfiles?.value || 0),
+      foodSearches: Number(foodSearches?.value || 0),
+      foodZeroResultRate: Number(foodSearches?.value || 0) ? Math.round(Number(zeroFoodSearches?.value || 0) / Number(foodSearches?.value || 1) * 100) : 0,
+      pendingFoodCorrections: Number(pendingFoodCorrections?.value || 0),
+      customFoods: Number(customFoods?.value || 0),
     },
     recentUsers: (recentUsers.results || []).map((row) => ({ ...row, createdAt: row.created_at })),
     recentPlans: (recentPlans.results || []).map((row) => ({ id: row.id, userId: row.user_id, source: row.source, model: row.model, createdAt: row.created_at })),
@@ -554,6 +632,7 @@ export async function adminOverview(env: WorkerEnv) {
     })),
     aiRoutes: (routes.results || []).map((row) => ({ ...row, enabled: Boolean(row.enabled) })),
     recentMaintenance: maintenance.results || [],
+    foodSources: foodSources.results || [],
   };
 }
 

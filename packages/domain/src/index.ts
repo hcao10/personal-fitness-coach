@@ -5,6 +5,11 @@ export type WeeklyEvidence = {
   sessions: Array<{ rpe: number | null; pain: number; completedAt: string }>;
   measurements: Array<{ weightKg: number | null; measuredAt: string }>;
   consecutiveEligibleWeeks: number;
+  sets?: Array<{ weightKg: number | null; reps: number | null; rir: number | null; completed: boolean }>;
+  previousWeeklyVolumes?: number[];
+  nutritionDays?: Array<{ calories: number; proteinG: number }>;
+  calorieTarget?: number;
+  proteinTarget?: number;
 };
 
 function weightTrend(measurements: WeeklyEvidence["measurements"]): number | null {
@@ -23,10 +28,25 @@ export function calculateWeeklyReview(evidence: WeeklyEvidence, goal: string): R
   const averageRpe = rpes.length ? Number((rpes.reduce((sum, value) => sum + value, 0) / rpes.length).toFixed(1)) : null;
   const maxPain = evidence.sessions.reduce((max, item) => Math.max(max, Number(item.pain || 0)), 0);
   const trend = weightTrend(evidence.measurements);
+  const completedSetRows = (evidence.sets || []).filter((item) => item.completed);
+  const trainingVolumeKg = Number(completedSetRows.reduce((sum, item) => sum + Number(item.weightKg || 0) * Number(item.reps || 0), 0).toFixed(1));
+  const rirs = completedSetRows.map((item) => item.rir).filter((value): value is number => Number.isFinite(value));
+  const averageRir = rirs.length ? Number((rirs.reduce((sum, value) => sum + value, 0) / rirs.length).toFixed(1)) : null;
+  const volumeHistory = [...(evidence.previousWeeklyVolumes || []), trainingVolumeKg].filter((value) => value > 0);
+  const volumeTrendPct = volumeHistory.length >= 3 && volumeHistory[0] > 0 ? Number(((volumeHistory[volumeHistory.length - 1] - volumeHistory[0]) / volumeHistory[0] * 100).toFixed(1)) : null;
+  const nutritionDays = evidence.nutritionDays || [];
+  const adherence = (target: number | undefined, selector: (day: { calories: number; proteinG: number }) => number) => target && nutritionDays.length >= 3
+    ? Math.round(nutritionDays.reduce((sum, day) => sum + Math.min(1, selector(day) / target), 0) / nutritionDays.length * 100) : null;
+  const calorieAdherencePct = adherence(evidence.calorieTarget, (day) => day.calories);
+  const proteinAdherencePct = adherence(evidence.proteinTarget, (day) => day.proteinG);
   const eligible = completedSessions >= 2;
-  const stalledMetric = trend !== null && (goal === "fat_loss" ? trend > -0.1 : goal === "muscle" ? trend < 0.05 : Math.abs(trend) < 0.05);
+  const stalledMetric = goal === "muscle"
+    ? volumeTrendPct !== null && volumeTrendPct < 1
+    : trend !== null && (goal === "fat_loss" ? trend > -0.1 : Math.abs(trend) < 0.05);
   const plateau = eligible && evidence.consecutiveEligibleWeeks >= 3 && adherencePct >= 70 && stalledMetric;
-  return { eligible, completedSessions, adherencePct, averageRpe, maxPain, weightTrendKgPerWeek: trend, consecutiveEligibleWeeks: evidence.consecutiveEligibleWeeks, plateau };
+  return { eligible, completedSessions, adherencePct, averageRpe, maxPain, weightTrendKgPerWeek: trend,
+    completedSets: completedSetRows.length, trainingVolumeKg, averageRir, volumeTrendPct, nutritionDays: nutritionDays.length,
+    calorieAdherencePct, proteinAdherencePct, consecutiveEligibleWeeks: evidence.consecutiveEligibleWeeks, plateau };
 }
 
 export function recommendReview(metrics: ReviewMetrics): ReviewRecommendation {

@@ -2,7 +2,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { defaultProfile, generatePlan, type Activity, type CoachPlan, type Equipment, type Experience, type Goal, type Profile } from "./lib/coach";
+import { defaultProfile, generatePlan, type Activity, type CoachPlan, type Equipment, type Experience, type Goal, type Profile, type TrainingTrack } from "./lib/coach";
 import { AUTH_PROVIDERS, beginCmineLogin, getCmineSession, type CmineUser } from "./lib/auth";
 import { copy, languageOptions, type DisplayLanguage, type Locale } from "./lib/i18n";
 
@@ -92,6 +92,12 @@ export default function CoachApp() {
     setPlanReady(false);
     setPlanId(null);
     setCompleted(new Set());
+  };
+  const selectTrack = (track: TrainingTrack) => {
+    const next: Profile = track === "intermediate_hypertrophy"
+      ? { ...profile, trainingTrack: track, goal: "muscle", experience: "intermediate", days: Math.max(3, profile.days), sessionMinutes: Math.max(45, Number(profile.sessionMinutes || 45)), equipment: profile.equipment === "bodyweight" ? "dumbbell" : profile.equipment }
+      : { ...profile, trainingTrack: "beginner_fat_loss", goal: "fat_loss", experience: "beginner", days: Math.min(4, profile.days), sessionMinutes: [20, 30, 45].includes(Number(profile.sessionMinutes)) ? profile.sessionMinutes : 30 };
+    setProfile(next); setPlan(generatePlan(next)); setPlanReady(false); setPlanId(null); setCompleted(new Set());
   };
   const buildPlan = async () => {
     if (!user) {
@@ -200,6 +206,7 @@ export default function CoachApp() {
         <div className="section-heading"><p>01 / INTAKE</p><div><h2>{t.profileTitle}</h2><span>{t.profileHint}</span></div></div>
         <div className="intake-grid">
           <div className="form-card">
+            <div className="homepage-track-selector"><button className={profile.trainingTrack !== "intermediate_hypertrophy" ? "active" : ""} onClick={() => selectTrack("beginner_fat_loss")}><span>{lang === "zh" ? "核心路径" : "START HERE"}</span><b>{lang === "zh" ? "新手日常减脂" : "Beginner fat loss"}</b><small>{lang === "zh" ? "20–45 分钟，从坚持和日常饮食开始。" : "20–45 minute sessions built for consistency."}</small></button><button className={profile.trainingTrack === "intermediate_hypertrophy" ? "active" : ""} onClick={() => selectTrack("intermediate_hypertrophy")}><span>{lang === "zh" ? "专业路径" : "PROGRESSIVE"}</span><b>{lang === "zh" ? "中级系统增肌" : "Intermediate hypertrophy"}</b><small>{lang === "zh" ? "组次、RIR、渐进负荷与周期复盘。" : "Sets, RIR, progression and training reviews."}</small></button></div>
             <div className="form-section">
               <div className="form-section-title"><span>01</span><h3>{t.basics}</h3></div>
               <div className="segmented">
@@ -216,6 +223,7 @@ export default function CoachApp() {
               <div className="goal-grid">
                 {goalOptions.map((goal) => <button key={goal.value} className={profile.goal === goal.value ? "active" : ""} onClick={() => patchProfile("goal", goal.value)}><span>{goal.value === "arms" ? "◎" : goal.value === "fat_loss" ? "↘" : goal.value === "muscle" ? "＋" : goal.value === "recomp" ? "◇" : "↑"}</span>{goal[lang]}</button>)}
               </div>
+              {profile.trainingTrack === "intermediate_hypertrophy" ? <div className="track-detail-fields"><label><FieldLabel>{lang === "zh" ? "系统训练月数" : "Training months"}</FieldLabel><input type="number" min="3" max="600" value={profile.trainingAgeMonths || 0} onChange={(event) => patchProfile("trainingAgeMonths", Number(event.target.value))} /></label><label><FieldLabel>{lang === "zh" ? "优先提升部位" : "Priority muscles"}</FieldLabel><input value={profile.weakPoints || ""} onChange={(event) => patchProfile("weakPoints", event.target.value)} placeholder={lang === "zh" ? "例如：背阔肌、三角肌中束" : "e.g. lats, side delts"} /></label></div> : <div className="track-detail-fields"><label><FieldLabel>{lang === "zh" ? "最主要的困难" : "Main barrier"}</FieldLabel><select value={profile.beginnerBarrier || "confidence"} onChange={(event) => patchProfile("beginnerBarrier", event.target.value as Profile["beginnerBarrier"])}><option value="confidence">{lang === "zh" ? "不知道怎么开始" : "Not sure how to start"}</option><option value="time">{lang === "zh" ? "时间不完整" : "Limited time"}</option><option value="consistency">{lang === "zh" ? "难以坚持" : "Consistency"}</option><option value="food">{lang === "zh" ? "饮食容易失控" : "Food choices"}</option><option value="feedback">{lang === "zh" ? "缺少反馈" : "Lack of feedback"}</option></select></label><label><FieldLabel>{lang === "zh" ? "偏好时长" : "Preferred duration"}</FieldLabel><select value={profile.sessionMinutes || 30} onChange={(event) => patchProfile("sessionMinutes", Number(event.target.value))}><option value="20">20 min</option><option value="30">30 min</option><option value="45">45 min</option></select></label></div>}
               <div className="field-grid two">
                 <label><FieldLabel>{lang === "zh" ? "目标体重" : "Target weight"}</FieldLabel><span className="input-unit"><input aria-label={lang === "zh" ? "目标体重" : "Target weight"} type="number" min="35" max="250" value={profile.targetWeight} onChange={(e) => patchProfile("targetWeight", Number(e.target.value))} /><em>kg</em></span></label>
                 <label><FieldLabel>{lang === "zh" ? "日常活动量" : "Daily activity"}</FieldLabel>

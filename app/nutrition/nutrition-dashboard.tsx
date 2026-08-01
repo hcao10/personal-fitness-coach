@@ -6,13 +6,20 @@ import { beginCmineLogin } from "../lib/auth";
 
 type Food = {
   ref: string;
-  source: "usda" | "open_food_facts";
+  source: "usda" | "open_food_facts" | "user" | "canonical";
   sourceRef: string;
   name: string;
   brand: string | null;
   servingSize: string | null;
   per100g: { calories: number; proteinG: number; carbsG: number; fatG: number };
+  sourceKind?: "official" | "brand_label" | "community" | "user";
+  dataQuality?: number;
+  attribution?: string;
+  region?: string | null;
 };
+type RecipeIngredient = { food: Food; grams: number };
+type Recipe = { id: string; name: string; servings: number; totals: { calories: number; proteinG: number; carbsG: number; fatG: number } };
+type MealTemplate = { id: string; name: string; mealType: string; totals: { calories: number; proteinG: number; carbsG: number; fatG: number }; items: Array<{ name: string; grams: number; source: string; sourceRef?: string; calories: number; proteinG: number; carbsG: number; fatG: number }> };
 type Candidate = {
   nameZh: string;
   nameEn: string;
@@ -58,6 +65,14 @@ export default function NutritionDashboard() {
   const [barcode, setBarcode] = useState("");
   const [manualFood, setManualFood] = useState<Food | null>(null);
   const [manualGrams, setManualGrams] = useState(100);
+  const [sourceFilter, setSourceFilter] = useState("");
+  const [recipes, setRecipes] = useState<Recipe[]>([]);
+  const [templates, setTemplates] = useState<MealTemplate[]>([]);
+  const [recipeName, setRecipeName] = useState("");
+  const [recipeServings, setRecipeServings] = useState(2);
+  const [recipeItems, setRecipeItems] = useState<RecipeIngredient[]>([]);
+  const [customName, setCustomName] = useState("");
+  const [customMacros, setCustomMacros] = useState({ calories: 0, proteinG: 0, carbsG: 0, fatG: 0 });
   const [scanning, setScanning] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const scannerControls = useRef<{ stop(): void } | null>(null);
@@ -67,12 +82,16 @@ export default function NutritionDashboard() {
     const active = Boolean(me?.user);
     setSignedIn(active);
     if (!active) return;
-    const [dailyResponse, mealsResponse] = await Promise.all([
+    const [dailyResponse, mealsResponse, recipesResponse, templatesResponse] = await Promise.all([
       fetch(`/api/v1/nutrition/daily?date=${today()}`, { cache: "no-store" }),
       fetch("/api/v1/meals?limit=12", { cache: "no-store" }),
+      fetch("/api/v1/recipes", { cache: "no-store" }),
+      fetch("/api/v1/meal-templates", { cache: "no-store" }),
     ]);
     if (dailyResponse.ok) setDaily(await dailyResponse.json());
     if (mealsResponse.ok) setMeals((await mealsResponse.json()).meals || []);
+    if (recipesResponse.ok) setRecipes((await recipesResponse.json()).recipes || []);
+    if (templatesResponse.ok) setTemplates((await templatesResponse.json()).templates || []);
   };
 
   useEffect(() => {
@@ -167,7 +186,9 @@ export default function NutritionDashboard() {
   const search = async () => {
     if (query.trim().length < 2) return;
     setWorking(true);
-    const response = await fetch(`/api/v1/foods/search?q=${encodeURIComponent(query)}`);
+    const params = new URLSearchParams({ q: query, locale: "zh", limit: "24" });
+    if (sourceFilter) params.set("source", sourceFilter);
+    const response = await fetch(`/api/v1/foods/search?${params}`);
     const body = await response.json().catch(() => null);
     setWorking(false);
     setFoods(response.ok ? body.foods || [] : []);
@@ -225,6 +246,50 @@ export default function NutritionDashboard() {
     await load();
   };
 
+  const addRecipeItem = (food: Food) => {
+    setRecipeItems((current) => current.some((item) => item.food.ref === food.ref) ? current : [...current, { food, grams: 100 }]);
+    setNotice(`${food.name} 已加入菜谱草稿。`);
+  };
+
+  const saveRecipe = async () => {
+    if (!recipeName.trim() || !recipeItems.length) return setNotice("请填写菜谱名称并至少加入一种食材。");
+    setWorking(true);
+    const response = await fetch("/api/v1/recipes", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({
+      name: recipeName, servings: recipeServings, items: recipeItems.map((item) => ({ name: item.food.name, grams: item.grams, nutritionRef: item.food.ref, userCorrected: true })),
+    }) });
+    const body = await response.json().catch(() => null); setWorking(false);
+    if (!response.ok) return setNotice(body?.message || "菜谱保存失败。");
+    setRecipeName(""); setRecipeItems([]); setNotice("菜谱已保存，并按份数计算营养。"); await load();
+  };
+
+  const saveTemplate = async () => {
+    if (!recipeName.trim() || !recipeItems.length) return setNotice("请填写模板名称并至少加入一种食物。");
+    setWorking(true);
+    const response = await fetch("/api/v1/meal-templates", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({
+      name: recipeName, mealType, items: recipeItems.map((item) => ({ name: item.food.name, grams: item.grams, nutritionRef: item.food.ref, userCorrected: true })),
+    }) });
+    setWorking(false); if (!response.ok) return setNotice("餐食模板保存失败。");
+    setNotice("餐食模板已保存。"); await load();
+  };
+
+  const saveCustomFood = async () => {
+    if (!customName.trim()) return setNotice("请填写食品名称。");
+    setWorking(true);
+    const response = await fetch("/api/v1/foods/custom", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: customName, per100g: customMacros }) });
+    const body = await response.json().catch(() => null); setWorking(false);
+    if (!response.ok) return setNotice(body?.message || "自定义食品保存失败。");
+    setManualFood(body.food); setCustomName(""); setCustomMacros({ calories: 0, proteinG: 0, carbsG: 0, fatG: 0 }); setNotice("自定义食品已保存，请确认食用克数。");
+  };
+
+  const logTemplate = async (template: MealTemplate) => {
+    setWorking(true);
+    const response = await fetch("/api/v1/meals", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({
+      mealType: template.mealType, eatenAt: new Date().toISOString(), items: template.items.map((item) => ({ name: item.name, grams: item.grams,
+        manualPer100g: { calories: item.grams ? item.calories * 100 / item.grams : 0, proteinG: item.grams ? item.proteinG * 100 / item.grams : 0, carbsG: item.grams ? item.carbsG * 100 / item.grams : 0, fatG: item.grams ? item.fatG * 100 / item.grams : 0 }, userCorrected: true })),
+    }) });
+    setWorking(false); if (!response.ok) return setNotice("模板记录失败。"); setNotice(`${template.name} 已加入今天。`); await load();
+  };
+
   if (signedIn === null) return <main className="nutrition-page"><div className="nutrition-loading">正在读取今天的饮食记录…</div></main>;
   if (!signedIn) return <main className="nutrition-page">
     <header className="nutrition-header"><Link className="brand" href="/"><span className="brand-mark">C</span><span>CMINE <b>FIT</b></span></Link></header>
@@ -259,7 +324,6 @@ export default function NutritionDashboard() {
         <div className="barcode-input"><input value={barcode} onChange={(event) => setBarcode(event.target.value)} placeholder="输入包装条码" /><button onClick={() => void findBarcode()}>查询</button></div>
         <button className="camera-button" onClick={() => scanning ? scannerControls.current?.stop() : void startScanner()}>{scanning ? "停止摄像头" : "使用摄像头扫码"}</button>
         <video ref={videoRef} className={scanning ? "scanner-video active" : "scanner-video"} muted playsInline />
-        {manualFood && <div className="food-selected"><b>{manualFood.name}</b><span>{manualFood.brand || manualFood.source}</span><label>食用克数<input type="number" min="1" max="5000" value={manualGrams} onChange={(event) => setManualGrams(Number(event.target.value))} /></label><button onClick={() => void saveManual()} disabled={working}>加入今天</button></div>}
       </article>
     </section>
 
@@ -281,12 +345,20 @@ export default function NutritionDashboard() {
 
     <section className="nutrition-card food-search-card">
       <header><div><span>03 / SEARCH</span><h2>手动搜索食品</h2></div><p>适合没有照片、没有条码或需要修正识别结果时使用。</p></header>
-      <div className="food-search"><input value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void search(); }} placeholder="例如：鸡胸肉、Greek yogurt" /><button onClick={() => void search()} disabled={working}>搜索</button></div>
-      {foods.length > 0 && <div className="food-results">{foods.map((food) => <button key={food.ref} onClick={() => setManualFood(food)}><b>{food.name}</b><span>{food.brand || (food.source === "usda" ? "USDA" : "Open Food Facts")}</span><small>{Math.round(food.per100g.calories)} kcal / 100g</small></button>)}</div>}
+      <div className="food-search-toolbar"><div className="food-search"><input value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void search(); }} placeholder="例如：鸡胸肉、Greek yogurt、燕麦" /><button onClick={() => void search()} disabled={working}>搜索</button></div><select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)} aria-label="食品数据来源"><option value="">全部来源</option><option value="usda">USDA 官方数据</option><option value="open_food_facts">包装食品</option><option value="user">我的食品</option></select></div>
+      {foods.length > 0 ? <div className="food-results enriched">{foods.map((food) => <article key={food.ref}><div><span className={`source-badge ${food.sourceKind || food.source}`}>{food.sourceKind === "official" ? "官方成分数据" : food.source === "open_food_facts" ? "社区包装数据" : food.source === "user" ? "我的食品" : "营养数据"}</span><b>{food.name}</b><span>{food.brand || food.attribution || (food.source === "usda" ? "USDA FoodData Central" : "Open Food Facts")}</span><small>{Math.round(food.per100g.calories)} kcal · P {food.per100g.proteinG.toFixed(1)} · C {food.per100g.carbsG.toFixed(1)} · F {food.per100g.fatG.toFixed(1)} / 100g</small></div><div><button onClick={() => setManualFood(food)}>记录</button><button onClick={() => addRecipeItem(food)}>加入菜谱</button></div></article>)}</div> : query.trim().length >= 2 && !working && <div className="account-empty">没有匹配结果。可尝试英文名称、品牌或创建自定义食品。</div>}
+      {manualFood && <div className="food-selected inline"><b>{manualFood.name}</b><span>{manualFood.attribution || manualFood.source}</span><label>食用克数<input type="number" min="1" max="5000" value={manualGrams} onChange={(event) => setManualGrams(Number(event.target.value))} /></label><button onClick={() => void saveManual()} disabled={working}>加入今天</button></div>}
     </section>
 
+    <section className="nutrition-workflow-grid nutrition-builders">
+      <article className="nutrition-card custom-food-card"><header><span>04 / CUSTOM FOOD</span><h2>创建自定义食品</h2></header><p>包装标签或本地食品未收录时，按每 100g 录入。系统会明确标记为“用户录入”。</p><label>食品名称<input value={customName} onChange={(event) => setCustomName(event.target.value)} placeholder="例如：自制低脂酸奶酱" /></label><div className="macro-input-grid">{([['calories','热量 kcal'],['proteinG','蛋白质 g'],['carbsG','碳水 g'],['fatG','脂肪 g']] as const).map(([key,label]) => <label key={key}>{label}<input type="number" min="0" value={customMacros[key] || ""} onChange={(event) => setCustomMacros((current) => ({ ...current, [key]: Number(event.target.value) }))} /></label>)}</div><button onClick={() => void saveCustomFood()} disabled={working}>保存自定义食品 →</button></article>
+      <article className="nutrition-card recipe-builder"><header><span>05 / RECIPE</span><h2>菜谱与餐食模板</h2></header><div className="recipe-meta"><input value={recipeName} onChange={(event) => setRecipeName(event.target.value)} placeholder="菜谱或模板名称" /><label>份数<input type="number" min="1" max="100" value={recipeServings} onChange={(event) => setRecipeServings(Number(event.target.value))} /></label></div>{recipeItems.length ? <div className="recipe-item-list">{recipeItems.map((item, index) => <div key={item.food.ref}><b>{item.food.name}</b><input type="number" min="1" max="5000" value={item.grams} onChange={(event) => setRecipeItems((current) => current.map((entry, itemIndex) => itemIndex === index ? { ...entry, grams: Number(event.target.value) } : entry))} /><span>g</span><button onClick={() => setRecipeItems((current) => current.filter((_, itemIndex) => itemIndex !== index))}>移除</button></div>)}</div> : <div className="account-empty">从搜索结果选择“加入菜谱”。记得包含烹饪油、酱料和糖。</div>}<div className="recipe-actions"><button onClick={() => void saveRecipe()} disabled={working}>保存为菜谱</button><button onClick={() => void saveTemplate()} disabled={working}>保存为餐食模板</button></div></article>
+    </section>
+
+    {(templates.length > 0 || recipes.length > 0) && <section className="nutrition-card saved-food-tools"><header><div><span>06 / SAVED</span><h2>常用菜谱与模板</h2></div><p>低成本地复用真实记录，不需要再次调用 AI。</p></header>{templates.length > 0 && <div className="template-list">{templates.map((template) => <button key={template.id} onClick={() => void logTemplate(template)}><b>{template.name}</b><span>{Math.round(template.totals.calories)} kcal · 蛋白质 {Math.round(template.totals.proteinG)}g</span><small>一键加入今天 →</small></button>)}</div>}{recipes.length > 0 && <div className="recipe-summary-list">{recipes.map((recipe) => <article key={recipe.id}><b>{recipe.name}</b><span>{recipe.servings} 份 · 全菜谱 {Math.round(recipe.totals.calories)} kcal</span><small>每份约 {Math.round(recipe.totals.calories / recipe.servings)} kcal</small></article>)}</div>}</section>}
+
     <section className="nutrition-card meal-history">
-      <header><div><span>04 / HISTORY</span><h2>最近餐食</h2></div><p>结构化营养记录会保留到你主动删除账户数据。</p></header>
+      <header><div><span>07 / HISTORY</span><h2>最近餐食</h2></div><p>结构化营养记录会保留到你主动删除账户数据。</p></header>
       {meals.length ? <div>{meals.map((meal) => <article key={meal.id}><time>{new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(meal.eatenAt))}</time><div><b>{meal.items.map((item) => item.name).join("、") || meal.mealType}</b><span>{meal.calories} kcal · 蛋白质 {meal.proteinG}g · 碳水 {meal.carbsG}g · 脂肪 {meal.fatG}g</span></div></article>)}</div> : <div className="account-empty">今天还没有确认过的餐食。</div>}
     </section>
     <footer className="nutrition-footer"><span>数据来源：USDA FoodData Central、Open Food Facts</span><p>营养估算不替代医生或注册营养师的诊断与建议。</p></footer>

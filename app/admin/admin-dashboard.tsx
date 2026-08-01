@@ -24,6 +24,7 @@ type AdminOverview = {
   recentBilling: Record<string, any>[];
   recentAudits: Record<string, any>[];
   aiRoutes: AiRoute[];
+  foodSources: Array<{ source: string; title: string; license_name: string; license_url: string; status: string; commercial_use: number; redistribution: number; last_verified_at: string | null }>;
   settings: Record<string, { value: unknown; updatedBy: string | null; updatedAt: string }>;
 };
 
@@ -148,6 +149,9 @@ export default function AdminDashboard() {
       <article><span>Coach 消息</span><b>{metrics?.coachMessages ?? "—"}</b><small>{metrics?.coachConversations ?? 0} 段对话</small></article>
       <article><span>周度复盘</span><b>{metrics?.weeklyReviews ?? "—"}</b><small>{metrics?.acceptedReviews ?? 0} 次接受调整</small></article>
       <article><span>移动设备</span><b>{metrics?.devices ?? "—"}</b><small>已注册同步设备</small></article>
+      <article><span>新手减脂档案</span><b>{metrics?.beginnerProfiles ?? "—"}</b><small>核心路径</small></article>
+      <article><span>中级增肌档案</span><b>{metrics?.hypertrophyProfiles ?? "—"}</b><small>专业路径</small></article>
+      <article><span>完成训练组</span><b>{metrics?.workoutSets ?? "—"}</b><small>真实逐组记录</small></article>
     </div>
 
     <section className="admin-panel" id="modules">
@@ -196,7 +200,8 @@ export default function AdminDashboard() {
 
     <section className="admin-panel" id="nutrition-admin">
       <div className="admin-section-title"><div><span>06 / NUTRITION</span><h2>营养识别质量</h2></div><p>低置信度结果必须由用户确认，不以图片估算冒充精确热量。</p></div>
-      <div className="nutrition-admin-metrics"><article><span>识别请求</span><b>{metrics?.mealAnalyses ?? 0}</b></article><article><span>成功率</span><b>{metrics?.mealAnalysisSuccessRate ?? 0}%</b></article><article><span>低置信度</span><b>{metrics?.lowConfidenceMeals ?? 0}</b></article><article><span>确认餐食</span><b>{metrics?.meals ?? 0}</b></article></div>
+      <div className="nutrition-admin-metrics"><article><span>识别请求</span><b>{metrics?.mealAnalyses ?? 0}</b></article><article><span>成功率</span><b>{metrics?.mealAnalysisSuccessRate ?? 0}%</b></article><article><span>低置信度</span><b>{metrics?.lowConfidenceMeals ?? 0}</b></article><article><span>确认餐食</span><b>{metrics?.meals ?? 0}</b></article><article><span>食品搜索</span><b>{metrics?.foodSearches ?? 0}</b></article><article><span>零结果率</span><b>{metrics?.foodZeroResultRate ?? 0}%</b></article><article><span>待审纠错</span><b>{metrics?.pendingFoodCorrections ?? 0}</b></article><article><span>用户食品</span><b>{metrics?.customFoods ?? 0}</b></article></div>
+      <div className="food-source-admin">{overview?.foodSources?.map((source) => <article key={source.source}><div><b>{source.title}</b><span>{source.source} · {source.license_name}</span></div><a href={source.license_url} target="_blank" rel="noreferrer">许可证 ↗</a><em className={source.status === "verified" ? "status-good" : "status-warn"}>{source.status === "verified" ? "已核验" : "待核验"}</em></article>)}</div>
     </section>
 
     <section className="admin-panel" id="users">

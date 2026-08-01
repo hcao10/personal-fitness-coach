@@ -6,6 +6,8 @@ export type Experience = "beginner" | "intermediate" | "advanced";
 export type Equipment = "bodyweight" | "dumbbell" | "gym";
 export type TrainingLocation = "home" | "gym" | "outdoors" | "mixed";
 export type DietaryPreference = "balanced" | "vegetarian" | "high_protein" | "none";
+export type TrainingTrack = "beginner_fat_loss" | "intermediate_hypertrophy" | "general";
+export type BeginnerBarrier = "time" | "confidence" | "consistency" | "food" | "feedback";
 
 export type Profile = {
   sex: Sex;
@@ -23,6 +25,12 @@ export type Profile = {
   trainingLocation?: TrainingLocation;
   dietaryPreference?: DietaryPreference;
   exclusions?: string;
+  trainingTrack?: TrainingTrack;
+  beginnerBarrier?: BeginnerBarrier;
+  trainingAgeMonths?: number;
+  currentSplit?: string;
+  weakPoints?: string;
+  acceptsWeightGain?: boolean;
 };
 
 export type Exercise = {
@@ -32,9 +40,19 @@ export type Exercise = {
   cue: { zh: string; en: string };
   asset: string;
   equipment: Equipment | "barbell" | "cable";
+  difficulty?: "beginner" | "intermediate" | "advanced";
+  muscles?: string[];
 };
 
-export type PlannedExercise = Exercise & { sets: number; reps: string; rest: string };
+export type PlannedExercise = Exercise & {
+  sets: number;
+  reps: string;
+  rest: string;
+  restSeconds?: number;
+  targetRir?: number | null;
+  progression?: { zh: string; en: string };
+  suggestedLoadMultiplier?: number;
+};
 export type WorkoutDay = {
   dayIndex: number;
   title: { zh: string; en: string };
@@ -46,6 +64,7 @@ export type WorkoutDay = {
 export type CoachPlan = {
   bmr: number; tdee: number; calories: number; calorieDelta: number; bmi: number;
   weeks: number; protein: number; carbs: number; fat: number;
+  track?: TrainingTrack;
   schedule: WorkoutDay[]; confidence: "high" | "medium";
   insights?: {
     summary: { zh: string; en: string };
@@ -54,6 +73,13 @@ export type CoachPlan = {
     dietGuidance: { zh: string[]; en: string[] };
   };
 };
+
+export function resolveTrainingTrack(profile: Profile): TrainingTrack {
+  if (profile.trainingTrack) return profile.trainingTrack;
+  if (profile.goal === "fat_loss" && profile.experience === "beginner") return "beginner_fat_loss";
+  if (profile.goal === "muscle" && profile.experience !== "beginner") return "intermediate_hypertrophy";
+  return "general";
+}
 
 export const EXERCISES: Record<string, Exercise> = {
   bench: { id: "bench", name: { zh: "杠铃卧推", en: "Barbell bench press" }, target: { zh: "胸肌 · 肱三头肌", en: "Chest · Triceps" }, cue: { zh: "肩胛骨向后下方收紧，杠铃落在胸骨下缘。", en: "Set the shoulder blades, then lower the bar toward the lower sternum." }, asset: "0025-EIeI8Vf", equipment: "barbell" },
@@ -149,7 +175,9 @@ function trainingSlots(days: number): number[] {
 }
 
 function buildSchedule(profile: Profile): WorkoutDay[] {
-  const slots = trainingSlots(profile.days);
+  const track = resolveTrainingTrack(profile);
+  const allowedDays = track === "beginner_fat_loss" ? Math.min(4, profile.days) : profile.days;
+  const slots = trainingSlots(allowedDays);
   const library = sessionLibraries[profile.goal];
   const prescription = repByExperience[profile.experience];
   let sessionCursor = 0;
@@ -165,16 +193,22 @@ function buildSchedule(profile: Profile): WorkoutDay[] {
     });
     const exercises = Array.from(unique.values()).map((exercise, index) => ({
       ...exercise,
-      sets: index === 0 && profile.experience === "beginner" ? 3 : prescription.sets,
+      sets: track === "beginner_fat_loss" ? (index < 2 ? 3 : 2) : index === 0 && profile.experience === "beginner" ? 3 : prescription.sets,
       reps: exercise.id === "deadBug" ? "8/side" : prescription.reps,
-      rest: prescription.rest,
+      rest: track === "beginner_fat_loss" ? "60–75s" : prescription.rest,
+      restSeconds: track === "beginner_fat_loss" ? 60 : profile.experience === "advanced" ? 90 : 75,
+      targetRir: track === "beginner_fat_loss" ? null : profile.experience === "advanced" ? 1 : 2,
+      progression: track === "beginner_fat_loss"
+        ? { zh: "动作稳定后再增加次数或难度。", en: "Add reps or difficulty only after the movement feels stable." }
+        : { zh: "达到次数上限且保留目标 RIR 时，下次负重最多增加 5%。", en: "At the top of the rep range and target RIR, add no more than 5% next time." },
     }));
-    const requestedDuration = Math.max(25, Math.min(120, Number(profile.sessionMinutes || 50)));
+    const requestedDuration = Math.max(20, Math.min(120, Number(profile.sessionMinutes || 50)));
     return { dayIndex, title: seed.title, focus: seed.focus, duration: Math.min(requestedDuration, 38 + exercises.length * 3), exercises };
   });
 }
 
 export function generatePlan(profile: Profile): CoachPlan {
+  const track = resolveTrainingTrack(profile);
   const weight = Math.max(35, profile.weight);
   const height = Math.max(130, profile.height);
   const age = Math.max(16, profile.age);
@@ -203,13 +237,14 @@ export function generatePlan(profile: Profile): CoachPlan {
   return {
     bmr: Math.round(bmr), tdee: Math.round(tdee), calories, calorieDelta,
     bmi: Number((weight / ((height / 100) ** 2)).toFixed(1)), weeks, protein, carbs, fat,
-    schedule: buildSchedule(profile), confidence: profile.limitations.trim() ? "medium" : "high",
+    schedule: buildSchedule(profile), confidence: profile.limitations.trim() ? "medium" : "high", track,
   };
 }
 
 export const defaultProfile: Profile = {
   sex: "female", age: 28, height: 165, weight: 60, targetWeight: 56,
-  activity: "moderate", goal: "arms", experience: "beginner", days: 4,
-  equipment: "gym", limitations: "", sessionMinutes: 50, trainingLocation: "gym",
-  dietaryPreference: "balanced", exclusions: "",
+  activity: "light", goal: "fat_loss", experience: "beginner", days: 3,
+  equipment: "bodyweight", limitations: "", sessionMinutes: 30, trainingLocation: "home",
+  dietaryPreference: "balanced", exclusions: "", trainingTrack: "beginner_fat_loss",
+  beginnerBarrier: "confidence", trainingAgeMonths: 0, currentSplit: "", weakPoints: "", acceptsWeightGain: false,
 };

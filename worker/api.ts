@@ -1,4 +1,4 @@
-import { type Activity, type Equipment, type Experience, type Goal, type Profile, type Sex } from "../app/lib/coach";
+import { type Activity, type BeginnerBarrier, type Equipment, type Experience, type Goal, type Profile, type Sex, type TrainingTrack } from "../app/lib/coach";
 import { verifyCmineAccessToken } from "./cmine-jwt";
 import {
   accountSnapshot,
@@ -32,9 +32,12 @@ import {
   updateAdminSetting,
   updateAiRoute,
   updateUserStatus,
+  upsertWorkoutSet,
   upsertCmineUser,
+  workoutSetsForDay,
   type MeasurementInput,
   type StoredUser,
+  type WorkoutSetInput,
 } from "./db";
 import { aiServices, generateLlmPlan } from "./llm";
 import { billingCatalog, createCheckout, createPortal, processStripeEvent, stripeConfigured, verifyStripeWebhook } from "./billing";
@@ -42,13 +45,21 @@ import { consumeCapability, entitlementSnapshot, redeemPoints, refundCapability,
 import {
   analyzeMeal,
   confirmMeal,
+  createCustomFood,
   createManualMeal,
+  createMealTemplate,
+  createRecipe,
   dailyNutrition,
   deleteMealImage,
   foodByBarcode,
   foodDataConfigured,
+  foodReference,
+  mealTemplatesForUser,
   mealsForUser,
+  recipesForUser,
+  recalculateRecipe,
   searchFoods,
+  submitFoodCorrection,
   uploadMealImage,
 } from "./nutrition";
 import { processAdmobReward, rewardAdsConfigured } from "./rewards";
@@ -88,6 +99,8 @@ const sexes = new Set<Sex>(["female", "male"]);
 const activities = new Set<Activity>(["sedentary", "light", "moderate", "active"]);
 const experiences = new Set<Experience>(["beginner", "intermediate", "advanced"]);
 const equipment = new Set<Equipment>(["bodyweight", "dumbbell", "gym"]);
+const trainingTracks = new Set<TrainingTrack>(["beginner_fat_loss", "intermediate_hypertrophy", "general"]);
+const beginnerBarriers = new Set<BeginnerBarrier>(["time", "confidence", "consistency", "food", "feedback"]);
 const editableSettings = new Set([
   "announcement", "maintenance_mode", "disclaimer_version",
   "ai_daily_warning_usd", "ai_daily_hard_usd", "ai_monthly_warning_usd", "ai_monthly_hard_usd",
@@ -113,10 +126,22 @@ function profileFrom(value: unknown): Profile | null {
     trainingLocation: (["home", "gym", "outdoors", "mixed"].includes(String(body.trainingLocation)) ? body.trainingLocation : "mixed") as Profile["trainingLocation"],
     dietaryPreference: (["balanced", "vegetarian", "high_protein", "none"].includes(String(body.dietaryPreference)) ? body.dietaryPreference : "none") as Profile["dietaryPreference"],
     exclusions: typeof body.exclusions === "string" ? body.exclusions.trim().slice(0, 500) : "",
+    trainingTrack: trainingTracks.has(body.trainingTrack as TrainingTrack) ? body.trainingTrack as TrainingTrack : undefined,
+    beginnerBarrier: beginnerBarriers.has(body.beginnerBarrier as BeginnerBarrier) ? body.beginnerBarrier as BeginnerBarrier : undefined,
+    trainingAgeMonths: Math.max(0, Math.min(600, Number(body.trainingAgeMonths || 0))),
+    currentSplit: typeof body.currentSplit === "string" ? body.currentSplit.trim().slice(0, 120) : "",
+    weakPoints: typeof body.weakPoints === "string" ? body.weakPoints.trim().slice(0, 300) : "",
+    acceptsWeightGain: body.acceptsWeightGain === true,
   };
   if (!sexes.has(profile.sex) || !activities.has(profile.activity) || !goals.has(profile.goal) || !experiences.has(profile.experience) || !equipment.has(profile.equipment)) return null;
   if (![profile.age, profile.height, profile.weight, profile.targetWeight, profile.days, profile.sessionMinutes].every(Number.isFinite)) return null;
   if (profile.age < 16 || profile.age > 85 || profile.height < 130 || profile.height > 220 || profile.weight < 35 || profile.weight > 250 || profile.targetWeight < 35 || profile.targetWeight > 250 || profile.days < 2 || profile.days > 6 || Number(profile.sessionMinutes) < 20 || Number(profile.sessionMinutes) > 180) return null;
+  if (profile.trainingTrack === "beginner_fat_loss" && profile.days > 4) profile.days = 4;
+  if (profile.trainingTrack === "intermediate_hypertrophy") {
+    profile.goal = "muscle";
+    if (profile.experience === "beginner") profile.experience = "intermediate";
+    profile.days = Math.max(3, profile.days);
+  }
   return profile;
 }
 
@@ -836,10 +861,40 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return errorJson("INVALID_DATE", "日期格式无效。", 400);
     return json(await dailyNutrition(env, user.id, date));
   }
+  if (url.pathname === "/api/v1/exercises/search" && request.method === "GET") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    const query = (url.searchParams.get("q") || "").trim().toLocaleLowerCase().slice(0, 80);
+    const equipmentFilter = (url.searchParams.get("equipment") || "").trim().toLocaleLowerCase();
+    const targetFilter = (url.searchParams.get("target") || "").trim().toLocaleLowerCase();
+    const assetResponse = await env.ASSETS.fetch(new Request(new URL("/exercise-catalog.json", request.url)));
+    if (!assetResponse.ok) return errorJson("EXERCISE_CATALOG_UNAVAILABLE", "动作目录暂时不可用。", 503);
+    const catalog = await assetResponse.json() as { count: number; mediaPolicy: string; exercises: Array<Record<string, unknown>> };
+    const results = catalog.exercises.filter((item) => {
+      const text = `${item.name || ""} ${item.bodyPart || ""} ${item.target || ""} ${item.muscleGroup || ""}`.toLocaleLowerCase();
+      return (!query || text.includes(query)) && (!equipmentFilter || String(item.equipment || "").toLocaleLowerCase() === equipmentFilter) && (!targetFilter || text.includes(targetFilter));
+    }).slice(0, Math.min(50, Math.max(1, Number(url.searchParams.get("limit") || 24))));
+    return json({ total: catalog.count, count: results.length, mediaPolicy: catalog.mediaPolicy, exercises: results });
+  }
+  const exerciseDetailMatch = url.pathname.match(/^\/api\/v1\/exercises\/([^/]+)$/);
+  if (exerciseDetailMatch && request.method === "GET") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    const assetResponse = await env.ASSETS.fetch(new Request(new URL("/exercise-catalog.json", request.url)));
+    const catalog = assetResponse.ok ? await assetResponse.json() as { exercises: Array<Record<string, unknown>> } : null;
+    const exercise = catalog?.exercises.find((item) => String(item.id) === decodeURIComponent(exerciseDetailMatch[1]));
+    return exercise ? json({ exercise }) : errorJson("EXERCISE_NOT_FOUND", "没有找到该动作。", 404);
+  }
   if (url.pathname === "/api/v1/foods/search" && request.method === "GET") {
     const user = await requireUser(request, env);
     if (user instanceof Response) return user;
-    return json({ foods: await searchFoods(env, url.searchParams.get("q") || "") });
+    return json({ foods: await searchFoods(env, url.searchParams.get("q") || "", { userId: user.id,
+      locale: url.searchParams.get("locale") || user.locale, region: url.searchParams.get("region"),
+      source: url.searchParams.get("source"), limit: Number(url.searchParams.get("limit") || 15) }) });
+  }
+  if (url.pathname === "/api/v1/foods/custom" && request.method === "POST") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    const body = await request.json().catch(() => null) as Parameters<typeof createCustomFood>[2] | null;
+    try { return json({ food: await createCustomFood(env, user, body as Parameters<typeof createCustomFood>[2]) }, 201); }
+    catch { return errorJson("INVALID_CUSTOM_FOOD", "自定义食品的营养信息无效。", 400); }
   }
   const barcodeMatch = url.pathname.match(/^\/api\/v1\/foods\/barcode\/([^/]+)$/);
   if (barcodeMatch && request.method === "GET") {
@@ -847,6 +902,44 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
     if (user instanceof Response) return user;
     const food = await foodByBarcode(env, decodeURIComponent(barcodeMatch[1]));
     return food ? json({ food }) : errorJson("FOOD_NOT_FOUND", "食品数据库中没有找到该条码。", 404);
+  }
+  const foodCorrectionMatch = url.pathname.match(/^\/api\/v1\/foods\/([^/]+)\/corrections$/);
+  if (foodCorrectionMatch && request.method === "POST") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+    try { return json({ correction: await submitFoodCorrection(env, user.id, decodeURIComponent(foodCorrectionMatch[1]), body || {}) }, 201); }
+    catch { return errorJson("INVALID_CORRECTION", "纠错内容无效。", 400); }
+  }
+  const foodDetailMatch = url.pathname.match(/^\/api\/v1\/foods\/([^/]+)$/);
+  if (foodDetailMatch && request.method === "GET") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    const food = await foodReference(env, decodeURIComponent(foodDetailMatch[1]));
+    return food ? json({ food }) : errorJson("FOOD_NOT_FOUND", "没有找到该食品。", 404);
+  }
+  if (url.pathname === "/api/v1/recipes" && request.method === "GET") {
+    const user = await requireUser(request, env); return user instanceof Response ? user : json({ recipes: await recipesForUser(env, user.id) });
+  }
+  if (url.pathname === "/api/v1/recipes" && request.method === "POST") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    const body = await request.json().catch(() => null) as Parameters<typeof createRecipe>[2] | null;
+    try { return json({ recipe: await createRecipe(env, user, body as Parameters<typeof createRecipe>[2]) }, 201); }
+    catch { return errorJson("INVALID_RECIPE", "菜谱信息不完整或营养来源无效。", 400); }
+  }
+  const recipeCalculateMatch = url.pathname.match(/^\/api\/v1\/recipes\/([^/]+)\/calculate$/);
+  if (recipeCalculateMatch && request.method === "POST") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    const body = await request.json().catch(() => null) as Parameters<typeof recalculateRecipe>[3] | null;
+    try { return json({ recipe: await recalculateRecipe(env, user.id, decodeURIComponent(recipeCalculateMatch[1]), body || undefined) }); }
+    catch (error) { return errorJson(error instanceof Error ? error.message : "INVALID_RECIPE", "菜谱不存在或营养来源无效。", 400); }
+  }
+  if (url.pathname === "/api/v1/meal-templates" && request.method === "GET") {
+    const user = await requireUser(request, env); return user instanceof Response ? user : json({ templates: await mealTemplatesForUser(env, user.id) });
+  }
+  if (url.pathname === "/api/v1/meal-templates" && request.method === "POST") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    const body = await request.json().catch(() => null) as Parameters<typeof createMealTemplate>[2] | null;
+    try { return json({ template: await createMealTemplate(env, user.id, body as Parameters<typeof createMealTemplate>[2]) }, 201); }
+    catch { return errorJson("INVALID_TEMPLATE", "餐食模板内容无效。", 400); }
   }
   const mealImageMatch = url.pathname.match(/^\/api\/v1\/meal-images\/([^/]+)$/);
   if (mealImageMatch && request.method === "DELETE") {
@@ -960,13 +1053,43 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
         status: workoutMatch[2] === "complete" ? "completed" : "in_progress",
         durationMinutes,
         rpe,
-        pain: body?.pain === true,
+        pain: Math.max(0, Math.min(10, Number(body?.pain || 0))),
         notes: typeof body?.notes === "string" ? body.notes.trim().slice(0, 500) : "",
       });
       return json({ ok: true }, 201);
     } catch {
       return errorJson("PLAN_NOT_FOUND", "没有找到对应计划。", 404);
     }
+  }
+
+  const workoutSetsMatch = url.pathname.match(/^\/api\/v1\/workouts\/([^/]+)\/sets$/);
+  if (workoutSetsMatch && request.method === "GET") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    const dayIndex = Number(url.searchParams.get("dayIndex"));
+    if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex > 6) return errorJson("INVALID_WORKOUT_DAY", "训练日期无效。", 400);
+    try { return json(await workoutSetsForDay(env, user.id, decodeURIComponent(workoutSetsMatch[1]), dayIndex)); }
+    catch { return errorJson("PLAN_NOT_FOUND", "没有找到对应计划。", 404); }
+  }
+  if (workoutSetsMatch && request.method === "POST") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+    const numberOrNull = (value: unknown) => value === null || value === undefined || value === "" ? null : Number(value);
+    const input: WorkoutSetInput = {
+      dayIndex: Number(body?.dayIndex), exerciseId: typeof body?.exerciseId === "string" ? body.exerciseId : "",
+      setIndex: Number(body?.setIndex), setType: (["warmup", "working", "dropset", "failure"].includes(String(body?.setType)) ? body?.setType : "working") as WorkoutSetInput["setType"],
+      targetReps: typeof body?.targetReps === "string" ? body.targetReps.slice(0, 30) : null,
+      weightKg: numberOrNull(body?.weightKg), reps: numberOrNull(body?.reps), rir: numberOrNull(body?.rir), rpe: numberOrNull(body?.rpe),
+      completed: body?.completed === true, clientMutationId: typeof body?.clientMutationId === "string" ? body.clientMutationId.slice(0, 100) : null,
+    };
+    const valid = Number.isInteger(input.dayIndex) && input.dayIndex >= 0 && input.dayIndex <= 6 && input.exerciseId.length > 0 && input.exerciseId.length <= 100 &&
+      Number.isInteger(input.setIndex) && input.setIndex >= 0 && input.setIndex < 20 &&
+      (input.weightKg === null || Number.isFinite(input.weightKg) && input.weightKg >= 0 && input.weightKg <= 1000) &&
+      (input.reps === null || Number.isInteger(input.reps) && input.reps >= 0 && input.reps <= 500) &&
+      (input.rir === null || Number.isFinite(input.rir) && input.rir >= 0 && input.rir <= 10) &&
+      (input.rpe === null || Number.isFinite(input.rpe) && input.rpe >= 1 && input.rpe <= 10);
+    if (!valid) return errorJson("INVALID_WORKOUT_SET", "组次记录超出有效范围。", 400);
+    try { return json({ set: await upsertWorkoutSet(env, user.id, decodeURIComponent(workoutSetsMatch[1]), input) }, 201); }
+    catch { return errorJson("PLAN_EXERCISE_NOT_FOUND", "该动作不属于当前计划。", 404); }
   }
 
   return errorJson("NOT_FOUND", "没有找到该接口。", 404);

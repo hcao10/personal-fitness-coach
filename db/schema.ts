@@ -518,3 +518,94 @@ export const maintenanceRuns = sqliteTable("maintenance_runs", {
   startedAt: text("started_at").notNull(),
   completedAt: text("completed_at"),
 }, (table) => [index("maintenance_runs_job_time_idx").on(table.job, table.startedAt)]);
+
+export const workoutSets = sqliteTable("workout_sets", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  planId: text("plan_id").notNull().references(() => plans.id, { onDelete: "cascade" }),
+  dayIndex: integer("day_index").notNull(),
+  exerciseId: text("exercise_id").notNull(),
+  setIndex: integer("set_index").notNull(),
+  setType: text("set_type").notNull().default("working"),
+  targetReps: text("target_reps"),
+  weightKg: real("weight_kg"),
+  reps: integer("reps"),
+  rir: real("rir"),
+  rpe: real("rpe"),
+  completed: integer("completed", { mode: "boolean" }).notNull().default(false),
+  clientMutationId: text("client_mutation_id"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [
+  uniqueIndex("workout_sets_plan_day_exercise_set_unique").on(table.userId, table.planId, table.dayIndex, table.exerciseId, table.setIndex),
+  uniqueIndex("workout_sets_user_mutation_unique").on(table.userId, table.clientMutationId),
+  index("workout_sets_user_time_idx").on(table.userId, table.updatedAt),
+]);
+
+export const coachRecordDrafts = sqliteTable("coach_record_drafts", {
+  id: text("id").primaryKey(), userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  actionId: text("action_id").notNull().references(() => coachActionProposals.id, { onDelete: "cascade" }), draftType: text("draft_type").notNull(),
+  payloadJson: text("payload_json").notNull(), status: text("status").notNull().default("draft"), createdAt: text("created_at").notNull(), updatedAt: text("updated_at").notNull(),
+}, (table) => [uniqueIndex("coach_record_drafts_action_unique").on(table.actionId), index("coach_record_drafts_user_status_idx").on(table.userId, table.status)]);
+
+export const canonicalFoods = sqliteTable("canonical_foods", {
+  id: text("id").primaryKey(), canonicalName: text("canonical_name").notNull(), displayNameZh: text("display_name_zh"),
+  displayNameEn: text("display_name_en").notNull(), category: text("category"), region: text("region"),
+  sourceKind: text("source_kind").notNull(), dataQuality: real("data_quality").notNull().default(1),
+  status: text("status").notNull().default("active"), createdAt: text("created_at").notNull(), updatedAt: text("updated_at").notNull(),
+}, (table) => [index("canonical_foods_name_idx").on(table.canonicalName, table.status), index("canonical_foods_region_idx").on(table.region, table.status)]);
+
+export const foodSourceRecords = sqliteTable("food_source_records", {
+  id: text("id").primaryKey(), canonicalFoodId: text("canonical_food_id").notNull().references(() => canonicalFoods.id, { onDelete: "cascade" }),
+  source: text("source").notNull(), sourceRef: text("source_ref").notNull(), sourceRevision: text("source_revision"), brand: text("brand"),
+  locale: text("locale"), payloadJson: text("payload_json").notNull(), retrievedAt: text("retrieved_at").notNull(), updatedAt: text("updated_at").notNull(),
+}, (table) => [uniqueIndex("food_source_records_source_ref_unique").on(table.source, table.sourceRef), index("food_source_records_canonical_idx").on(table.canonicalFoodId)]);
+
+export const foodAliases = sqliteTable("food_aliases", {
+  id: text("id").primaryKey(), canonicalFoodId: text("canonical_food_id").notNull().references(() => canonicalFoods.id, { onDelete: "cascade" }),
+  locale: text("locale").notNull(), alias: text("alias").notNull(), normalizedAlias: text("normalized_alias").notNull(), kind: text("kind").notNull().default("synonym"),
+}, (table) => [uniqueIndex("food_aliases_locale_alias_unique").on(table.locale, table.normalizedAlias, table.canonicalFoodId), index("food_aliases_search_idx").on(table.normalizedAlias, table.locale)]);
+
+export const foodNutrients = sqliteTable("food_nutrients", {
+  id: text("id").primaryKey(), canonicalFoodId: text("canonical_food_id").notNull().references(() => canonicalFoods.id, { onDelete: "cascade" }),
+  sourceRecordId: text("source_record_id").references(() => foodSourceRecords.id, { onDelete: "set null" }), basisGrams: real("basis_grams").notNull().default(100),
+  calories: real("calories").notNull().default(0), proteinG: real("protein_g").notNull().default(0), carbsG: real("carbs_g").notNull().default(0),
+  fatG: real("fat_g").notNull().default(0), fiberG: real("fiber_g"), sodiumMg: real("sodium_mg"), calculationMethod: text("calculation_method").notNull().default("source"), updatedAt: text("updated_at").notNull(),
+}, (table) => [index("food_nutrients_food_idx").on(table.canonicalFoodId)]);
+
+export const foodSourceLicenses = sqliteTable("food_source_licenses", {
+  source: text("source").primaryKey(), title: text("title").notNull(), licenseName: text("license_name").notNull(), licenseUrl: text("license_url").notNull(),
+  attributionText: text("attribution_text"), commercialUse: integer("commercial_use", { mode: "boolean" }).notNull().default(false),
+  redistribution: integer("redistribution", { mode: "boolean" }).notNull().default(false), status: text("status").notNull().default("pending_review"),
+  lastVerifiedAt: text("last_verified_at"), updatedAt: text("updated_at").notNull(),
+});
+
+export const foodCorrections = sqliteTable("food_corrections", {
+  id: text("id").primaryKey(), userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  canonicalFoodId: text("canonical_food_id"), source: text("source").notNull(), sourceRef: text("source_ref").notNull(), correctionJson: text("correction_json").notNull(),
+  status: text("status").notNull().default("pending"), reviewedBy: text("reviewed_by"), reviewedAt: text("reviewed_at"), createdAt: text("created_at").notNull(),
+}, (table) => [index("food_corrections_status_time_idx").on(table.status, table.createdAt)]);
+
+export const foodSearchEvents = sqliteTable("food_search_events", {
+  id: text("id").primaryKey(), userId: text("user_id").references(() => users.id, { onDelete: "set null" }), queryHash: text("query_hash").notNull(),
+  locale: text("locale").notNull(), region: text("region"), resultCount: integer("result_count").notNull(), selectedRef: text("selected_ref"), latencyMs: integer("latency_ms").notNull(), createdAt: text("created_at").notNull(),
+}, (table) => [index("food_search_events_time_idx").on(table.createdAt)]);
+
+export const recipes = sqliteTable("recipes", {
+  id: text("id").primaryKey(), userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }), name: text("name").notNull(),
+  servings: real("servings").notNull().default(1), cookedWeightG: real("cooked_weight_g"), calories: real("calories").notNull().default(0),
+  proteinG: real("protein_g").notNull().default(0), carbsG: real("carbs_g").notNull().default(0), fatG: real("fat_g").notNull().default(0),
+  status: text("status").notNull().default("active"), createdAt: text("created_at").notNull(), updatedAt: text("updated_at").notNull(),
+}, (table) => [index("recipes_user_time_idx").on(table.userId, table.updatedAt)]);
+
+export const recipeItems = sqliteTable("recipe_items", {
+  id: text("id").primaryKey(), recipeId: text("recipe_id").notNull().references(() => recipes.id, { onDelete: "cascade" }), userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  name: text("name").notNull(), grams: real("grams").notNull(), source: text("source").notNull(), sourceRef: text("source_ref"), calories: real("calories").notNull(),
+  proteinG: real("protein_g").notNull(), carbsG: real("carbs_g").notNull(), fatG: real("fat_g").notNull(), createdAt: text("created_at").notNull(),
+}, (table) => [index("recipe_items_recipe_idx").on(table.recipeId)]);
+
+export const mealTemplates = sqliteTable("meal_templates", {
+  id: text("id").primaryKey(), userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }), name: text("name").notNull(), mealType: text("meal_type").notNull(),
+  itemsJson: text("items_json").notNull(), calories: real("calories").notNull().default(0), proteinG: real("protein_g").notNull().default(0), carbsG: real("carbs_g").notNull().default(0), fatG: real("fat_g").notNull().default(0),
+  lastUsedAt: text("last_used_at"), createdAt: text("created_at").notNull(), updatedAt: text("updated_at").notNull(),
+}, (table) => [index("meal_templates_user_time_idx").on(table.userId, table.updatedAt)]);

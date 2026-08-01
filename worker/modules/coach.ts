@@ -49,16 +49,24 @@ export async function conversationMessages(env: WorkerEnv, userId: string, conve
 
 async function buildContext(env: WorkerEnv, user: StoredUser) {
   const now = new Date(); const since = new Date(now.getTime() - 28 * 86400_000).toISOString();
-  const [profile, plan, workouts, measurements] = await Promise.all([
+  const nutritionSince = new Date(now.getTime() - 14 * 86400_000).toISOString();
+  const [profile, plan, workouts, measurements, workoutSets, nutrition, reviews] = await Promise.all([
     profileForUser(env, user.id),
     env.DB!.prepare(`SELECT id, plan_json, created_at FROM plans WHERE user_id=? ORDER BY created_at DESC LIMIT 1`).bind(user.id).first<{ id: string; plan_json: string; created_at: string }>(),
     env.DB!.prepare(`SELECT day_index,status,duration_minutes,rpe,pain,notes,completed_at FROM workout_sessions
       WHERE user_id=? AND updated_at>=? ORDER BY updated_at DESC LIMIT 40`).bind(user.id, since).all(),
     env.DB!.prepare(`SELECT weight_kg,body_fat_pct,waist_cm,arm_cm,measured_at FROM measurements
       WHERE user_id=? ORDER BY measured_at DESC LIMIT 12`).bind(user.id).all(),
+    env.DB!.prepare(`SELECT exercise_id,set_index,set_type,weight_kg,reps,rir,rpe,completed,updated_at FROM workout_sets
+      WHERE user_id=? AND updated_at>=? ORDER BY updated_at DESC LIMIT 160`).bind(user.id, since).all(),
+    env.DB!.prepare(`SELECT substr(eaten_at,1,10) AS day,SUM(calories) AS calories,SUM(protein_g) AS protein_g,SUM(carbs_g) AS carbs_g,SUM(fat_g) AS fat_g
+      FROM meal_logs WHERE user_id=? AND status='confirmed' AND eaten_at>=? GROUP BY substr(eaten_at,1,10) ORDER BY day DESC`).bind(user.id, nutritionSince).all(),
+    env.DB!.prepare(`SELECT week_start,status,metrics_json,recommendation_json FROM weekly_reviews WHERE user_id=? ORDER BY week_start DESC LIMIT 4`).bind(user.id).all(),
   ]);
   return { locale: user.locale, timezone: user.timezone, profile, activePlan: plan ? { id: plan.id, plan: parseJson(plan.plan_json), createdAt: plan.created_at } : null,
-    recentWorkouts: workouts.results || [], recentMeasurements: measurements.results || [] };
+    recentWorkouts: workouts.results || [], recentWorkoutSets: workoutSets.results || [], recentMeasurements: measurements.results || [],
+    nutrition14Days: nutrition.results || [], recentReviews: (reviews.results || []).map((row) => ({ ...row,
+      metrics_json: parseJson(String((row as Record<string, unknown>).metrics_json || "")), recommendation_json: parseJson(String((row as Record<string, unknown>).recommendation_json || "")) })) };
 }
 
 export async function sendCoachMessage(env: WorkerEnv, user: StoredUser, conversationId: string, input: {
@@ -122,12 +130,38 @@ export async function decideCoachAction(env: WorkerEnv, userId: string, actionId
   if (!action) throw new Error("ACTION_NOT_FOUND");
   if (action.status !== "pending") return { id: action.id, status: action.status, duplicate: true };
   const now = new Date().toISOString();
-  await env.DB.prepare("UPDATE coach_action_proposals SET status=?,decided_at=? WHERE id=? AND user_id=?")
-    .bind(decision, now, actionId, userId).run();
+  const payload = parseJson<Record<string, unknown>>(action.payload_json) || {};
+  let draftId: string | null = null; let draftUrl: string | null = null;
   if (decision === "accepted" && ["plan_adjustment", "schedule_review"].includes(action.action_type)) {
     const monday = new Date(); const day = (monday.getUTCDay() + 6) % 7; monday.setUTCDate(monday.getUTCDate() - day); monday.setUTCHours(0, 0, 0, 0);
     await env.DB.prepare(`INSERT OR IGNORE INTO weekly_reviews (id,user_id,week_start,status,created_at,updated_at)
       VALUES (?,?,?,'due',?,?)`).bind(crypto.randomUUID(), userId, monday.toISOString().slice(0, 10), now, now).run();
+    draftUrl = "/progress#weekly-review";
   }
-  return { id: action.id, type: action.action_type, status: decision, payload: parseJson(action.payload_json), createdDraft: decision === "accepted" };
+  if (decision === "accepted" && action.action_type === "create_meal_draft") {
+    draftId = crypto.randomUUID();
+    await env.DB.prepare(`INSERT INTO meal_logs (id,user_id,meal_type,status,eaten_at,note,calories,protein_g,carbs_g,fat_g,created_at,updated_at)
+      VALUES (?,?,'other','draft',?,?,0,0,0,0,?,?)`).bind(draftId, userId, now, String(payload.description || payload.title || "Coach 创建的餐食草稿").slice(0, 300), now, now).run();
+    draftUrl = "/nutrition";
+  }
+  if (decision === "accepted" && action.action_type === "log_workout") {
+    const active = await env.DB.prepare(`SELECT p.id,p.plan_json FROM plan_cycles c JOIN plan_versions v ON v.id=c.active_version_id JOIN plans p ON p.id=v.plan_id
+      WHERE c.user_id=? AND c.status='active' LIMIT 1`).bind(userId).first<{ id: string; plan_json: string }>();
+    if (active) {
+      const dayIndex = (new Date().getUTCDay() + 6) % 7;
+      await env.DB.prepare(`INSERT INTO workout_sessions (id,user_id,plan_id,day_index,status,notes,started_at,updated_at)
+        VALUES (?,?,?,?, 'in_progress',?,?,?) ON CONFLICT(user_id,plan_id,day_index) DO UPDATE SET status='in_progress',notes=excluded.notes,updated_at=excluded.updated_at`)
+        .bind(crypto.randomUUID(), userId, active.id, dayIndex, String(payload.description || "Coach 创建的训练草稿").slice(0, 500), now, now).run();
+    }
+    draftUrl = "/today";
+  }
+  if (decision === "accepted" && action.action_type === "log_measurement") {
+    draftId = crypto.randomUUID();
+    await env.DB.prepare(`INSERT OR IGNORE INTO coach_record_drafts (id,user_id,action_id,draft_type,payload_json,status,created_at,updated_at)
+      VALUES (?,?,?,'measurement',?,'draft',?,?)`).bind(draftId, userId, actionId, JSON.stringify(payload), now, now).run();
+    draftUrl = "/progress#measurements";
+  }
+  await env.DB.prepare("UPDATE coach_action_proposals SET status=?,decided_at=? WHERE id=? AND user_id=?")
+    .bind(decision, now, actionId, userId).run();
+  return { id: action.id, type: action.action_type, status: decision, payload, createdDraft: decision === "accepted", draftId, draftUrl };
 }

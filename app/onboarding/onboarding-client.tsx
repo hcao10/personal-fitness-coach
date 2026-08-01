@@ -2,12 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import ProductShell from "../components/product-shell";
-import { defaultProfile, generatePlan, type Activity, type Equipment, type Experience, type Goal, type Profile, type Sex } from "../lib/coach";
+import { defaultProfile, generatePlan, type Activity, type BeginnerBarrier, type Equipment, type Experience, type Goal, type Profile, type Sex, type TrainingTrack } from "../lib/coach";
 import { beginCmineLogin, getCmineSession } from "../lib/auth";
 
 const steps = ["开始", "目标", "身体资料", "训练条件", "安全与限制", "饮食偏好", "确认"];
-type Draft = Profile & { sessionMinutes: number; dietaryPreference: string; exclusions: string };
-const initial: Draft = { ...defaultProfile, sessionMinutes: 50, dietaryPreference: "balanced", exclusions: "" };
+type Draft = Profile & { sessionMinutes: number; dietaryPreference: string; exclusions: string; trainingTrack: TrainingTrack; beginnerBarrier: BeginnerBarrier; trainingAgeMonths: number; currentSplit: string; weakPoints: string; acceptsWeightGain: boolean };
+const initial: Draft = { ...defaultProfile, sessionMinutes: 30, dietaryPreference: "balanced", exclusions: "", trainingTrack: "beginner_fat_loss", beginnerBarrier: "confidence", trainingAgeMonths: 0, currentSplit: "", weakPoints: "", acceptsWeightGain: false };
 
 export default function OnboardingClient() {
   const [step, setStep] = useState(0); const [draft, setDraft] = useState<Draft>(initial);
@@ -54,7 +54,12 @@ export default function OnboardingClient() {
       <div className="onboarding-steps">{steps.map((name, index) => <button key={name} className={index === step ? "active" : index < step ? "done" : ""} onClick={() => index <= step && setStep(index)}><b>{index < step ? "✓" : index + 1}</b><span>{name}</span></button>)}</div>
       <div className="onboarding-card">
         {step === 0 && <div className="onboarding-welcome"><span>2–3 MINUTES</span><h2>让计划适合你的生活，而不是让生活迁就计划。</h2><p>你可以逐步填写，也可以稍后继续。只有在最后确认后，我们才会生成完整计划。</p><button className="primary-cta" onClick={() => void saveAndMove(1)}>开始建立计划 <b>→</b></button></div>}
-        {step === 1 && <Step title="你最想改变什么？" note="先确定主要目标，后续可以随训练进度调整。">
+        {step === 1 && <Step title="选择最适合你的起点" note="两条路径共用记录和 Coach，你可以之后随时切换。">
+          <div className="track-choice">
+            <button className={draft.trainingTrack === "beginner_fat_loss" ? "active" : ""} onClick={() => setDraft((current) => ({ ...current, trainingTrack: "beginner_fat_loss", goal: "fat_loss", experience: "beginner", days: Math.min(4, current.days), sessionMinutes: [20, 30, 45].includes(current.sessionMinutes) ? current.sessionMinutes : 30 }))}><span>核心路径</span><b>新手日常减脂</b><small>从今天做什么、吃多少开始，先建立可以长期坚持的节奏。</small></button>
+            <button className={draft.trainingTrack === "intermediate_hypertrophy" ? "active" : ""} onClick={() => setDraft((current) => ({ ...current, trainingTrack: "intermediate_hypertrophy", goal: "muscle", experience: "intermediate", days: Math.max(3, current.days), sessionMinutes: Math.max(45, current.sessionMinutes) }))}><span>专业路径</span><b>中级系统增肌</b><small>按组记录、渐进负荷、肌群训练量与周期复盘。</small></button>
+          </div>
+          <p className="path-note">当前选择：{draft.trainingTrack === "intermediate_hypertrophy" ? "中级增肌" : "新手减脂"}</p>
           <div className="choice-grid">{([['fat_loss','减脂'],['muscle','增肌'],['recomp','塑形'],['arms','手臂线条'],['strength','力量']] as [Goal,string][]).map(([value,label]) => <button className={draft.goal === value ? "active" : ""} onClick={() => patch("goal", value)} key={value}>{label}</button>)}</div>
           <Nav step={step} saving={saving} back={() => setStep(0)} next={() => void saveAndMove(2)} />
         </Step>}
@@ -66,6 +71,7 @@ export default function OnboardingClient() {
         {step === 3 && <Step title="你的训练条件" note="真实可执行，比理想化计划更重要。">
           <div className="onboarding-fields"><label>训练经验<select value={draft.experience} onChange={(event) => patch("experience", event.target.value as Experience)}><option value="beginner">新手</option><option value="intermediate">进阶</option><option value="advanced">高级</option></select></label><label>可用器械<select value={draft.equipment} onChange={(event) => patch("equipment", event.target.value as Equipment)}><option value="bodyweight">徒手 / 居家</option><option value="dumbbell">哑铃</option><option value="gym">完整健身房</option></select></label><label>日常活动<select value={draft.activity} onChange={(event) => patch("activity", event.target.value as Activity)}><option value="sedentary">久坐</option><option value="light">轻度活动</option><option value="moderate">中等活动</option><option value="active">高活动量</option></select></label><label>单次时长<input type="number" value={draft.sessionMinutes} onChange={(event) => patch("sessionMinutes", Number(event.target.value))} /></label></div>
           <div className="day-picker"><span>每周训练天数</span>{[2,3,4,5,6].map((day) => <button key={day} className={draft.days === day ? "active" : ""} onClick={() => patch("days", day)}>{day}</button>)}</div>
+          {draft.trainingTrack === "beginner_fat_loss" ? <div className="path-fields"><label>你最需要解决的问题<select value={draft.beginnerBarrier} onChange={(event) => patch("beginnerBarrier", event.target.value as BeginnerBarrier)}><option value="confidence">不知道怎么开始</option><option value="time">没有完整时间</option><option value="consistency">难以坚持</option><option value="food">饮食容易失控</option><option value="feedback">缺少反馈</option></select></label><label>优先训练时长<select value={draft.sessionMinutes} onChange={(event) => patch("sessionMinutes", Number(event.target.value))}><option value="20">20 分钟</option><option value="30">30 分钟</option><option value="45">45 分钟</option></select></label></div> : <div className="path-fields"><label>系统训练时间（月）<input type="number" min="3" max="600" value={draft.trainingAgeMonths} onChange={(event) => patch("trainingAgeMonths", Number(event.target.value))} /></label><label>当前训练分化<input value={draft.currentSplit} onChange={(event) => patch("currentSplit", event.target.value)} placeholder="例如：上/下肢，推拉腿" /></label><label>希望优先提升的部位<input value={draft.weakPoints} onChange={(event) => patch("weakPoints", event.target.value)} placeholder="例如：背阔肌、三角肌中束" /></label><label className="gain-consent"><input type="checkbox" checked={draft.acceptsWeightGain} onChange={(event) => patch("acceptsWeightGain", event.target.checked)} />接受增肌期缓慢增加体重</label></div>}
           <Nav step={step} saving={saving} back={() => setStep(2)} next={() => void saveAndMove(4)} />
         </Step>}
         {step === 4 && <Step title="安全与动作限制" note="这不是诊断信息；它帮助系统避开不适合的动作。">

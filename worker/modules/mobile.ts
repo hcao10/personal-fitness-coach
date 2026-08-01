@@ -1,7 +1,7 @@
 import type { HealthObservationInput, SyncMutation } from "../../packages/api-contracts/src";
 import { validateSyncMutation } from "../../packages/sync-core/src";
 import type { WorkerEnv } from "../platform";
-import { addMeasurement, saveWorkoutSession } from "../db";
+import { addMeasurement, saveWorkoutSession, upsertWorkoutSet } from "../db";
 
 export async function registerDevice(env: WorkerEnv, userId: string, input: Record<string, unknown>) {
   if (!env.DB) throw new Error("DATABASE_NOT_CONFIGURED");
@@ -25,7 +25,7 @@ async function applyMutation(env: WorkerEnv, userId: string, mutation: SyncMutat
     const body = mutation.payload;
     await saveWorkoutSession(env, userId, String(body.planId || ""), { dayIndex: Number(body.dayIndex), status: body.status === "completed" ? "completed" : "in_progress",
       durationMinutes: Number.isFinite(Number(body.durationMinutes)) ? Number(body.durationMinutes) : null,
-      rpe: Number.isFinite(Number(body.rpe)) ? Number(body.rpe) : null, pain: Number(body.pain || 0) >= 1, notes: String(body.notes || "").slice(0, 500) });
+      rpe: Number.isFinite(Number(body.rpe)) ? Number(body.rpe) : null, pain: Math.max(0, Math.min(10, Number(body.pain || 0))), notes: String(body.notes || "").slice(0, 500) });
   }
   if (mutation.operation === "upsert" && mutation.entityType === "measurement") {
     const body = mutation.payload;
@@ -33,6 +33,14 @@ async function applyMutation(env: WorkerEnv, userId: string, mutation: SyncMutat
       bodyFatPct: Number.isFinite(Number(body.bodyFatPct)) ? Number(body.bodyFatPct) : null,
       waistCm: Number.isFinite(Number(body.waistCm)) ? Number(body.waistCm) : null,
       armCm: Number.isFinite(Number(body.armCm)) ? Number(body.armCm) : null, note: String(body.note || "").slice(0, 300), measuredAt: String(body.measuredAt || mutation.occurredAt) });
+  }
+  if (mutation.operation === "upsert" && mutation.entityType === "workout_set") {
+    const body = mutation.payload;
+    await upsertWorkoutSet(env, userId, String(body.planId || ""), { dayIndex: Number(body.dayIndex), exerciseId: String(body.exerciseId || ""), setIndex: Number(body.setIndex),
+      setType: (["warmup", "working", "dropset", "failure"].includes(String(body.setType)) ? body.setType : "working") as "warmup" | "working" | "dropset" | "failure",
+      targetReps: String(body.targetReps || "").slice(0, 30), weightKg: body.weightKg === null || body.weightKg === undefined ? null : Number(body.weightKg),
+      reps: body.reps === null || body.reps === undefined ? null : Number(body.reps), rir: body.rir === null || body.rir === undefined ? null : Number(body.rir),
+      rpe: body.rpe === null || body.rpe === undefined ? null : Number(body.rpe), completed: body.completed === true, clientMutationId: mutation.mutationId });
   }
   const now = new Date().toISOString();
   await env.DB.batch([

@@ -1,2 +1,12 @@
-import { Text, View } from "react-native"; import { Screen, styles } from "../src/Screen";
-export default function Progress() { return <Screen eyebrow="PROGRESS / 周度复盘" title="看清变化，再决定下一步"><View style={styles.card}><Text style={styles.label}>计划调整</Text><Text style={styles.value}>系统先生成差异草案</Text><Text>只有你接受后，新计划版本才会生效。</Text></View></Screen>; }
+import { useEffect, useState } from "react";
+import { Pressable, Text, View } from "react-native";
+import { Screen, styles } from "../src/Screen";
+import { api } from "../src/api";
+
+type Progress={completedWorkouts:number;completedExercises:number;latestMeasurement?:{weightKg?:number;bodyFatPct?:number;waistCm?:number}};
+type Review={id:string;weekStart:string;status:string;plateau:boolean;metrics?:{adherencePct?:number;completedSets?:number;trainingVolumeKg?:number;weightTrendKgPerWeek?:number|null};recommendation?:{title?:string;explanation?:string}};
+export default function Progress(){const[progress,setProgress]=useState<Progress|null>(null);const[reviews,setReviews]=useState<Review[]>([]);const[message,setMessage]=useState("");const load=async()=>{try{const[p,r]=await Promise.all([api<Progress>("/api/v1/progress"),api<{reviews:Review[]}>("/api/v1/reviews")]);setProgress(p);setReviews(r.reviews)}catch(e){setMessage(e instanceof Error?e.message:"读取失败")}};
+// The request resolves asynchronously; the function is also reused after generating a review.
+// eslint-disable-next-line react-hooks/set-state-in-effect
+useEffect(()=>{void load()},[]);const current=reviews[0];const generate=async()=>{if(!current)return;try{await api(`/api/v1/reviews/${current.id}/generate`,{method:"POST"});setMessage("复盘草案已生成，确认后才会调整计划。");await load()}catch(e){setMessage(e instanceof Error?e.message:"复盘生成失败")}};
+return <Screen eyebrow="PROGRESS / 周度复盘" title="看清变化，再决定下一步"><View style={styles.card}><Text style={styles.label}>累计完成</Text><Text style={styles.value}>{progress?.completedWorkouts||0} 次训练</Text><Text>{progress?.completedExercises||0} 个动作完成记录</Text></View>{progress?.latestMeasurement&&<View style={styles.card}><Text style={styles.label}>最近测量</Text><Text style={styles.value}>{progress.latestMeasurement.weightKg||"—"} kg</Text><Text>腰围 {progress.latestMeasurement.waistCm||"—"} cm · 体脂 {progress.latestMeasurement.bodyFatPct||"—"}%</Text></View>}{current&&<View style={styles.card}><Text style={styles.label}>{current.weekStart} · {current.status}</Text><Text style={styles.value}>{current.recommendation?.title||"本周复盘"}</Text><Text>{current.recommendation?.explanation||"系统会结合完成率、组次、RIR、疼痛、营养和体重趋势。"}</Text>{current.metrics&&<Text>完成率 {current.metrics.adherencePct||0}% · {current.metrics.completedSets||0} 组 · 训练量 {Math.round(current.metrics.trainingVolumeKg||0)} kg</Text>}<Pressable style={[styles.button,{marginTop:12}]} onPress={()=>void generate()}><Text style={styles.buttonText}>生成复盘草案</Text></Pressable></View>}{message?<Text style={styles.label}>{message}</Text>:null}</Screen>}

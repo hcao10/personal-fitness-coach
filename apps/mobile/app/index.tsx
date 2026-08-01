@@ -1,45 +1,24 @@
-import { useEffect, useState } from "react";
-import { Text, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { Pressable, Text, TextInput, View } from "react-native";
 import { Screen, styles } from "../src/Screen";
 import { api } from "../src/api";
-import { cachedValue, cacheValue, synchronize } from "../src/offline";
+import { deviceId } from "../src/auth";
+import { cachedValue, cacheValue, enqueue, synchronize } from "../src/offline";
 
 type Localized = { zh: string; en?: string };
-type Exercise = {
-  id: string;
-  target: Localized;
-  name: Localized;
-  sets: number;
-  reps: string | number;
-  rest: string;
-};
-type PlanDay = { title: Localized; focus: Localized; duration: number; exercises: Exercise[] };
-type AccountSnapshot = { latestPlan?: { plan?: { schedule?: PlanDay[] } } };
+type Exercise = { id: string; target: Localized; name: Localized; sets: number; reps: string; rest: string; targetRir?: number | null };
+type PlanDay = { dayIndex: number; title: Localized; focus: Localized; duration: number; restDay?: boolean; exercises: Exercise[] };
+type AccountSnapshot = { latestPlan?: { id: string; profile?: { trainingTrack?: string }; plan?: { schedule?: PlanDay[] } } };
+type SetDraft = { weightKg: string; reps: string; rir: string; completed: boolean };
+const keyFor = (exerciseId: string, setIndex: number) => `${exerciseId}:${setIndex}`;
+const defaultSet = (exercise: Exercise, advanced: boolean): SetDraft => ({ weightKg: "", reps: String(Number((exercise.reps.match(/\d+/) || ["10"])[0])), rir: advanced ? String(exercise.targetRir ?? 2) : "", completed: false });
 
 export default function Today() {
-  const [data, setData] = useState<AccountSnapshot | null>(null);
-  useEffect(() => {
-    void (async () => {
-      const cached = await cachedValue<AccountSnapshot>("account");
-      if (cached) setData(cached);
-      try {
-        const fresh = await api<AccountSnapshot>("/api/v1/me");
-        setData(fresh);
-        await cacheValue("account", fresh);
-        await synchronize();
-      } catch { /* Keep the cached plan useful while offline. */ }
-    })();
-  }, []);
-  const day = data?.latestPlan?.plan?.schedule?.[(new Date().getDay() + 6) % 7];
-  return <Screen eyebrow="TODAY / 今日训练" title={day?.title?.zh || "今天，按自己的节奏来"}>
-    <View style={styles.card}>
-      <Text style={styles.label}>{day?.focus?.zh || "登录后同步你的专属计划"}</Text>
-      <Text style={styles.value}>{day ? `${day.duration} 分钟 · ${day.exercises.length} 个动作` : "尚无可用计划"}</Text>
-    </View>
-    {day?.exercises?.map((exercise, index) => <View key={exercise.id} style={styles.card}>
-      <Text style={styles.label}>{String(index + 1).padStart(2, "0")} · {exercise.target.zh}</Text>
-      <Text style={styles.value}>{exercise.name.zh}</Text>
-      <Text>{exercise.sets} 组 · {exercise.reps} 次 · {exercise.rest}</Text>
-    </View>)}
-  </Screen>;
+  const [data, setData] = useState<AccountSnapshot | null>(null); const [sets, setSets] = useState<Record<string, SetDraft>>({}); const [message, setMessage] = useState("");
+  const mutationCounter = useRef(0);
+  useEffect(() => { void (async () => { const cached = await cachedValue<AccountSnapshot>("account"); if (cached) setData(cached); try { const fresh = await api<AccountSnapshot>("/api/v1/me"); setData(fresh); await cacheValue("account", fresh); await synchronize(); } catch { setMessage("当前离线，已显示上次同步计划。"); } })(); }, []);
+  const dayIndex = (new Date().getDay() + 6) % 7; const activePlan = data?.latestPlan; const day = activePlan?.plan?.schedule?.[dayIndex]; const advanced = activePlan?.profile?.trainingTrack === "intermediate_hypertrophy";
+  const completeSet = async (exercise: Exercise, setIndex: number) => { if (!activePlan) return; const key = keyFor(exercise.id,setIndex); const currentSet = sets[key] || defaultSet(exercise, advanced); const next = { ...currentSet, completed: !currentSet.completed }; setSets((current) => ({ ...current, [key]: next })); mutationCounter.current += 1; const mutationId = `${activePlan.id}:${dayIndex}:${key}:${mutationCounter.current}`; const payload = { planId: activePlan.id, dayIndex, exerciseId: exercise.id, setIndex, setType: advanced && setIndex===0 ? "warmup" : "working", targetReps: exercise.reps, weightKg: next.weightKg ? Number(next.weightKg) : null, reps: next.reps ? Number(next.reps) : null, rir: next.rir ? Number(next.rir) : null, rpe: null, completed: next.completed };
+    try { await api(`/api/v1/workouts/${activePlan.id}/sets`, { method:"POST", body:JSON.stringify({ ...payload, clientMutationId: mutationId }) }); setMessage("已同步这组训练。"); } catch { const id = await deviceId(); await enqueue({ mutationId, deviceId:id, entityType:"workout_set", entityId:key, operation:"upsert", occurredAt:new Date().toISOString(), payload }); setMessage("已离线保存，联网后自动同步。"); } };
+  return <Screen eyebrow="TODAY / 今日训练" title={day?.title?.zh || "今天，按自己的节奏来"}><View style={styles.card}><Text style={styles.label}>{day?.focus?.zh || "登录后同步你的专属计划"}</Text><Text style={styles.value}>{day ? `${day.duration} 分钟 · ${day.exercises.length} 个动作` : "尚无可用计划"}</Text></View>{message ? <Text style={styles.label}>{message}</Text> : null}{day?.restDay ? <View style={styles.card}><Text style={styles.value}>恢复日</Text><Text>轻松步行、活动度和睡眠同样属于计划。</Text></View> : day?.exercises?.map((exercise,index) => <View key={exercise.id} style={styles.card}><Text style={styles.label}>{String(index+1).padStart(2,"0")} · {exercise.target.zh}</Text><Text style={styles.value}>{exercise.name.zh}</Text>{Array.from({length:exercise.sets},(_,setIndex)=>{const key=keyFor(exercise.id,setIndex);const value=sets[key]||defaultSet(exercise,advanced);return <View key={key} style={{flexDirection:"row",gap:7,alignItems:"center",marginTop:10}}><Text>{setIndex+1}</Text><TextInput style={{flex:1,borderWidth:1,borderColor:"#d4d1c8",borderRadius:8,padding:8}} keyboardType="decimal-pad" placeholder="kg" value={value.weightKg} onChangeText={(text)=>setSets((current)=>({...current,[key]:{...value,weightKg:text}}))}/><TextInput style={{flex:1,borderWidth:1,borderColor:"#d4d1c8",borderRadius:8,padding:8}} keyboardType="number-pad" placeholder="次数" value={value.reps} onChangeText={(text)=>setSets((current)=>({...current,[key]:{...value,reps:text}}))}/>{advanced&&<TextInput style={{width:55,borderWidth:1,borderColor:"#d4d1c8",borderRadius:8,padding:8}} keyboardType="decimal-pad" placeholder="RIR" value={value.rir} onChangeText={(text)=>setSets((current)=>({...current,[key]:{...value,rir:text}}))}/>}<Pressable style={[styles.button,{padding:10,backgroundColor:value.completed?"#dfff45":"#11120f"}]} onPress={()=>void completeSet(exercise,setIndex)}><Text style={{color:value.completed?"#11120f":"white",fontWeight:"700"}}>{value.completed?"✓":"完成"}</Text></Pressable></View>})}</View>)}</Screen>;
 }
