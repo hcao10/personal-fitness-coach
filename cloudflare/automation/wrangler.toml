@@ -6,7 +6,9 @@ workers_dev = true
 preview_urls = false
 
 [triggers]
-crons = ["17 3 * * *"]
+# 17 3 * * *  — daily maintenance (image retention, GC)
+# 3 * * * *   — hourly notification dispatch (cue-time reminders, weekly letters)
+crons = ["17 3 * * *", "3 * * * *"]
 
 [vars]
 FIT_ORIGIN = "https://fit.chwjh.com"

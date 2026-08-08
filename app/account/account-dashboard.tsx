@@ -349,6 +349,8 @@ export default function AccountDashboard() {
         </div>
       </section>
 
+      <HabitCommitmentCard />
+
       <section className="account-panel account-data-panel" id="account">
         <div className="account-section-title"><div><span>08 / ACCOUNT & DATA</span><h2>账号与数据</h2></div><p>Cmine Fit 数据与你的 Cmine ID 身份分开管理。</p></div>
         <div className="account-data-actions">
@@ -361,4 +363,57 @@ export default function AccountDashboard() {
     </section>
     {notice && <div className="toast account-toast">{notice}</div>}
   </main>;
+}
+
+type HabitData = {
+  streak: { currentWeeks: number; longestWeeks: number; activeThisWeek: boolean; sessionsThisWeek: number };
+  totalSessions: number;
+  commitment: { cueTime: string; cuePlace: string | null } | null;
+  milestones: Array<{ kind: string; title: { zh: string }; message: { zh: string }; achievedAt: string }>;
+};
+
+// Implementation intention: committing to a concrete time and place roughly
+// doubles follow-through versus a vague "I'll train more" — and the committed
+// cue time is exactly when the training reminder fires.
+function HabitCommitmentCard() {
+  const [habit, setHabit] = useState<HabitData | null>(null);
+  const [cueTime, setCueTime] = useState("18:00");
+  const [cuePlace, setCuePlace] = useState("");
+  const [message, setMessage] = useState("");
+  useEffect(() => {
+    void fetch("/api/v1/habits", { cache: "no-store" }).then((response) => response.ok ? response.json() : null).then((data: HabitData | null) => {
+      if (!data) return;
+      setHabit(data);
+      if (data.commitment) { setCueTime(data.commitment.cueTime); setCuePlace(data.commitment.cuePlace || ""); }
+    }).catch(() => undefined);
+  }, []);
+  const save = async () => {
+    const response = await fetch("/api/v1/habits/commitment", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ cueTime, cuePlace }) });
+    const body = await response.json().catch(() => ({})) as { message?: string };
+    setMessage(response.ok ? "已保存。训练日提醒会在这个时间发送（尊重你的安静时段）。" : body.message || "保存失败，请检查时间格式。");
+  };
+  return <section className="account-panel" id="habit">
+    <div className="account-section-title"><div><span>07.5 / HABIT</span><h2>训练习惯</h2></div><p>把训练固定到具体的时间和地点，坚持会容易得多。</p></div>
+    <div className="account-data-actions">
+      <article>
+        <div>
+          <h3>我的训练承诺</h3>
+          <p>
+            <label>时间 <input type="time" value={cueTime} onChange={(event) => setCueTime(event.target.value)} /></label>
+            {" "}
+            <label>地点 <input type="text" maxLength={60} placeholder="如：小区健身房" value={cuePlace} onChange={(event) => setCuePlace(event.target.value)} /></label>
+          </p>
+          {message && <p>{message}</p>}
+        </div>
+        <button onClick={() => void save()}>保存承诺</button>
+      </article>
+      {habit && <article>
+        <div>
+          <h3>{habit.streak.currentWeeks > 0 ? `连续训练第 ${habit.streak.currentWeeks} 周` : "本周开始你的第一周"}</h3>
+          <p>最长纪录 {habit.streak.longestWeeks} 周 · 累计 {habit.totalSessions} 次训练{habit.streak.activeThisWeek ? " · 本周已达标" : ""}。完成 20 分钟缩短版同样算数。</p>
+          {habit.milestones.length > 0 && <p>{habit.milestones.at(-1)!.title.zh} — {habit.milestones.at(-1)!.message.zh}</p>}
+        </div>
+      </article>}
+    </div>
+  </section>;
 }

@@ -661,6 +661,28 @@ export const notificationPreferences = sqliteTable("notification_preferences", {
   updatedAt: text("updated_at").notNull(),
 });
 
+export const habitCommitments = sqliteTable("habit_commitments", {
+  userId: text("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+  cueTime: text("cue_time").notNull().default("18:00"),
+  cuePlace: text("cue_place"),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const milestones = sqliteTable("milestones", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull(),
+  achievedAt: text("achieved_at").notNull(),
+}, (table) => [index("milestones_user_idx").on(table.userId), uniqueIndex("milestones_user_kind_unique").on(table.userId, table.kind)]);
+
+export const notificationLog = sqliteTable("notification_log", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull(),
+  dedupeKey: text("dedupe_key").notNull().unique(),
+  sentAt: text("sent_at").notNull(),
+}, (table) => [index("notification_log_user_idx").on(table.userId, table.sentAt)]);
+
 export const maintenanceRuns = sqliteTable("maintenance_runs", {
   id: text("id").primaryKey(),
   job: text("job").notNull(),

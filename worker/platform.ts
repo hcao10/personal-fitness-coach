@@ -79,6 +79,7 @@ export interface WorkerEnv {
   REVENUECAT_API_BASE?: string;
   REVENUECAT_ALLOW_SANDBOX?: string;
   EXPO_ACCESS_TOKEN?: string;
+  EXPO_PUSH_URL?: string;
   CMINE_MOBILE_CLIENT_IDS?: string;
   MAINTENANCE_SECRET?: string;
   APPLE_APP_TEAM_ID?: string;

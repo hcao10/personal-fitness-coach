@@ -81,6 +81,26 @@ test("consent records require a configured database instead of silently succeedi
   assert.equal((await response.json()).error, "DATABASE_NOT_CONFIGURED");
 });
 
+test("habit endpoints require a signed-in user", async () => {
+  const summary = await worker.fetch(new Request("https://local.test/api/v1/habits"), {}, {});
+  assert.equal(summary.status, 401);
+  const commitment = await worker.fetch(new Request("https://local.test/api/v1/habits/commitment", {
+    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ cueTime: "18:00" }),
+  }), {}, {});
+  assert.equal(commitment.status, 401);
+});
+
+test("notification dispatch requires a valid maintenance signature", async () => {
+  const unconfigured = await worker.fetch(new Request("https://local.test/api/internal/notifications/run", { method: "POST" }), {}, {});
+  assert.equal(unconfigured.status, 500);
+  assert.equal((await unconfigured.json()).error, "MAINTENANCE_NOT_CONFIGURED");
+  const forged = await worker.fetch(new Request("https://local.test/api/internal/notifications/run", {
+    method: "POST",
+    headers: { "x-cmine-timestamp": String(Date.now()), "x-cmine-nonce": "not-a-valid-nonce", "x-cmine-signature": "deadbeef" },
+  }), { MAINTENANCE_SECRET: "maintsecret" }, {});
+  assert.equal(forged.status, 401);
+});
+
 // --- RevenueCat webhook: authorization is enforced before any processing ---
 
 function revenueCatRequest(authorization, event = { id: "evt-1", type: "TEST", app_user_id: "user-1" }) {

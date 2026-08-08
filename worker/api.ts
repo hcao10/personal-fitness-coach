@@ -74,6 +74,8 @@ import { decideReview, generateReview, listReviews, reviewDetail, saveReviewChec
 import { deleteDevice, deleteHealthConnection, importHealthObservations, registerDevice, syncBatch, syncChanges, upsertHealthConnection } from "./modules/mobile";
 import { processRevenueCatEvent, revenueCatConfigured, verifyRevenueCatWebhook } from "./modules/revenuecat";
 import { runMaintenance, verifyMaintenanceRequest } from "./modules/maintenance";
+import { runNotifications } from "./modules/notifications";
+import { habitSummary, upsertHabitCommitment } from "./modules/habits";
 
 const json = (body: unknown, status = 200, headers?: HeadersInit) => Response.json(body, {
   status,
@@ -631,6 +633,10 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
       return errorJson(code, "RevenueCat 事件未通过验证或处理失败。", code.includes("SIGNATURE") ? 401 : code.includes("NOT_CONFIGURED") ? 503 : 400);
     }
   }
+  if (request.method === "POST" && url.pathname === "/api/internal/notifications/run") {
+    try { await verifyMaintenanceRequest(request, env); return json({ ok: true, ...(await runNotifications(env)) }); }
+    catch (error) { const code = error instanceof Error ? error.message : "NOTIFICATIONS_FAILED"; return errorJson(code, "通知任务未通过验证或执行失败。", code.includes("SIGNATURE") || code.includes("REPLAY") ? 401 : 500); }
+  }
   if (request.method === "POST" && url.pathname === "/api/internal/maintenance/run") {
     try { await verifyMaintenanceRequest(request, env); return json({ ok: true, ...(await runMaintenance(env)) }); }
     catch (error) { const code = error instanceof Error ? error.message : "MAINTENANCE_FAILED"; return errorJson(code, "维护任务未通过验证或执行失败。", code.includes("SIGNATURE") || code.includes("REPLAY") ? 401 : 500); }
@@ -700,7 +706,21 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
     const user = await requireUser(request, env); return user instanceof Response ? user : json({ conversations: await listConversations(env, user.id) });
   }
   if (url.pathname === "/api/v1/coach/home" && request.method === "GET") {
-    const user = await requireUser(request, env); return user instanceof Response ? user : json(await coachHome(env, user));
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    const [home, habit] = await Promise.all([
+      coachHome(env, user),
+      habitSummary(env, user.id, user.timezone).catch(() => null),
+    ]);
+    return json({ ...home, habit });
+  }
+  if (url.pathname === "/api/v1/habits" && request.method === "GET") {
+    const user = await requireUser(request, env); return user instanceof Response ? user : json(await habitSummary(env, user.id, user.timezone));
+  }
+  if (url.pathname === "/api/v1/habits/commitment" && request.method === "PUT") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+    try { return json({ ok: true, commitment: await upsertHabitCommitment(env, user.id, body || {}) }); }
+    catch { return errorJson("INVALID_HABIT_COMMITMENT", "训练时间承诺无效：需要 HH:MM 时间，地点不超过 60 字。", 400); }
   }
   if ((url.pathname === "/api/v1/coach/check-ins" || url.pathname === "/api/v1/coach/session-adapt/preview") && request.method === "POST") {
     const user = await requireUser(request, env); if (user instanceof Response) return user;
