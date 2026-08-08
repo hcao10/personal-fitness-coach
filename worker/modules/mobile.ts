@@ -21,6 +21,10 @@ export async function deleteDevice(env: WorkerEnv, userId: string, id: string) {
 
 async function applyMutation(env: WorkerEnv, userId: string, mutation: SyncMutation) {
   if (!env.DB) throw new Error("DATABASE_NOT_CONFIGURED");
+  // Only combinations with a real handler below may be acknowledged; anything
+  // else must be rejected so clients never see phantom "applied" results.
+  const supported = mutation.operation === "upsert" && ["workout_session", "measurement", "workout_set"].includes(mutation.entityType);
+  if (!supported) throw new Error("UNSUPPORTED_SYNC_ENTITY");
   if (mutation.operation === "upsert" && mutation.entityType === "workout_session") {
     const body = mutation.payload;
     const session = { dayIndex: Number(body.dayIndex), status: body.status === "completed" ? "completed" as const : "in_progress" as const,
@@ -63,7 +67,11 @@ export async function syncBatch(env: WorkerEnv, userId: string, value: unknown) 
     const duplicate = await env.DB.prepare("SELECT mutation_id FROM sync_mutations WHERE mutation_id=? AND user_id=?").bind(candidate.mutationId, userId).first();
     if (duplicate) { results.push({ mutationId: candidate.mutationId, status: "duplicate" }); continue; }
     try { await applyMutation(env, userId, candidate); results.push({ mutationId: candidate.mutationId, status: "applied" }); }
-    catch (error) { results.push({ mutationId: candidate.mutationId, status: "failed", error: error instanceof Error ? error.message : "UNKNOWN" }); }
+    catch (error) {
+      const message = error instanceof Error ? error.message : "UNKNOWN";
+      // "rejected" is terminal — the client must drop the mutation instead of retrying forever.
+      results.push({ mutationId: candidate.mutationId, status: message === "UNSUPPORTED_SYNC_ENTITY" ? "rejected" : "failed", error: message });
+    }
   }
   const cursor = await env.DB.prepare("SELECT COALESCE(MAX(cursor),0) AS value FROM sync_events WHERE user_id=?").bind(userId).first<{ value: number }>();
   return { results, cursor: Number(cursor?.value || 0) };

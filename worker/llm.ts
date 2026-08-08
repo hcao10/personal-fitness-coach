@@ -192,23 +192,24 @@ async function routesFor(env: WorkerEnv, task: "training_plan" | "meal_vision" |
     const configured = (rows.results || []).filter((route) => providerConfigured(env, route.provider));
     if (configured.length) return configured;
   }
+  // OpenAI has no default model: OPENAI_MODEL must name a real model from the
+  // provider's current catalog, otherwise the OpenAI route is simply unavailable.
   const fallback: Record<string, AiRoute[]> = {
     training_plan: [
       { provider: "cloudflare", model: tier === "pro" ? "@cf/meta/llama-3.3-70b-instruct-fp8-fast" : "@cf/meta/llama-3.1-8b-instruct-fast", priority: 1 },
-      { provider: "openai", model: env.OPENAI_MODEL || "gpt-5.6", priority: 2 },
+      { provider: "openai", model: env.OPENAI_MODEL || "", priority: 2 },
       { provider: "compatible", model: env.AI_COMPAT_TEXT_MODEL || "qwen3:8b", priority: 3 },
     ],
     meal_vision: [
       { provider: "cloudflare", model: "@cf/meta/llama-3.2-11b-vision-instruct", priority: 1 },
-      { provider: "cloudflare", model: "@cf/moonshotai/kimi-k2.6", priority: 2 },
-      { provider: "compatible", model: env.AI_COMPAT_VISION_MODEL || "Qwen3-VL-8B-Instruct", priority: 3 },
+      { provider: "compatible", model: env.AI_COMPAT_VISION_MODEL || "Qwen3-VL-8B-Instruct", priority: 2 },
     ],
     coach_chat: [
       { provider: "cloudflare", model: tier === "pro" ? "@cf/meta/llama-3.3-70b-instruct-fp8-fast" : "@cf/meta/llama-3.1-8b-instruct-fast", priority: 1 },
-      { provider: "openai", model: env.OPENAI_MODEL || "gpt-5.6", priority: 2 },
+      { provider: "openai", model: env.OPENAI_MODEL || "", priority: 2 },
     ],
   };
-  return fallback[task].filter((route) => providerConfigured(env, route.provider));
+  return fallback[task].filter((route) => route.model && providerConfigured(env, route.provider));
 }
 
 async function settingNumber(env: WorkerEnv, key: string, fallback: number): Promise<number> {
@@ -430,10 +431,10 @@ function estimatedCost(model: string, inputTokens: number | null, outputTokens: 
     ["llama-3.1-8b", 0.045, 0.335],
     ["llama-3.3-70b", 0.293, 2.253],
     ["llama-3.2-11b", 0.049, 0.676],
-    ["kimi-k2.6", 0.95, 4],
   ];
-  const price = prices.find(([name]) => model.includes(name));
-  if (!price) return 0;
+  // Unknown models are billed at a conservative high estimate so they consume
+  // budget instead of silently bypassing assertAiBudget with a $0 cost.
+  const price = prices.find(([name]) => model.includes(name)) || ["unknown", 3, 12];
   return Number((((inputTokens || 0) * price[1] + (outputTokens || 0) * price[2]) / 1_000_000).toFixed(6));
 }
 

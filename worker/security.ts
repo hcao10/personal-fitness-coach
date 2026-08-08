@@ -76,9 +76,11 @@ export async function verifyPayload<T>(signed: string | undefined, secret: strin
 }
 
 export function safeEqual(left: string, right: string): boolean {
-  if (left.length !== right.length) return false;
-  let difference = 0;
-  for (let index = 0; index < left.length; index += 1) difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
+  // Constant time over the longer input; no early return on length mismatch so
+  // the comparison does not leak the secret's length through timing.
+  const length = Math.max(left.length, right.length);
+  let difference = left.length ^ right.length;
+  for (let index = 0; index < length; index += 1) difference |= (left.charCodeAt(index) || 0) ^ (right.charCodeAt(index) || 0);
   return difference === 0;
 }
 

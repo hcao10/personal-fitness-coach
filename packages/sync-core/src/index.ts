@@ -1,6 +1,13 @@
 import type { SyncMutation } from "../../api-contracts/src";
 
-export const OFFLINE_MUTATION_TYPES = new Set<SyncMutation["entityType"]>(["workout_session", "measurement", "meal_draft", "coach_draft"]);
+// Must stay in lockstep with applyMutation in worker/modules/mobile.ts — every
+// type listed here has a real server-side handler; anything else is rejected
+// instead of being silently recorded as "applied".
+export const OFFLINE_MUTATION_TYPES = new Set<SyncMutation["entityType"]>(["workout_session", "measurement", "workout_set"]);
+
+export function newMutationId(): string {
+  return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+}
 
 export function validateSyncMutation(value: unknown): value is SyncMutation {
   if (!value || typeof value !== "object") return false;

@@ -21,7 +21,7 @@ Cmine Fit 不让大模型直接“自由发挥”训练和热量建议。推荐�
 - 匿名使用；个人资料默认只保留在当前设备
 - 可审计的 BMR/TDEE/宏量营养计算
 - 2–6 天一周训练计划
-- 1,324 个动作与 9 种语言动作说明
+- 1,324 个动作可浏览（产品内提供中英说明）；AI 计划使用其中经安全审核的动作子集
 - 本地规则引擎默认可用
 - 可选 OpenAI-compatible 接口，支持本地小模型或自选模型服务
 - 不包含官方账号、支付、广告、权益、运营后台
@@ -155,7 +155,7 @@ plans/preview 可匿名调用并限速；保存、积分、订阅与历史数据
 - `packages/coach-core` 是无状态、无网络、无数据库依赖的安全规则包，单独采用 Apache-2.0。
 - Worker API 负责 Cmine ID 会话、数据所有权、输入边界、生成记录与管理权限。
 - D1 持久化用户、资料、计划、测量、训练反馈、积分流水、设置和审计事件。
-- OpenAI Responses API 使用 `gpt-5.6`、`reasoning.effort=medium` 和严格 JSON Schema。
+- OpenAI Responses API 使用显式配置的 `OPENAI_MODEL`（无默认值）、`reasoning.effort=medium` 和严格 JSON Schema。
 - BMR、TDEE、热量下限、宏量营养、训练频率、器械限制由 `coach-core` 决定；模型只能编排与解释。
 - `planRationale` 是面向用户的双语安排理由，不是也不保存模型的隐藏思维链。
 - 用户中心支持资料恢复、计划历史、测量趋势、训练完成/反馈、导出和删除。
@@ -196,7 +196,7 @@ Apple 和 Google IAP 状态。两类回调都必须验签、幂等，并映射�
 
 原生 App 第二阶段采用 Expo/React Native，共用 API 类型、`coach-core` 和
 多语言资源。Cmine ID 必须通过系统浏览器、Universal Link 与 Secure Storage
-完成；训练计划支持离线查看、恢复后同步和推送提醒，随后再接 HealthKit、
+完成；训练计划支持离线查看、恢复后同步和本地提醒（服务端推送开发中），随后再接 HealthKit、
 Health Connect 与可穿戴设备。
 
 生产主域名为 `fit.chwjh.com`，`PUBLIC_ORIGIN` 与 Cmine 回调必须固定为：

@@ -437,13 +437,17 @@ export async function planForUser(env: WorkerEnv, userId: string, planId: string
   return row ? publicPlan(row) : null;
 }
 
-export async function recordConsent(request: Request, env: WorkerEnv, userId: string | null, locale: string): Promise<void> {
+export async function recordConsent(request: Request, env: WorkerEnv, userId: string | null, locale: string,
+  extras?: { timezone?: string | null; productVersion?: string | null }): Promise<void> {
   const db = requireDb(env);
   const ip = request.headers.get("cf-connecting-ip");
   const ipHash = ip && env.SESSION_SECRET ? await sha256(`${env.SESSION_SECRET}:${ip}`) : null;
   const version = await settingValue<string>(env, "disclaimer_version", "health-v2");
-  await db.prepare("INSERT INTO consents (id, user_id, disclaimer_version, locale, ip_hash, consented_at) VALUES (?, ?, ?, ?, ?, ?)")
-    .bind(crypto.randomUUID(), userId, version, locale, ipHash, new Date().toISOString()).run();
+  const privacyVersion = await settingValue<string>(env, "privacy_version", "privacy-v1");
+  await db.prepare(`INSERT INTO consents (id, user_id, disclaimer_version, locale, ip_hash, consented_at, timezone, product_version, privacy_version)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(crypto.randomUUID(), userId, version, locale, ipHash, new Date().toISOString(),
+      extras?.timezone?.slice(0, 60) || null, extras?.productVersion?.slice(0, 40) || null, privacyVersion).run();
 }
 
 export async function pointsForUser(env: WorkerEnv, userId: string): Promise<number> {

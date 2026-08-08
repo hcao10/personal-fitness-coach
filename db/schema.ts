@@ -57,6 +57,9 @@ export const consents = sqliteTable("consents", {
   locale: text("locale").notNull(),
   ipHash: text("ip_hash"),
   consentedAt: text("consented_at").notNull(),
+  timezone: text("timezone"),
+  productVersion: text("product_version"),
+  privacyVersion: text("privacy_version"),
 }, (table) => [index("consents_user_idx").on(table.userId)]);
 
 export const pointLedger = sqliteTable("point_ledger", {

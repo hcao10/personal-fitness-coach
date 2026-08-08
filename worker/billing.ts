@@ -8,12 +8,17 @@ export function stripeConfigured(env: WorkerEnv): boolean {
   return Boolean(env.STRIPE_SECRET_KEY && env.STRIPE_WEBHOOK_SECRET && env.STRIPE_PRICE_MONTHLY && env.STRIPE_PRICE_YEARLY);
 }
 
+// Pinned so webhook payload shapes and API responses do not change under us
+// when the Stripe account's default API version is upgraded.
+const STRIPE_API_VERSION = "2024-06-20";
+
 async function stripeRequest(env: WorkerEnv, path: string, params?: URLSearchParams): Promise<Record<string, any>> {
   if (!env.STRIPE_SECRET_KEY) throw new Error("STRIPE_NOT_CONFIGURED");
   const response = await fetch(`https://api.stripe.com/v1${path}`, {
     method: params ? "POST" : "GET",
     headers: {
       authorization: `Bearer ${env.STRIPE_SECRET_KEY}`,
+      "stripe-version": STRIPE_API_VERSION,
       ...(params ? { "content-type": "application/x-www-form-urlencoded" } : {}),
     },
     body: params,
@@ -118,6 +123,12 @@ function isoFromUnix(value: unknown): string | null {
   return typeof value === "number" && value > 0 ? new Date(value * 1000).toISOString() : null;
 }
 
+// Stripe API versions from 2025 moved current_period_end off the subscription
+// object onto its items; read both so either payload shape resolves correctly.
+function subscriptionPeriodEnd(object: Record<string, any>): string | null {
+  return isoFromUnix(object.current_period_end) || isoFromUnix(object.items?.data?.[0]?.current_period_end);
+}
+
 export async function processStripeEvent(env: WorkerEnv, event: Record<string, any>) {
   if (!env.DB) throw new Error("DATABASE_NOT_CONFIGURED");
   const eventId = String(event.id || "");
@@ -159,11 +170,11 @@ export async function processStripeEvent(env: WorkerEnv, event: Record<string, a
           cancel_at_period_end=CASE WHEN excluded.last_event_created >= subscriptions.last_event_created THEN excluded.cancel_at_period_end ELSE subscriptions.cancel_at_period_end END,
           last_event_created=MAX(subscriptions.last_event_created, excluded.last_event_created),
           updated_at=CASE WHEN excluded.last_event_created >= subscriptions.last_event_created THEN excluded.updated_at ELSE subscriptions.updated_at END`)
-        .bind(String(object.id), userId, String(object.id), status, priceId || null, isoFromUnix(object.current_period_end),
+        .bind(String(object.id), userId, String(object.id), status, priceId || null, subscriptionPeriodEnd(object),
           object.cancel_at_period_end ? 1 : 0, eventCreated, now, now).run();
       await env.DB.prepare("DELETE FROM entitlements WHERE user_id = ? AND source = 'stripe'").bind(userId).run();
       if (status === "active" || status === "trialing") {
-        const expiresAt = isoFromUnix(object.current_period_end);
+        const expiresAt = subscriptionPeriodEnd(object);
         await env.DB.batch(proCapabilities.map((capability) => env.DB!.prepare(`INSERT INTO entitlements
           (id, user_id, capability, source, status, expires_at, updated_at) VALUES (?, ?, ?, 'stripe', 'active', ?, ?)`)
           .bind(crypto.randomUUID(), userId, capability, expiresAt, now)));

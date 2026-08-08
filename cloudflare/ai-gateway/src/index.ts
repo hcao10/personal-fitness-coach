@@ -32,7 +32,6 @@ const ALLOWED_MODELS = new Set([
   "@cf/meta/llama-3.1-8b-instruct-fast",
   "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
   "@cf/meta/llama-3.2-11b-vision-instruct",
-  "@cf/moonshotai/kimi-k2.6",
 ]);
 
 function secureEqual(left: string, right: string): boolean {

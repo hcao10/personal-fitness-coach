@@ -1,12 +1,10 @@
-export type Locale = "zh" | "en" | "es" | "it" | "tr" | "ru" | "hi" | "pl" | "ko";
+// A locale may only be listed here once `copy` below has a full translation for
+// it — the `Record<Locale, …>` type on `copy` enforces this at compile time.
+export type Locale = "zh" | "en";
 export type DisplayLanguage = "zh" | "en";
 
 export const languageOptions: { value: Locale; label: string }[] = [
   { value: "zh", label: "简体中文" }, { value: "en", label: "English" },
-  { value: "es", label: "Español" }, { value: "it", label: "Italiano" },
-  { value: "tr", label: "Türkçe" }, { value: "ru", label: "Русский" },
-  { value: "hi", label: "हिन्दी" }, { value: "pl", label: "Polski" },
-  { value: "ko", label: "한국어" },
 ];
 
 export const copy = {
@@ -67,4 +65,4 @@ export const copy = {
     disclaimerEstimate: "I understand that calorie, timeline and training outputs are estimates, and I should stop for sharp pain, chest pressure, dizziness or breathing difficulty.",
     accept: "Agree & begin", footerNote: "Safety rules constrain the advice, but AI can still be wrong. Prioritize your body’s feedback and professional guidance.",
   },
-} as const;
+} as const satisfies Record<Locale, Record<string, string>>;

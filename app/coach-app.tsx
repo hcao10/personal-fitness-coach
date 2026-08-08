@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { defaultProfile, generatePlan, type Activity, type CoachPlan, type Equipment, type Experience, type Goal, type Profile, type TrainingTrack } from "./lib/coach";
 import { AUTH_PROVIDERS, beginCmineLogin, getCmineSession, type CmineUser } from "./lib/auth";
 import { copy, languageOptions, type DisplayLanguage, type Locale } from "./lib/i18n";
+import { CONSENT_STORAGE_KEY, FALLBACK_DISCLAIMER_VERSION, FALLBACK_PRIVACY_VERSION, PRODUCT_VERSION, consentStamp } from "./lib/consent-versions";
 
 const goalOptions: { value: Goal; zh: string; en: string }[] = [
   { value: "arms", zh: "手臂线条", en: "Defined arms" },
@@ -31,6 +32,7 @@ export default function CoachApp() {
   const [plan, setPlan] = useState<CoachPlan>(() => generatePlan(defaultProfile));
   const [generating, setGenerating] = useState(false);
   const [planReady, setPlanReady] = useState(false);
+  const [planSource, setPlanSource] = useState<"llm" | "rules" | null>(null);
   const [anonymousPreview, setAnonymousPreview] = useState(false);
   const [planId, setPlanId] = useState<string | null>(null);
   const [planStatus, setPlanStatus] = useState<"active" | "draft">("active");
@@ -38,6 +40,7 @@ export default function CoachApp() {
   const [announcement, setAnnouncement] = useState("");
   const [activeDay, setActiveDay] = useState(0);
   const [accepted, setAccepted] = useState<boolean | null>(null);
+  const [consentVersions, setConsentVersions] = useState({ disclaimer: FALLBACK_DISCLAIMER_VERSION, privacy: FALLBACK_PRIVACY_VERSION });
   const [healthCheck, setHealthCheck] = useState(false);
   const [estimateCheck, setEstimateCheck] = useState(false);
   const [completed, setCompleted] = useState<Set<string>>(new Set());
@@ -55,7 +58,8 @@ export default function CoachApp() {
 
   useEffect(() => {
     queueMicrotask(() => {
-      setAccepted(localStorage.getItem("cmine_fit_disclaimer_health_v2") === "accepted");
+      // `accepted` stays null until /api/v1/site reports the current document
+      // versions; a server-side version bump therefore forces re-confirmation.
       void getCmineSession().then(async (session) => {
         setUser(session.user);
         setPoints(session.points);
@@ -64,13 +68,14 @@ export default function CoachApp() {
         if (!response?.ok) return;
         const account = await response.json() as {
           profile?: Profile | null;
-          latestPlan?: { id: string; profile: Profile | null; plan: CoachPlan | null } | null;
+          latestPlan?: { id: string; profile: Profile | null; plan: CoachPlan | null; source?: string | null } | null;
         };
         if (account.profile) setProfile(account.profile);
         if (account.latestPlan?.plan) {
           setPlan(account.latestPlan.plan);
           setPlanId(account.latestPlan.id);
           setPlanStatus("active");
+          setPlanSource(account.latestPlan.source === "llm" ? "llm" : "rules");
           setPlanReady(true);
           const homeResponse = await fetch("/api/v1/coach/home", { cache: "no-store" }).catch(() => null);
           const coachHome = homeResponse?.ok ? await homeResponse.json() as { today?: { dayIndex?: number; scheduledDate?: string } | null } : null;
@@ -81,7 +86,15 @@ export default function CoachApp() {
         }
       });
       void fetch("/api/health", { cache: "no-store" }).then((response) => response.json()).then((status: { llm?: boolean; rewardAds?: boolean }) => setServices({ ai: Boolean(status.llm), rewardAds: Boolean(status.rewardAds) })).catch(() => undefined);
-      void fetch("/api/v1/site", { cache: "no-store" }).then((response) => response.json()).then((site: { announcement?: string }) => setAnnouncement(site.announcement || "")).catch(() => undefined);
+      void fetch("/api/v1/site", { cache: "no-store" }).then((response) => response.json()).then((site: { announcement?: string; disclaimerVersion?: string; privacyVersion?: string }) => {
+        setAnnouncement(site.announcement || "");
+        const disclaimer = site.disclaimerVersion || FALLBACK_DISCLAIMER_VERSION;
+        const privacy = site.privacyVersion || FALLBACK_PRIVACY_VERSION;
+        setConsentVersions({ disclaimer, privacy });
+        setAccepted(localStorage.getItem(CONSENT_STORAGE_KEY) === consentStamp(disclaimer, privacy));
+      }).catch(() => {
+        setAccepted(localStorage.getItem(CONSENT_STORAGE_KEY) === consentStamp(FALLBACK_DISCLAIMER_VERSION, FALLBACK_PRIVACY_VERSION));
+      });
       const authError = new URLSearchParams(window.location.search).get("auth_error");
       if (authError) setToast(authError);
     });
@@ -97,6 +110,7 @@ export default function CoachApp() {
     setProfile(next);
     setPlan(generatePlan(next));
     setPlanReady(false);
+    setPlanSource(null);
     setPlanId(null);
     setCompleted(new Set());
   };
@@ -104,7 +118,7 @@ export default function CoachApp() {
     const next: Profile = track === "intermediate_hypertrophy"
       ? { ...profile, trainingTrack: track, goal: "muscle", experience: "intermediate", days: Math.max(3, profile.days), sessionMinutes: Math.max(45, Number(profile.sessionMinutes || 45)), equipment: profile.equipment === "bodyweight" ? "dumbbell" : profile.equipment }
       : { ...profile, trainingTrack: "beginner_fat_loss", goal: "fat_loss", experience: "beginner", days: Math.min(4, profile.days), sessionMinutes: [20, 30, 45].includes(Number(profile.sessionMinutes)) ? profile.sessionMinutes : 30 };
-    setProfile(next); setPlan(generatePlan(next)); setPlanReady(false); setPlanId(null); setCompleted(new Set());
+    setProfile(next); setPlan(generatePlan(next)); setPlanReady(false); setPlanSource(null); setPlanId(null); setCompleted(new Set());
   };
   const buildPlan = async () => {
     if (!user) {
@@ -118,22 +132,30 @@ export default function CoachApp() {
     let revealPlan = false;
     try {
       const response = await fetch("/api/plans", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ profile, consent: accepted === true, startDate, timezone }) });
-      const result = await response.json() as { plan?: CoachPlan; planId?: string | null; planStatus?: "active" | "draft"; source?: "llm"; message?: string };
+      const result = await response.json() as { plan?: CoachPlan; planId?: string | null; planStatus?: "active" | "draft"; source?: "llm" | "rules"; message?: string };
       if (response.ok && result.plan) {
+        const source = result.source === "llm" ? "llm" : "rules";
         setPlan(result.plan);
         setPlanId(result.planId || null);
         setPlanStatus(result.planStatus || "active");
         setCompleted(new Set());
+        setPlanSource(source);
         setPlanReady(true);
         revealPlan = true;
         setActiveDay(0);
-        setToast(result.planStatus === "draft" ? (lang === "zh" ? "新计划已生成草案；确认后才会替换当前计划" : "Your new plan is a draft until you confirm it") : (lang === "zh" ? "AI 已完成个性化计划，并通过规则校验" : "Your AI plan passed the safety checks"));
+        setToast(result.planStatus === "draft"
+          ? (lang === "zh" ? "新计划已生成草案；确认后才会替换当前计划" : "Your new plan is a draft until you confirm it")
+          : source === "llm"
+            ? (lang === "zh" ? "AI 已完成个性化计划，并通过规则校验" : "Your AI plan passed the safety checks")
+            : (lang === "zh" ? "已按确定性规则生成计划" : "Your plan was generated by deterministic rules"));
       } else {
         setPlanReady(false);
+        setPlanSource(null);
         setToast(result.message || (lang === "zh" ? "AI 教练暂时离线，计划没有生成，请稍后重试" : "The AI coach is temporarily offline; please try again"));
       }
     } catch {
       setPlanReady(false);
+      setPlanSource(null);
       setToast(lang === "zh" ? "无法连接 AI 教练，计划没有生成，请稍后重试" : "Could not reach the AI coach; please try again");
     } finally {
       setGenerating(false);
@@ -194,17 +216,16 @@ export default function CoachApp() {
           <h1><s>{t.titleA}</s><br /><em>{lang === "zh" ? <>为您定制的专属<br />计划如下：</> : t.titleB}</em></h1>
           <p className="hero-subtitle">{t.subtitle}</p>
           <div className="trust-row">
-            <div className="face-stack" aria-hidden="true"><span>J</span><span>M</span><span>A</span></div>
             <div><b>1:1</b><span>{lang === "zh" ? "贴合你" : "PERSONAL"}</span><small>{t.socialProof}</small></div>
           </div>
         </div>
         <div className="signal-card" aria-label={t.estimate}>
-          <div className="signal-top"><span>{t.estimate}</span><i>{planReady ? "LLM COACHED" : services.ai ? "READY FOR AI" : "PROFILE ESTIMATE"}</i></div>
+          <div className="signal-top"><span>{t.estimate}</span><i>{planReady ? (planSource === "llm" ? "LLM COACHED" : "RULES BASED") : services.ai ? "READY FOR AI" : "PROFILE ESTIMATE"}</i></div>
           <div className="calorie-orbit"><div><b>{plan.calories.toLocaleString()}</b><span>{t.kcal} / day</span></div></div>
           <div className="signal-stats">
             <div><b>{plan.protein}g</b><span>{t.protein}</span></div><div><b>{profile.days}×</b><span>{t.weekPlan}</span></div><div><b>{plan.weeks}</b><span>{t.daysUnit}</span></div>
           </div>
-          <p><span>{planReady ? "AI" : "B"}</span>{planReady ? (lang === "zh" ? "AI 已完成动作编排、饮食建议与注意事项" : "AI completed your sessions, nutrition guidance, and coaching notes") : (lang === "zh" ? "这里先计算基础指标；完整计划只在 AI 生成成功后出现" : "Base metrics first; the full plan appears only after AI generation succeeds")}</p>
+          <p><span>{planReady ? (planSource === "llm" ? "AI" : "R") : "B"}</span>{planReady ? (planSource === "llm" ? (lang === "zh" ? "AI 已完成动作编排、饮食建议与注意事项" : "AI completed your sessions, nutrition guidance, and coaching notes") : (lang === "zh" ? "计划由确定性规则生成，全程可解释" : "This plan comes from deterministic, explainable rules")) : (lang === "zh" ? "这里先计算基础指标；完整计划只在 AI 生成成功后出现" : "Base metrics first; the full plan appears only after AI generation succeeds")}</p>
         </div>
       </section>
 
@@ -308,7 +329,7 @@ export default function CoachApp() {
       </section>
 
       {planReady && <section className="plan-section" id="plan" ref={planRef}>
-        <div className="section-heading light"><p>02 / YOUR PLAN</p><div><h2>{t.planTitle}</h2><span>{t.planSub}</span></div></div><div className="plan-source-pill llm">{lang === "zh" ? "AI 个性化计划 · 已通过安全校验" : "AI PERSONALIZED · SAFETY CHECKED"}</div>
+        <div className="section-heading light"><p>02 / YOUR PLAN</p><div><h2>{t.planTitle}</h2><span>{t.planSub}</span></div></div><div className={`plan-source-pill ${planSource === "llm" ? "llm" : "rules"}`}>{planSource === "llm" ? (lang === "zh" ? "AI 个性化计划 · 已通过安全校验" : "AI PERSONALIZED · SAFETY CHECKED") : (lang === "zh" ? "规则生成 · 确定性计算" : "RULES BASED · DETERMINISTIC")}</div>
         {planStatus === "draft" && <div className="plan-draft-banner"><div><span>DRAFT / 待确认</span><p>{lang === "zh" ? "这是新计划草案。启用前，你当前正在执行的计划不会改变。" : "This is a draft. Your active plan will not change until you confirm."}</p></div><button onClick={() => void activateDraft()}>{lang === "zh" ? "确认并启用新计划" : "Confirm and activate"} →</button></div>}
         {plan.phase && <div className="plan-phase-overview"><div><span>{lang === "zh" ? "当前阶段" : "CURRENT PHASE"}</span><h3>{plan.phase.kind === "habit_foundation" ? (lang === "zh" ? "4 周习惯基础期" : "4-week habit foundation") : plan.phase.kind === "hypertrophy_build" ? (lang === "zh" ? "6 周增肌构建期" : "6-week hypertrophy build") : (lang === "zh" ? "4 周基础构建期" : "4-week foundation")}</h3><p>{plan.phase.weeklyFocus.map((item, index) => `${index + 1}. ${item[lang]}`).join("  ·  ")}</p></div><aside><small>{lang === "zh" ? "计划开始" : "START"}</small><b>{scheduleDateLabel(startDate, 0, lang)}</b><small>{lang === "zh" ? "数据完整度" : "DATA COMPLETENESS"}</small><b>{plan.confidence === "high" ? (lang === "zh" ? "较完整" : "High") : (lang === "zh" ? "仍有不确定项" : "Some gaps")}</b></aside></div>}
         <div className="nutrition-grid">
@@ -363,7 +384,7 @@ export default function CoachApp() {
       <section className="edition-section" id="editions">
         <div className="section-heading"><p>04 / YOUR WAY</p><div><h2>{t.editions}</h2><span>{lang === "zh" ? "自主掌控 → 长期专业陪伴" : "YOUR CONTROL → LONG-TERM GUIDANCE"}</span></div></div>
         <div className="edition-grid">
-          <article className="open-edition"><div className="edition-tag">{t.openCore}</div><h3>{t.openTitle}</h3><p>{t.openText}</p><div className="feature-cloud"><span>{lang === "zh" ? "自由部署" : "Self-host"}</span><span>{lang === "zh" ? "本地模型" : "Local AI"}</span><span>{lang === "zh" ? "透明可控" : "Transparent core"}</span><span>{lang === "zh" ? "9 种语言" : "9 languages"}</span></div><a href="https://github.com/hcao10/personal-fitness-coach" target="_blank" rel="noreferrer">{t.viewSource} <b>↗</b></a></article>
+          <article className="open-edition"><div className="edition-tag">{t.openCore}</div><h3>{t.openTitle}</h3><p>{t.openText}</p><div className="feature-cloud"><span>{lang === "zh" ? "自由部署" : "Self-host"}</span><span>{lang === "zh" ? "本地模型" : "Local AI"}</span><span>{lang === "zh" ? "透明可控" : "Transparent core"}</span><span>{lang === "zh" ? "中英双语" : "ZH / EN"}</span></div><a href="https://github.com/hcao10/personal-fitness-coach" target="_blank" rel="noreferrer">{t.viewSource} <b>↗</b></a></article>
           <article className="pro-edition"><div className="edition-tag">{t.proEdition}</div><h3>{t.proTitle}</h3><p>{t.proText}</p>
             <div className="pro-diagram"><div><span>01</span><b>{lang === "zh" ? "训练档案" : "Training record"}</b><small>CONTINUITY</small></div><i>→</i><div><span>02</span><b>{lang === "zh" ? "智能规划" : "Smart planning"}</b><small>PERSONALIZATION</small></div><i>→</i><div><span>03</span><b>{lang === "zh" ? "持续调整" : "Ongoing refinement"}</b><small>PROGRESS</small></div></div>
             <a className="edition-link" href="/pricing">{t.upgrade} <b>→</b></a>
@@ -378,8 +399,8 @@ export default function CoachApp() {
           <div className="modal-stripe"><span>SAFETY FIRST</span><b>01 / 03</b></div><h2 id="disclaimer-title">{t.disclaimerTitle}</h2><p className="disclaimer-intro">{t.disclaimerIntro}</p>
           <label className={healthCheck ? "checked" : ""}><input type="checkbox" checked={healthCheck} onChange={(e) => setHealthCheck(e.target.checked)} /><span>{healthCheck ? "✓" : ""}</span><p>{t.disclaimerHealth}</p></label>
           <label className={estimateCheck ? "checked" : ""}><input type="checkbox" checked={estimateCheck} onChange={(e) => setEstimateCheck(e.target.checked)} /><span>{estimateCheck ? "✓" : ""}</span><p>{t.disclaimerEstimate}</p></label>
-          <button className="primary-cta" disabled={!healthCheck || !estimateCheck} onClick={() => { localStorage.setItem("cmine_fit_disclaimer_health_v2", "accepted"); setAccepted(true); void fetch("/api/consents", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ locale: lang }) }); }}><span>{t.accept}</span><b>→</b></button>
-          <small>{lang === "zh" ? "继续即表示你已阅读并接受《健康免责声明》与《隐私说明》。" : "Continuing means you accept the health disclaimer and privacy notice."}</small>
+          <button className="primary-cta" disabled={!healthCheck || !estimateCheck} onClick={() => { localStorage.setItem(CONSENT_STORAGE_KEY, consentStamp(consentVersions.disclaimer, consentVersions.privacy)); setAccepted(true); void fetch("/api/consents", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ locale: lang, timezone, productVersion: PRODUCT_VERSION }) }); }}><span>{t.accept}</span><b>→</b></button>
+          <small>{lang === "zh" ? <>继续即表示你已阅读并接受<a href="/disclaimer" target="_blank" rel="noreferrer">《健康免责声明》</a>与<a href="/privacy" target="_blank" rel="noreferrer">《隐私说明》</a>。</> : <>Continuing means you accept the <a href="/disclaimer" target="_blank" rel="noreferrer">health disclaimer</a> and <a href="/privacy" target="_blank" rel="noreferrer">privacy notice</a>.</>}</small>
         </div>
       </div>}
 

@@ -75,6 +75,9 @@ export interface WorkerEnv {
   REWARD_AD_PROVIDER?: string;
   REVENUECAT_WEBHOOK_SECRET?: string;
   REVENUECAT_PROJECT_ID?: string;
+  REVENUECAT_API_KEY?: string;
+  REVENUECAT_API_BASE?: string;
+  REVENUECAT_ALLOW_SANDBOX?: string;
   EXPO_ACCESS_TOKEN?: string;
   CMINE_MOBILE_CLIENT_IDS?: string;
   MAINTENANCE_SECRET?: string;

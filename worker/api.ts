@@ -109,7 +109,7 @@ const equipment = new Set<Equipment>(["bodyweight", "dumbbell", "gym"]);
 const trainingTracks = new Set<TrainingTrack>(["beginner_fat_loss", "intermediate_hypertrophy", "general"]);
 const beginnerBarriers = new Set<BeginnerBarrier>(["time", "confidence", "consistency", "food", "feedback"]);
 const editableSettings = new Set([
-  "announcement", "maintenance_mode", "disclaimer_version",
+  "announcement", "maintenance_mode", "disclaimer_version", "privacy_version",
   "ai_daily_warning_usd", "ai_daily_hard_usd", "ai_monthly_warning_usd", "ai_monthly_hard_usd",
   "free_plan_limit", "free_meal_scan_limit", "free_coach_message_limit", "pro_plan_limit", "pro_meal_scan_limit", "pro_coach_message_limit",
 ]);
@@ -360,9 +360,9 @@ async function planRequest(request: Request, env: WorkerEnv): Promise<Response> 
   }
   const quota = await consumeCapability(env, user.id, "plan.generate");
   if (!quota.ok) return errorJson("PLAN_LIMIT_REACHED", "本周期的 AI 计划额度已用完，可使用积分兑换或升级专业版。", 429);
-  const model = tier === "pro"
-    ? "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
-    : "@cf/meta/llama-3.1-8b-instruct-fast";
+  // Failure-path logging only: no model has completed a generation yet, and the
+  // actual route is decided inside generateLlmPlan. Success paths log result.model.
+  const model = "unresolved";
   const startedAt = Date.now();
   if (!aiServices(env).planner) {
     await refundCapability(env, user.id, "plan.generate");
@@ -534,10 +534,10 @@ async function handleAdmin(request: Request, env: WorkerEnv, url: URL): Promise<
     const body = await request.json().catch(() => null) as { key?: unknown; value?: unknown } | null;
     if (typeof body?.key !== "string" || !editableSettings.has(body.key)) return errorJson("INVALID_SETTING", "该设置不能从管理后台修改。", 400);
     if (body.key === "maintenance_mode" && typeof body.value !== "boolean") return errorJson("INVALID_SETTING_VALUE", "维护状态必须是布尔值。", 400);
-    if ((body.key === "announcement" || body.key === "disclaimer_version") && (typeof body.value !== "string" || body.value.length > 300)) {
+    if ((body.key === "announcement" || body.key === "disclaimer_version" || body.key === "privacy_version") && (typeof body.value !== "string" || body.value.length > 300)) {
       return errorJson("INVALID_SETTING_VALUE", "设置内容无效。", 400);
     }
-    if (!["announcement", "disclaimer_version", "maintenance_mode"].includes(body.key) &&
+    if (!["announcement", "disclaimer_version", "privacy_version", "maintenance_mode"].includes(body.key) &&
       (typeof body.value !== "number" || !Number.isFinite(body.value) || body.value < 0 || body.value > 10000)) {
       return errorJson("INVALID_SETTING_VALUE", "额度或预算必须是有效的非负数字。", 400);
     }
@@ -565,6 +565,7 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
     return json({
       announcement: await settingValue<string>(env, "announcement", ""),
       disclaimerVersion: await settingValue<string>(env, "disclaimer_version", "health-v2"),
+      privacyVersion: await settingValue<string>(env, "privacy_version", "privacy-v1"),
       capabilities: {
         planner: services(env).planner,
         vision: services(env).vision,
@@ -1008,10 +1009,13 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
     catch { return errorJson("PLAN_NOT_FOUND", "没有找到对应计划。", 404); }
   }
   if (request.method === "POST" && url.pathname === "/api/consents") {
-    const body = await request.json().catch(() => ({})) as { locale?: string };
+    const body = await request.json().catch(() => ({})) as { locale?: string; timezone?: string; productVersion?: string };
     const user = await getSessionUser(request, env);
     if (!env.DB) return errorJson("DATABASE_NOT_CONFIGURED", "数据库尚未连接。", 503);
-    await recordConsent(request, env, user?.id || null, body.locale === "en" ? "en" : "zh");
+    await recordConsent(request, env, user?.id || null, body.locale === "en" ? "en" : "zh", {
+      timezone: typeof body.timezone === "string" ? body.timezone : null,
+      productVersion: typeof body.productVersion === "string" ? body.productVersion : null,
+    });
     return json({ ok: true }, 201);
   }
   if (request.method === "POST" && url.pathname === "/api/points/claim-ad") {
