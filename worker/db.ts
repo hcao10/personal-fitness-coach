@@ -754,6 +754,19 @@ export async function adminOverview(env: WorkerEnv) {
     db.prepare("SELECT COUNT(*) AS value FROM canonical_foods WHERE source_kind='user' AND status='active'").first<{ value: number }>(),
     db.prepare("SELECT source,title,license_name,license_url,attribution_text,commercial_use,redistribution,status,last_verified_at,updated_at FROM food_source_licenses ORDER BY source").all<Record<string, unknown>>(),
   ]);
+  const now = Date.now();
+  const daysAgo = (days: number) => new Date(now - days * 86_400_000).toISOString();
+  const trialDays = Number(await settingValue<number>(env, "trial_days", 7)) || 7;
+  // Retention & conversion: activity = a completed training session, the one
+  // behavior the whole product exists to produce.
+  const [active7, active30, trialUsers, paidSubscriptions, remindersSent7, lettersSent7] = await Promise.all([
+    db.prepare(`SELECT COUNT(DISTINCT user_id) AS value FROM workout_occurrence_sessions WHERE status='completed' AND completed_at>=?`).bind(daysAgo(7)).first<{ value: number }>(),
+    db.prepare(`SELECT COUNT(DISTINCT user_id) AS value FROM workout_occurrence_sessions WHERE status='completed' AND completed_at>=?`).bind(daysAgo(30)).first<{ value: number }>(),
+    db.prepare(`SELECT COUNT(*) AS value FROM users WHERE created_at>=? AND id NOT IN (SELECT user_id FROM subscriptions WHERE status IN ('active','trialing','in_grace_period'))`).bind(daysAgo(trialDays)).first<{ value: number }>(),
+    db.prepare("SELECT COUNT(DISTINCT user_id) AS value FROM subscriptions WHERE status IN ('active','trialing','in_grace_period')").first<{ value: number }>(),
+    db.prepare("SELECT COUNT(*) AS value FROM notification_log WHERE kind='training' AND sent_at>=?").bind(daysAgo(7)).first<{ value: number }>().catch(() => null),
+    db.prepare("SELECT COUNT(*) AS value FROM notification_log WHERE kind='letter' AND sent_at>=?").bind(daysAgo(7)).first<{ value: number }>().catch(() => null),
+  ]);
   const [coachBriefs, coachCheckins, pendingCoachActions, acceptedCoachActions, rejectedCoachActions, failedCoachActions, positiveCoachFeedback, negativeCoachFeedback, coachSafetyBlocks, coachEvaluations] = await Promise.all([
     db.prepare("SELECT COUNT(*) AS value FROM coach_daily_briefs").first<{ value: number }>(),
     db.prepare("SELECT COUNT(*) AS value FROM coach_checkins").first<{ value: number }>(),
@@ -782,6 +795,12 @@ export async function adminOverview(env: WorkerEnv) {
       subscriptions: Number(subscriptions?.value || 0),
       revenueUsd: Number(revenue?.value || 0) / 100,
       failedBilling: Number(failedBilling?.value || 0),
+      trainingActive7d: Number(active7?.value || 0),
+      trainingActive30d: Number(active30?.value || 0),
+      usersInTrial: Number(trialUsers?.value || 0),
+      payingUsers: Number(paidSubscriptions?.value || 0),
+      remindersSent7d: Number(remindersSent7?.value || 0),
+      coachLettersSent7d: Number(lettersSent7?.value || 0),
       meals: Number(meals?.value || 0),
       mealAnalyses: Number(mealAnalyses?.value || 0),
       mealAnalysisSuccessRate: Number(mealAnalyses?.value || 0)

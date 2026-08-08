@@ -4,7 +4,7 @@ import { runEngine, type EngineSet, type ExerciseMeta } from "../../services/ada
 import type { WorkerEnv } from "../platform";
 import type { StoredUser } from "../db";
 import { activatePlan, activeCycleForUser, activePlanForUser, addLocalDays, localDateInTimezone, savePlan } from "../db";
-import { consumeCapability, refundCapability, tierForUser } from "../product";
+import { consumeCapability, refundCapability, tierInfoForUser } from "../product";
 import { generateCoachChat } from "../llm";
 
 function mondayOf(date = new Date()) {
@@ -60,11 +60,16 @@ export async function generateReview(env: WorkerEnv, user: StoredUser, id: strin
   const review = await env.DB.prepare("SELECT id,week_start,checkin_json FROM weekly_reviews WHERE id=? AND user_id=?")
     .bind(id, user.id).first<{ id: string; week_start: string; checkin_json: string | null }>();
   if (!review) throw new Error("REVIEW_NOT_FOUND");
-  const quota = await consumeCapability(env, user.id, "adaptive.review");
+  // Free users get a real (not fabricated) preview: the engine runs on their
+  // data, but adjustment details are locked and nothing is consumed. Pro and
+  // trial users get the full review against their adaptive.review quota.
+  const tierInfo = await tierInfoForUser(env, user.id);
+  const fullAccess = tierInfo.tier === "pro";
+  const quota = fullAccess ? await consumeCapability(env, user.id, "adaptive.review") : { ok: true, tier: "free" as const, limit: 0, used: 0, remaining: 0 };
   if (!quota.ok) throw new Error("REVIEW_LIMIT_REACHED");
   const start = new Date(`${review.week_start}T00:00:00.000Z`); const end = new Date(start.getTime() + 7 * 86400_000); const endDate = end.toISOString().slice(0, 10);
   const active = await activePlanForUser(env, user.id);
-  if (!active?.profile || !active.plan) { await refundCapability(env, user.id, "adaptive.review"); throw new Error("ACTIVE_PLAN_REQUIRED"); }
+  if (!active?.profile || !active.plan) { if (fullAccess) await refundCapability(env, user.id, "adaptive.review"); throw new Error("ACTIVE_PLAN_REQUIRED"); }
   const historyStart = new Date(start.getTime() - 21 * 86400_000);
   const [occurrenceSessions, legacySessions, measurements, previous, sets, previousSets, nutrition, planned] = await Promise.all([
     env.DB.prepare(`SELECT s.rpe,s.pain,s.completed_at FROM workout_occurrence_sessions s JOIN workout_occurrences o ON o.id=s.occurrence_id
@@ -131,14 +136,32 @@ export async function generateReview(env: WorkerEnv, user: StoredUser, id: strin
     sets: engineSets,
     exercises: Array.from(metaById.values()),
   });
-  let explanation = recommendation.explanation;
-  try {
-    const tier = await tierForUser(env, user.id);
-    const ai = await generateCoachChat(env, { message: "请用简洁自然的语言解释这份周度复盘，只解释依据和下一步，不新增事实。",
-      locale: user.locale === "en" ? "en" : "zh", context: { metrics, recommendation, engine, checkin: parseJson(review.checkin_json), profile: active.profile }, history: [], safetyIdentifier: user.id }, tier);
-    explanation = ai.reply;
-  } catch { /* deterministic recommendation remains authoritative */ }
-  const stored = { ...recommendation, explanation, engine };
+  let stored: Record<string, unknown>;
+  if (fullAccess) {
+    let explanation = recommendation.explanation;
+    try {
+      const ai = await generateCoachChat(env, { message: "请用简洁自然的语言解释这份周度复盘，只解释依据和下一步，不新增事实。",
+        locale: user.locale === "en" ? "en" : "zh", context: { metrics, recommendation, engine, checkin: parseJson(review.checkin_json), profile: active.profile }, history: [], safetyIdentifier: user.id }, tierInfo.tier);
+      explanation = ai.reply;
+    } catch { /* deterministic recommendation remains authoritative */ }
+    stored = { ...recommendation, explanation, engine };
+  } else {
+    // Locked preview: real facts, no actionable details. Safety information is
+    // never paywalled — a recommended deload is always shown in full.
+    const teaser = engine.adjustments[0]?.reason || null;
+    stored = {
+      kind: recommendation.kind, title: recommendation.title, explanation: recommendation.explanation,
+      changes: [], volumeMultiplier: 1, loadMultiplier: 1, locked: true,
+      engine: {
+        deloadRecommended: engine.deloadRecommended,
+        deloadReason: engine.deloadReason || null,
+        fatigueRatio: engine.fatigueRatio,
+        adjustmentCount: engine.adjustments.length,
+        stagnationCount: engine.stagnation.length,
+        teaser: teaser ? { zh: `${teaser.zh.slice(0, 18)}……（升级解锁完整调整方案）`, en: `${teaser.en.slice(0, 40)}… (upgrade to unlock the full adjustments)` } : null,
+      },
+    };
+  }
   const now = new Date().toISOString();
   await env.DB.prepare(`UPDATE weekly_reviews SET metrics_json=?,recommendation_json=?,plateau=?,status='generated',updated_at=?
     WHERE id=? AND user_id=?`).bind(JSON.stringify(metrics), JSON.stringify(stored), metrics.plateau ? 1 : 0, now, id, user.id).run();
@@ -160,7 +183,10 @@ export async function decideReview(env: WorkerEnv, userId: string, id: string, d
   if (row.status === "accepted" || row.status === "rejected") return { id, status: row.status, duplicate: true };
   let planId: string | null = null;
   if (decision === "accepted") {
-    const recommendation = parseJson<{ volumeMultiplier?: number; loadMultiplier?: number }>(row.recommendation_json);
+    const recommendation = parseJson<{ volumeMultiplier?: number; loadMultiplier?: number; locked?: boolean }>(row.recommendation_json);
+    // Locked previews carry no adjustment details — accepting them is the Pro
+    // value moment, and requires the full review to have been generated.
+    if (recommendation?.locked || (await tierInfoForUser(env, userId)).tier !== "pro") throw new Error("REVIEW_UPGRADE_REQUIRED");
     const [active, cycle] = await Promise.all([activePlanForUser(env, userId), activeCycleForUser(env, userId)]);
     if (active?.plan && active.profile) {
       const effectiveDate = cycle ? addLocalDays(cycle.startDate, Math.max(7, (Math.floor(Math.max(0, dateDifference(cycle.startDate, localDateInTimezone(cycle.timezone))) / 7) + 1) * 7)) : undefined;

@@ -189,17 +189,58 @@ export async function processStripeEvent(env: WorkerEnv, event: Record<string, a
   }
 }
 
-export function billingCatalog(env: WorkerEnv) {
+type CachedPrices = { monthly: number | null; yearly: number | null; currency: string; fetchedAt: string };
+const PRICE_CACHE_KEY = "billing_price_cache";
+const PRICE_CACHE_TTL_MS = 6 * 3600_000;
+
+// Display prices come from the actual Stripe Price objects — the same objects
+// Checkout will charge — cached for six hours. There is deliberately no
+// hardcoded fallback price: when Stripe is unreachable and no cache exists,
+// the API returns null amounts and the UI must not invent numbers.
+async function stripePrices(env: WorkerEnv): Promise<CachedPrices | null> {
+  if (!stripeConfigured(env)) return null;
+  if (env.DB) {
+    const row = await env.DB.prepare("SELECT value_json FROM site_settings WHERE key = ?").bind(PRICE_CACHE_KEY).first<{ value_json: string }>();
+    try {
+      const cached = row ? JSON.parse(row.value_json) as CachedPrices : null;
+      if (cached && Date.now() - new Date(cached.fetchedAt).getTime() < PRICE_CACHE_TTL_MS) return cached;
+    } catch { /* refetch below */ }
+  }
+  try {
+    const [monthly, yearly] = await Promise.all([
+      stripeRequest(env, `/prices/${env.STRIPE_PRICE_MONTHLY}`),
+      stripeRequest(env, `/prices/${env.STRIPE_PRICE_YEARLY}`),
+    ]);
+    const prices: CachedPrices = {
+      monthly: typeof monthly.unit_amount === "number" ? monthly.unit_amount / 100 : null,
+      yearly: typeof yearly.unit_amount === "number" ? yearly.unit_amount / 100 : null,
+      currency: String(monthly.currency || yearly.currency || "usd").toUpperCase(),
+      fetchedAt: new Date().toISOString(),
+    };
+    if (env.DB) await env.DB.prepare(`INSERT INTO site_settings (key, value_json, updated_by, updated_at) VALUES (?, ?, 'system', ?)
+      ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at`)
+      .bind(PRICE_CACHE_KEY, JSON.stringify(prices), new Date().toISOString()).run();
+    return prices;
+  } catch {
+    if (!env.DB) return null;
+    const stale = await env.DB.prepare("SELECT value_json FROM site_settings WHERE key = ?").bind(PRICE_CACHE_KEY).first<{ value_json: string }>();
+    try { return stale ? JSON.parse(stale.value_json) as CachedPrices : null; } catch { return null; }
+  }
+}
+
+export async function billingCatalog(env: WorkerEnv, limits?: { free: Record<string, number>; pro: Record<string, number>; trialDays: number }) {
+  const prices = await stripePrices(env);
   return {
     configured: stripeConfigured(env),
-    currency: "USD",
+    currency: prices?.currency || "USD",
     free: { name: "Cmine Fit 免费版", monthly: 0 },
     pro: {
       name: "Cmine Fit Pro",
-      monthly: 9.99,
-      yearly: 79,
+      monthly: prices?.monthly ?? null,
+      yearly: prices?.yearly ?? null,
       monthlyAvailable: Boolean(env.STRIPE_PRICE_MONTHLY),
       yearlyAvailable: Boolean(env.STRIPE_PRICE_YEARLY),
     },
+    ...(limits ? { limits } : {}),
   };
 }

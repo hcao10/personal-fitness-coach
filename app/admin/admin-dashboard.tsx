@@ -143,7 +143,9 @@ export default function AdminDashboard() {
       <article><span>全部用户</span><b>{metrics?.users ?? "—"}</b><small>{metrics?.activeUsers ?? "—"} 个有效账户</small></article>
       <article><span>AI 成功率</span><b>{metrics ? `${metrics.generationSuccessRate}%` : "—"}</b><small>{metrics?.generations ?? "—"} 次生成</small></article>
       <article><span>AI 估算成本</span><b>${metrics?.aiCostUsd ?? "—"}</b><small>按已知模型单价累计</small></article>
-      <article><span>专业订阅</span><b>{metrics?.subscriptions ?? "—"}</b><small>收入 ${metrics?.revenueUsd ?? 0}</small></article>
+      <article><span>专业订阅</span><b>{metrics?.subscriptions ?? "—"}</b><small>收入 ${metrics?.revenueUsd ?? 0} · 付费 {metrics?.payingUsers ?? 0} 人 · 试用中 {metrics?.usersInTrial ?? 0} 人</small></article>
+      <article><span>训练活跃</span><b>{metrics?.trainingActive7d ?? "—"}</b><small>近 7 天 · 近 30 天 {metrics?.trainingActive30d ?? 0} 人</small></article>
+      <article><span>推送触达</span><b>{metrics?.remindersSent7d ?? "—"}</b><small>近 7 天训练提醒 · 教练信 {metrics?.coachLettersSent7d ?? 0} 封</small></article>
       <article><span>确认餐食</span><b>{metrics?.meals ?? "—"}</b><small>识别成功率 {metrics?.mealAnalysisSuccessRate ?? 0}%</small></article>
       <article><span>完成建档</span><b>{metrics?.onboardingCompleted ?? "—"}</b><small>新用户产品漏斗</small></article>
       <article><span>Coach 消息</span><b>{metrics?.coachMessages ?? "—"}</b><small>{metrics?.coachConversations ?? 0} 段对话</small></article>
@@ -225,16 +227,20 @@ export default function AdminDashboard() {
       <div className="admin-section-title"><div><span>08 / SETTINGS</span><h2>额度与站点设置</h2></div><p>预算触发后停止新的 AI 请求，但历史、训练和营养记录仍然可用。</p></div>
       <div className="admin-settings">
         <label><span>站内公告</span><input value={announcement} maxLength={300} onChange={(event) => setAnnouncement(event.target.value)} placeholder="留空则不展示公告" /><button onClick={() => void updateSetting("announcement", announcement)}>保存</button></label>
+        {/* No client-side defaults here: an unset value stays blank and cannot
+            be saved, so this form can never write frontend literals back into
+            production quotas. Server fallbacks live in worker/product.ts. */}
         {[
-          ["ai_daily_hard_usd", "每日硬成本上限（USD）", 5],
-          ["ai_monthly_hard_usd", "每月硬成本上限（USD）", 50],
-          ["free_plan_limit", "免费版计划额度", 2],
-          ["free_meal_scan_limit", "免费版饭菜识别额度", 5],
-          ["free_coach_message_limit", "免费版 Coach 体验消息", 10],
-          ["pro_plan_limit", "Pro 计划额度", 30],
-          ["pro_meal_scan_limit", "Pro 饭菜识别额度", 100],
-          ["pro_coach_message_limit", "Pro Coach 消息额度", 200],
-        ].map(([key, label, fallback]) => <label key={String(key)}><span>{String(label)}</span><input type="number" min="0" value={Number(overview?.settings[String(key)]?.value ?? fallback)} onChange={(event) => setOverview((current) => current ? { ...current, settings: { ...current.settings, [String(key)]: { value: Number(event.target.value), updatedBy: current.admin.email, updatedAt: new Date().toISOString() } } } : current)} /><button onClick={() => void updateSetting(String(key), Number(overview?.settings[String(key)]?.value ?? fallback))}>保存</button></label>)}
+          ["ai_daily_hard_usd", "每日硬成本上限（USD）"],
+          ["ai_monthly_hard_usd", "每月硬成本上限（USD）"],
+          ["trial_days", "新账号试用天数"],
+          ["free_plan_limit", "免费版计划额度"],
+          ["free_meal_scan_limit", "免费版饭菜识别额度"],
+          ["free_coach_message_limit", "免费版 Coach 体验消息"],
+          ["pro_plan_limit", "Pro 计划额度"],
+          ["pro_meal_scan_limit", "Pro 饭菜识别额度"],
+          ["pro_coach_message_limit", "Pro Coach 消息额度"],
+        ].map(([key, label]) => { const stored = overview?.settings[String(key)]?.value; return <label key={String(key)}><span>{String(label)}{stored === undefined ? "（未设置，使用服务端默认）" : ""}</span><input type="number" min="0" value={stored === undefined ? "" : Number(stored)} placeholder="服务端默认" onChange={(event) => setOverview((current) => current ? { ...current, settings: { ...current.settings, [String(key)]: { value: Number(event.target.value), updatedBy: current.admin.email, updatedAt: new Date().toISOString() } } } : current)} /><button disabled={stored === undefined} onClick={() => { const value = overview?.settings[String(key)]?.value; if (value !== undefined) void updateSetting(String(key), Number(value)); }}>保存</button></label>; })}
         <article><div><h3>维护模式</h3><p>临时阻止新的 AI 计划生成；账户和历史仍可访问。</p></div><button className={overview?.settings.maintenance_mode?.value === true ? "danger" : ""} onClick={() => void updateSetting("maintenance_mode", overview?.settings.maintenance_mode?.value !== true)}>{overview?.settings.maintenance_mode?.value === true ? "关闭维护模式" : "开启维护模式"}</button></article>
       </div>
     </section>

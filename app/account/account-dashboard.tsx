@@ -334,13 +334,18 @@ export default function AccountDashboard() {
           <b>{data.product.membership.status.toUpperCase()}</b>
         </div>
         {data.product.membership.tier === "pro" ? <div className="membership-preview">
-          <div><span>CMINE FIT PRO</span><h3>你的长期 Coach 权益已经生效。</h3><p>训练计划、饭菜识别、长期趋势和 Coach 对话都按当前专业版额度提供。</p></div>
-          <ul><li>每月 30 次训练计划</li><li>每月 100 次饭菜识别</li><li>每月 200 条 Coach 消息</li><li>阶段复盘与自适应调整</li></ul>
-          <div className="membership-price"><small>订阅管理</small><b>PRO</b><span>付款方式、发票、续费与取消由 Stripe 安全管理</span>{catalogConfigured && <button onClick={() => void openBillingPortal()}>管理订阅 →</button>}</div>
+          <div><span>CMINE FIT PRO</span><h3>{data.product.membership.status === "trial" ? "试用期内，全部专业能力已解锁。" : "你的长期 Coach 权益已经生效。"}</h3><p>训练计划、饭菜识别、长期趋势和 Coach 对话都按当前专业版额度提供。</p></div>
+          <ul>
+            <li>每月 {data.product.usage.capabilities["plan.generate"]?.limit ?? "—"} 次训练计划</li>
+            <li>每月 {data.product.usage.capabilities["meal.scan"]?.limit ?? "—"} 次饭菜识别</li>
+            <li>每月 {data.product.usage.capabilities["coach.chat"]?.limit ?? "—"} 条 Coach 消息</li>
+            <li>阶段复盘与自适应调整</li>
+          </ul>
+          <div className="membership-price"><small>订阅管理</small><b>PRO</b><span>{data.product.membership.status === "trial" ? "试用结束后回到免费版；随时可在价格页订阅" : "付款方式、发票、续费与取消由 Stripe 安全管理"}</span>{catalogConfigured && (data.product.membership.status === "trial" ? <Link href="/pricing">查看订阅 →</Link> : <button onClick={() => void openBillingPortal()}>管理订阅 →</button>)}</div>
         </div> : <div className="membership-preview">
           <div><span>CMINE FIT PRO</span><h3>更细致地理解你的变化，再安排下一步。</h3><p>专业版把训练、营养、恢复与现实日程放在同一个长期档案里持续调整。</p></div>
-          <ul><li>依据完成率、RPE 与疼痛反馈调整</li><li>每月 100 次饭菜识别</li><li>阶段趋势、停滞识别与复盘</li><li>未来与 App、健康数据同步</li></ul>
-          <div className="membership-price"><small>计划价格</small><b>US$9.99<em>/ 月</em></b><span>或 US$79 / 年</span>{catalogConfigured && <Link href="/pricing">选择专业版 →</Link>}</div>
+          <ul><li>一键采纳教练引擎的完整调整方案</li><li>依据完成率、RPE 与疼痛反馈调整</li><li>更高的计划与饭菜识别额度</li><li>阶段趋势、停滞识别与复盘</li></ul>
+          <div className="membership-price"><small>计划价格</small><b>见价格页</b><span>价格与额度以价格页实时显示为准</span>{catalogConfigured && <Link href="/pricing">选择专业版 →</Link>}</div>
         </div>}
         <div className="points-redemption">
           <div><span>积分余额</span><b>{data.points}</b><small>完成训练获得积分；广告积分仅在服务端验证后发放</small></div>

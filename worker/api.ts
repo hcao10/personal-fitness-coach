@@ -43,7 +43,7 @@ import {
 } from "./db";
 import { aiServices, generateLlmPlan } from "./llm";
 import { billingCatalog, createCheckout, createPortal, processStripeEvent, stripeConfigured, verifyStripeWebhook } from "./billing";
-import { consumeCapability, entitlementSnapshot, redeemPoints, refundCapability, tierForUser, usageForUser } from "./product";
+import { consumeCapability, entitlementSnapshot, limitForCapability, redeemPoints, refundCapability, tierForUser, usageForUser } from "./product";
 import {
   analyzeMeal,
   confirmMeal,
@@ -111,7 +111,7 @@ const equipment = new Set<Equipment>(["bodyweight", "dumbbell", "gym"]);
 const trainingTracks = new Set<TrainingTrack>(["beginner_fat_loss", "intermediate_hypertrophy", "general"]);
 const beginnerBarriers = new Set<BeginnerBarrier>(["time", "confidence", "consistency", "food", "feedback"]);
 const editableSettings = new Set([
-  "announcement", "maintenance_mode", "disclaimer_version", "privacy_version",
+  "announcement", "maintenance_mode", "disclaimer_version", "privacy_version", "trial_days",
   "ai_daily_warning_usd", "ai_daily_hard_usd", "ai_monthly_warning_usd", "ai_monthly_hard_usd",
   "free_plan_limit", "free_meal_scan_limit", "free_coach_message_limit", "pro_plan_limit", "pro_meal_scan_limit", "pro_coach_message_limit",
 ]);
@@ -621,7 +621,16 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
   }
 
   if (request.method === "GET" && url.pathname === "/api/v1/billing/catalog") {
-    return json(billingCatalog(env));
+    const [freePlan, freeMeal, freeCoach, proPlan, proMeal, proCoach, proReview, trialDays] = await Promise.all([
+      limitForCapability(env, "free", "plan.generate"), limitForCapability(env, "free", "meal.scan"), limitForCapability(env, "free", "coach.chat"),
+      limitForCapability(env, "pro", "plan.generate"), limitForCapability(env, "pro", "meal.scan"), limitForCapability(env, "pro", "coach.chat"),
+      limitForCapability(env, "pro", "adaptive.review"), settingValue<number>(env, "trial_days", 7),
+    ]);
+    return json(await billingCatalog(env, {
+      free: { planGenerate: freePlan, mealScan: freeMeal, coachChat: freeCoach },
+      pro: { planGenerate: proPlan, mealScan: proMeal, coachChat: proCoach, adaptiveReview: proReview },
+      trialDays: Number(trialDays) || 0,
+    }));
   }
   if (request.method === "POST" && url.pathname === "/api/webhooks/revenuecat") {
     try {
@@ -795,7 +804,11 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
       if (reviewMatch[2] === "accept" || reviewMatch[2] === "reject") return json(await decideReview(env, user.id, id, reviewMatch[2] === "accept" ? "accepted" : "rejected"));
     } catch (error) {
       const code = error instanceof Error ? error.message.split(":")[0] : "REVIEW_FAILED";
-      return errorJson(code, code === "REVIEW_LIMIT_REACHED" ? "自适应周度复盘是 Pro 权益；请升级或检查本月额度。" : "暂时无法完成这次周度复盘。", code === "REVIEW_LIMIT_REACHED" ? 403 : code.includes("NOT_FOUND") ? 404 : 400);
+      return errorJson(code,
+        code === "REVIEW_LIMIT_REACHED" ? "本月的完整复盘额度已用完。"
+          : code === "REVIEW_UPGRADE_REQUIRED" ? "复盘摘要免费可看；采纳教练的完整调整方案需要升级 Pro。"
+          : "暂时无法完成这次周度复盘。",
+        code === "REVIEW_LIMIT_REACHED" || code === "REVIEW_UPGRADE_REQUIRED" ? 403 : code.includes("NOT_FOUND") ? 404 : 400);
     }
   }
 
