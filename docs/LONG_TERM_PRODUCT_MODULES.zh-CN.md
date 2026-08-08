@@ -17,7 +17,7 @@
 | 模块 | 位置 | 责任 |
 |---|---|---|
 | Web/PWA | `app` | 首页、建档、今日、Coach、饮食、进度、账户、定价与后台 |
-| 原生 App | `apps/mobile` | Expo Router、Cmine PKCE、SQLite 离线队列、本地提醒（服务端推送开发中）、RevenueCat、HealthKit/Health Connect |
+| 原生 App | `apps/mobile` | Expo Router、Cmine PKCE、SQLite 离线队列、本地提醒 + 服务端推送（cue 时间训练提醒、周教练信，安静时段生效）、RevenueCat、HealthKit/Health Connect |
 | 规则核心 | `packages/coach-core` | BMR/TDEE、训练编排、营养边界、安全规则；无网络与数据库依赖 |
 | 领域逻辑 | `packages/domain` | 周度指标、停滞判断、调整边界和 Coach 安全信号 |
 | API 契约 | `packages/api-contracts` | Web、App、Worker 共用的建档、Coach、复盘、计划与同步类型 |

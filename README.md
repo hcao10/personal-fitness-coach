@@ -14,7 +14,7 @@ Cmine Fit 是一套包含自主轻量版与专业增强版的 AI 健身教练产
 - 用户中心：今日训练、RPE/疼痛反馈、计划历史、身体趋势、营养汇总、会员与额度、积分流水、数据导出与账号删除
 - 管理后台：用户与留存、订阅与退款、AI 成本/延迟/失败切换、饭菜识别质量、模型路由、预算额度、公告和审计
 - PWA：移动端导航、Web App Manifest 与可安装能力
-- 原生 App：`apps/mobile` 已提供 Expo Router 五模块、Cmine PKCE、SecureStore、SQLite 离线队列、RevenueCat、本地训练提醒（服务端推送开发中）、HealthKit 与 Health Connect 开发构建；商店能力按供应商配置启用
+- 原生 App：`apps/mobile` 已提供 Expo Router 五模块、Cmine PKCE、SecureStore、SQLite 离线队列、RevenueCat、训练提醒（本地提醒 + 服务端推送：按用户承诺的 cue 时间发送训练提醒与周日晚教练信，尊重安静时段；需配置 Expo 推送与每小时 cron）、HealthKit 与 Health Connect 开发构建；商店能力按供应商配置启用
 - 长期 Coach：连续会话、SSE、用户确认操作卡、周度复盘、停滞判断、不可变计划版本、差异确认和回退数据链路
 - 契约测试：覆盖无密钥状态、跨站写入、管理员权限、AI 路由、结构化响应、支付签名与营养确认边界
 

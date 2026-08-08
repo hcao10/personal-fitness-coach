@@ -196,7 +196,7 @@ Apple 和 Google IAP 状态。两类回调都必须验签、幂等，并映射�
 
 原生 App 第二阶段采用 Expo/React Native，共用 API 类型、`coach-core` 和
 多语言资源。Cmine ID 必须通过系统浏览器、Universal Link 与 Secure Storage
-完成；训练计划支持离线查看、恢复后同步和本地提醒（服务端推送开发中），随后再接 HealthKit、
+完成；训练计划支持离线查看、恢复后同步、本地提醒与服务端推送（cue 时间训练提醒与周教练信），随后再接 HealthKit、
 Health Connect 与可穿戴设备。
 
 生产主域名为 `fit.chwjh.com`，`PUBLIC_ORIGIN` 与 Cmine 回调必须固定为：
