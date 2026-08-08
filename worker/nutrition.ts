@@ -216,9 +216,11 @@ export async function searchFoods(env: WorkerEnv, query: string, options: { user
     return (payload.products || []).map(offItem).filter((item): item is NutritionReference => Boolean(item));
   }).catch(() => []));
   if (env.USDA_API_KEY) {
-    requests.push(fetch(`https://api.nal.usda.gov/fdc/v1/foods/search?api_key=${encodeURIComponent(env.USDA_API_KEY)}`, {
+    // API key travels in a header, not the query string, so it never lands in
+    // upstream access logs or referrers.
+    requests.push(fetch("https://api.nal.usda.gov/fdc/v1/foods/search", {
       method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json" },
+      headers: { "content-type": "application/json", accept: "application/json", "x-api-key": env.USDA_API_KEY },
       body: JSON.stringify({ query: clean, pageSize: 8 }),
     }).then(async (response) => {
       if (!response.ok) return [];
@@ -302,7 +304,7 @@ export async function analyzeMeal(env: WorkerEnv, user: StoredUser, mealId: stri
   try {
     const bytes = await object.arrayBuffer();
     const tier = await tierForUser(env, user.id);
-    const result = await generateMealVision(env, `data:image/jpeg;base64,${arrayBufferToBase64(bytes)}`, tier);
+    const result = await generateMealVision(env, `data:image/jpeg;base64,${arrayBufferToBase64(bytes)}`, tier, user.id);
     const suggestions: Array<NutritionReference | null> = [];
     for (const candidate of result.candidates.slice(0, 3)) {
       const matches = await searchFoods(env, candidate.nameEn || candidate.nameZh);

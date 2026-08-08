@@ -661,6 +661,28 @@ export const notificationPreferences = sqliteTable("notification_preferences", {
   updatedAt: text("updated_at").notNull(),
 });
 
+export const foodPortions = sqliteTable("food_portions", {
+  id: text("id").primaryKey(),
+  canonicalFoodId: text("canonical_food_id").notNull().references(() => canonicalFoods.id, { onDelete: "cascade" }),
+  label: text("label").notNull(),
+  grams: real("grams").notNull(),
+  locale: text("locale"),
+  sourceRecordId: text("source_record_id").references(() => foodSourceRecords.id, { onDelete: "set null" }),
+}, (table) => [index("food_portions_food_idx").on(table.canonicalFoodId)]);
+
+export const foodImportRuns = sqliteTable("food_import_runs", {
+  id: text("id").primaryKey(),
+  source: text("source").notNull(),
+  status: text("status").notNull(),
+  recordsSeen: integer("records_seen").notNull().default(0),
+  recordsWritten: integer("records_written").notNull().default(0),
+  recordsFailed: integer("records_failed").notNull().default(0),
+  sourceRevision: text("source_revision"),
+  errorCode: text("error_code"),
+  startedAt: text("started_at").notNull(),
+  completedAt: text("completed_at"),
+}, (table) => [index("food_import_runs_source_time_idx").on(table.source, table.startedAt)]);
+
 export const habitCommitments = sqliteTable("habit_commitments", {
   userId: text("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
   cueTime: text("cue_time").notNull().default("18:00"),
@@ -682,6 +704,12 @@ export const notificationLog = sqliteTable("notification_log", {
   dedupeKey: text("dedupe_key").notNull().unique(),
   sentAt: text("sent_at").notNull(),
 }, (table) => [index("notification_log_user_idx").on(table.userId, table.sentAt)]);
+
+export const rateLimits = sqliteTable("rate_limits", {
+  key: text("key").primaryKey(),
+  windowStart: integer("window_start").notNull(),
+  count: integer("count").notNull().default(0),
+}, (table) => [index("rate_limits_window_idx").on(table.windowStart)]);
 
 export const maintenanceRuns = sqliteTable("maintenance_runs", {
   id: text("id").primaryKey(),

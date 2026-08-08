@@ -28,7 +28,10 @@ test("health and auth config report missing external credentials honestly", asyn
   assert.equal(status.vision, false);
   assert.equal(status.billing, false);
   assert.equal(status.rewardAds, false);
-  assert.deepEqual(status.providers, { cloudflare: false, openai: false, compatible: false });
+  // Provider/model configuration details must never leak unauthenticated.
+  assert.equal("providers" in status, false);
+  assert.equal("model" in status, false);
+  assert.equal("reasoningEffort" in status, false);
   const auth = await worker.fetch(new Request("https://local.test/api/auth/config"), {}, {});
   assert.deepEqual(await auth.json(), { cmine: false });
 });

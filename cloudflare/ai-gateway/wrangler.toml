@@ -1,7 +1,8 @@
 name = "cmine-fit-ai-gateway"
 main = "src/index.ts"
 compatibility_date = "2026-04-01"
-account_id = "eec4d223ffc55199e88ae515a67323fe"
+# account_id intentionally not committed: local deploys resolve it from the
+# wrangler login; CI must provide CLOUDFLARE_ACCOUNT_ID via environment.
 
 [ai]
 binding = "AI"

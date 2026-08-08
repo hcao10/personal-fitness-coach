@@ -1,5 +1,6 @@
 import type { WorkerEnv } from "../platform";
 import { safeEqual } from "../security";
+import { cleanupRateLimits } from "./rate-limit";
 
 async function signature(secret: string, value: string) {
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
@@ -58,6 +59,7 @@ export async function runMaintenance(env: WorkerEnv) {
       env.DB.prepare("DELETE FROM maintenance_runs WHERE job='daily' AND completed_at<?")
         .bind(new Date(now.getTime() - 90 * 86400_000).toISOString()),
     ]);
+    await cleanupRateLimits(env);
     const completed = new Date().toISOString();
     await env.DB.prepare("UPDATE maintenance_runs SET status=?,processed=?,failed=?,completed_at=? WHERE id=?")
       .bind(failed ? "partial" : "succeeded", processed, failed, completed, id).run();

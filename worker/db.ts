@@ -115,16 +115,19 @@ export async function upsertCmineUser(env: WorkerEnv, identity: {
   const id = existing?.id || crypto.randomUUID();
   const now = new Date().toISOString();
   const cmineRole = identity.role === "admin" || identity.role === "super_admin" ? identity.role : "user";
+  // The product admin role is granted locally and only ever escalated, never
+  // downgraded or overwritten by login. The IdP-asserted role is recorded for
+  // reference (cmine_role) but cannot mint product admins on its own — a
+  // compromised or misconfigured IdP profile must not become instant admin.
   const bootstrapAdmins = (env.ADMIN_EMAILS || "").split(",").map((value) => value.trim().toLowerCase()).filter(Boolean);
-  const role = cmineRole === "admin" || cmineRole === "super_admin" ||
-    Boolean(identity.email && bootstrapAdmins.includes(identity.email.trim().toLowerCase()))
-    ? "admin"
-    : "user";
+  const bootstrapAdmin = Boolean(identity.email && bootstrapAdmins.includes(identity.email.trim().toLowerCase()));
   await db.prepare(`INSERT INTO users (id, cmine_sub, email, name, picture, role, cmine_role, status, locale, timezone, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, 'active', 'zh', 'UTC', ?, ?)
     ON CONFLICT(cmine_sub) DO UPDATE SET email=excluded.email, name=excluded.name, picture=excluded.picture,
-      role=excluded.role, cmine_role=excluded.cmine_role, updated_at=excluded.updated_at`)
-    .bind(id, identity.sub, identity.email || null, identity.name || null, identity.picture || null, role, cmineRole, now, now).run();
+      role=CASE WHEN excluded.role='admin' THEN 'admin' ELSE users.role END,
+      cmine_role=excluded.cmine_role, updated_at=excluded.updated_at`)
+    .bind(id, identity.sub, identity.email || null, identity.name || null, identity.picture || null,
+      bootstrapAdmin ? "admin" : "user", cmineRole, now, now).run();
   const user = await db.prepare(`SELECT id, cmine_sub AS sub, email, name, picture, role, cmine_role AS cmineRole, status, locale, timezone
     FROM users WHERE id = ?`).bind(id).first<StoredUser>();
   if (!user) throw new Error("USER_UPSERT_FAILED");

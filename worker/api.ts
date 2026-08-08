@@ -76,6 +76,7 @@ import { processRevenueCatEvent, revenueCatConfigured, verifyRevenueCatWebhook }
 import { runMaintenance, verifyMaintenanceRequest } from "./modules/maintenance";
 import { runNotifications } from "./modules/notifications";
 import { habitSummary, upsertHabitCommitment } from "./modules/habits";
+import { enforceRateLimit, RATE_RULES } from "./modules/rate-limit";
 
 const json = (body: unknown, status = 200, headers?: HeadersInit) => Response.json(body, {
   status,
@@ -112,7 +113,7 @@ const trainingTracks = new Set<TrainingTrack>(["beginner_fat_loss", "intermediat
 const beginnerBarriers = new Set<BeginnerBarrier>(["time", "confidence", "consistency", "food", "feedback"]);
 const editableSettings = new Set([
   "announcement", "maintenance_mode", "disclaimer_version", "privacy_version", "trial_days",
-  "ai_daily_warning_usd", "ai_daily_hard_usd", "ai_monthly_warning_usd", "ai_monthly_hard_usd",
+  "ai_daily_warning_usd", "ai_daily_hard_usd", "ai_monthly_warning_usd", "ai_monthly_hard_usd", "ai_user_daily_hard_usd",
   "free_plan_limit", "free_meal_scan_limit", "free_coach_message_limit", "pro_plan_limit", "pro_meal_scan_limit", "pro_coach_message_limit",
 ]);
 
@@ -166,7 +167,15 @@ function publicOrigin(request: Request, env: WorkerEnv): string {
 
 function writeOriginAllowed(request: Request, env: WorkerEnv): boolean {
   const origin = request.headers.get("origin");
-  if (!origin) return true;
+  if (!origin) {
+    // Cookie-authenticated browser writes must present an Origin header —
+    // modern browsers always send one on cross-context POSTs, so its absence
+    // plus a session cookie smells like header stripping. Non-browser clients
+    // (Bearer-token mobile apps, curl without cookies) are exempt: they carry
+    // no ambient credentials for CSRF to abuse.
+    const hasSessionCookie = (request.headers.get("cookie") || "").includes("cmine_fit_session=");
+    return !hasSessionCookie;
+  }
   const requestOrigin = new URL(request.url).origin;
   return origin === requestOrigin || origin === publicOrigin(request, env);
 }
@@ -177,6 +186,16 @@ function oauthError(request: Request, env: WorkerEnv, message: string): Response
   return Response.redirect(target.toString(), 302);
 }
 
+// Per-isolate cache for verified bearer tokens: without it every mobile API
+// call costs a JWKS verify, an outbound userinfo round-trip and two DB writes.
+// 60s keeps revocation latency acceptable while removing the amplification.
+const bearerCache = new Map<string, { user: StoredUser; expires: number }>();
+
+async function tokenCacheKey(token: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 async function requestUser(request: Request, env: WorkerEnv): Promise<StoredUser | null> {
   const sessionUser = await getSessionUser(request, env);
   if (sessionUser) return sessionUser;
@@ -185,13 +204,19 @@ async function requestUser(request: Request, env: WorkerEnv): Promise<StoredUser
   const token = authorization.slice(7).trim();
   const clientIds = env.CMINE_MOBILE_CLIENT_IDS.split(",").map((value) => value.trim()).filter(Boolean);
   if (!token || !clientIds.length) return null;
+  const cacheKey = await tokenCacheKey(token);
+  const cached = bearerCache.get(cacheKey);
+  if (cached && cached.expires > Date.now()) return cached.user;
   const issuer = (env.CMINE_ISSUER || "https://identity.chwjh.com").replace(/\/$/, "");
   let claims: { sub: string };
   try { claims = await verifyCmineAccessToken(token, issuer, clientIds); } catch { return null; }
   const response = await fetch(`${issuer}/oauth/userinfo`, { headers: { authorization: `Bearer ${token}`, accept: "application/json" } }).catch(() => null);
   const identity = await response?.json().catch(() => null) as { sub?: string; email?: string; email_verified?: boolean; name?: string; picture?: string; avatar_url?: string; role?: string } | null;
   if (!response?.ok || !identity?.sub || identity.sub !== claims.sub || !identity.email || identity.email_verified !== true) return null;
-  return upsertCmineUser(env, { sub: identity.sub, email: identity.email, name: identity.name, picture: identity.picture || identity.avatar_url, role: identity.role });
+  const user = await upsertCmineUser(env, { sub: identity.sub, email: identity.email, name: identity.name, picture: identity.picture || identity.avatar_url, role: identity.role });
+  if (bearerCache.size > 500) bearerCache.clear();
+  bearerCache.set(cacheKey, { user, expires: Date.now() + 60_000 });
+  return user;
 }
 
 async function requireUser(request: Request, env: WorkerEnv): Promise<StoredUser | Response> {
@@ -561,7 +586,14 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
   if (adminResponse) return adminResponse;
 
   if (request.method === "GET" && url.pathname === "/api/health") {
-    return json({ ok: true, ...services(env) });
+    // Coarse capability booleans only. Provider breakdown, model names and
+    // reasoning settings are configuration reconnaissance — admin overview
+    // (authenticated) carries the full services() object.
+    const publicServices: Record<string, unknown> = { ...services(env) };
+    delete publicServices.providers;
+    delete publicServices.model;
+    delete publicServices.reasoningEffort;
+    return json({ ok: true, ...publicServices });
   }
   if (request.method === "GET" && url.pathname === "/api/v1/site") {
     return json({
@@ -580,7 +612,10 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
   if (request.method === "GET" && url.pathname === "/api/auth/config") {
     return json({ cmine: services(env).cmine });
   }
-  if (request.method === "GET" && url.pathname === "/api/auth/cmine/start") return authStart(request, env);
+  if (request.method === "GET" && url.pathname === "/api/auth/cmine/start") {
+    const limited = await enforceRateLimit(env, request, "auth_start", RATE_RULES.authStart);
+    return limited || authStart(request, env);
+  }
   if (request.method === "GET" && url.pathname === "/api/auth/cmine/callback") return authCallback(request, env);
   if (request.method === "GET" && url.pathname === "/api/auth/me") {
     const user = await requestUser(request, env);
@@ -633,6 +668,8 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
     }));
   }
   if (request.method === "POST" && url.pathname === "/api/webhooks/revenuecat") {
+    const limited = await enforceRateLimit(env, request, "webhook_rc", RATE_RULES.webhook);
+    if (limited) return limited;
     try {
       verifyRevenueCatWebhook(env, request);
       const body = await request.json() as Record<string, unknown>;
@@ -651,6 +688,8 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
     catch (error) { const code = error instanceof Error ? error.message : "MAINTENANCE_FAILED"; return errorJson(code, "维护任务未通过验证或执行失败。", code.includes("SIGNATURE") || code.includes("REPLAY") ? 401 : 500); }
   }
   if (request.method === "POST" && url.pathname === "/api/webhooks/stripe") {
+    const limited = await enforceRateLimit(env, request, "webhook_stripe", RATE_RULES.webhook);
+    if (limited) return limited;
     try {
       const rawBody = await request.text();
       const event = await verifyStripeWebhook(env, rawBody, request.headers.get("stripe-signature"));
@@ -771,6 +810,8 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
   }
   if (coachMessagesMatch && request.method === "POST") {
     const user = await requireUser(request, env); if (user instanceof Response) return user;
+    const limited = await enforceRateLimit(env, request, "coach_chat", RATE_RULES.coachChat, user.id);
+    if (limited) return limited;
     const body = await request.json().catch(() => null) as { message?: unknown; clientMutationId?: unknown } | null;
     if (typeof body?.message !== "string") return errorJson("MESSAGE_REQUIRED", "请输入要发送给 Coach 的内容。", 400);
     const message = body.message;
@@ -874,6 +915,8 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
   if (request.method === "POST" && url.pathname === "/api/v1/meals/upload") {
     const user = await requireUser(request, env);
     if (user instanceof Response) return user;
+    const limited = await enforceRateLimit(env, request, "meal_upload", RATE_RULES.mealUpload, user.id);
+    if (limited) return limited;
     const form = await request.formData().catch(() => null);
     const file = form?.get("image");
     const mealType = String(form?.get("mealType") || "meal").slice(0, 30);
@@ -941,6 +984,8 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
   }
   if (url.pathname === "/api/v1/exercises/search" && request.method === "GET") {
     const user = await requireUser(request, env); if (user instanceof Response) return user;
+    const limited = await enforceRateLimit(env, request, "exercise_search", RATE_RULES.exerciseSearch, user.id);
+    if (limited) return limited;
     const query = (url.searchParams.get("q") || "").trim().toLocaleLowerCase().slice(0, 80);
     const equipmentFilter = (url.searchParams.get("equipment") || "").trim().toLocaleLowerCase();
     const targetFilter = (url.searchParams.get("target") || "").trim().toLocaleLowerCase();
@@ -964,6 +1009,9 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
   if (url.pathname === "/api/v1/foods/search" && request.method === "GET") {
     const user = await requireUser(request, env);
     if (user instanceof Response) return user;
+    // Upstream USDA/OFF quotas are a shared resource — throttle before proxying.
+    const limited = await enforceRateLimit(env, request, "food_search", RATE_RULES.foodSearch, user.id);
+    if (limited) return limited;
     return json({ foods: await searchFoods(env, url.searchParams.get("q") || "", { userId: user.id,
       locale: url.searchParams.get("locale") || user.locale, region: url.searchParams.get("region"),
       source: url.searchParams.get("source"), limit: Number(url.searchParams.get("limit") || 15) }) });
@@ -1028,7 +1076,8 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
   }
 
   if (request.method === "POST" && (url.pathname === "/api/plans" || url.pathname === "/api/v1/plans")) {
-    return planRequest(request, env);
+    const limited = await enforceRateLimit(env, request, "plan_generate", RATE_RULES.planGenerate);
+    return limited || planRequest(request, env);
   }
   if (request.method === "POST" && url.pathname === "/api/completions") {
     const user = await requireUser(request, env);
@@ -1042,6 +1091,8 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
     catch { return errorJson("PLAN_NOT_FOUND", "没有找到对应计划。", 404); }
   }
   if (request.method === "POST" && url.pathname === "/api/consents") {
+    const limited = await enforceRateLimit(env, request, "consent_write", RATE_RULES.consentWrite);
+    if (limited) return limited;
     const body = await request.json().catch(() => ({})) as { locale?: string; timezone?: string; productVersion?: string };
     const user = await getSessionUser(request, env);
     if (!env.DB) return errorJson("DATABASE_NOT_CONFIGURED", "数据库尚未连接。", 503);
@@ -1062,12 +1113,21 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
   if (url.pathname === "/api/v1/me" && request.method === "DELETE") {
     const user = await requireUser(request, env);
     if (user instanceof Response) return user;
+    // Irreversible: a stray script or CSRF-adjacent request must not be able to
+    // wipe an account. The client has to echo an explicit confirmation phrase.
+    const body = await request.json().catch(() => null) as { confirm?: unknown } | null;
+    if (body?.confirm !== "DELETE") return errorJson("DELETE_CONFIRMATION_REQUIRED", "删除账户需要在请求中确认（confirm: \"DELETE\"）。", 428);
+    console.log("account_deleted", user.id);
     await deleteUserData(env, user.id);
     return json({ ok: true }, 200, { "set-cookie": cookie("cmine_fit_session", "", request, 0) });
   }
   if (url.pathname === "/api/v1/export" && request.method === "GET") {
     const user = await requireUser(request, env);
     if (user instanceof Response) return user;
+    // Full-PII payload: tightly throttled and logged.
+    const limited = await enforceRateLimit(env, request, "export", RATE_RULES.exportData, user.id);
+    if (limited) return limited;
+    console.log("data_export", user.id);
     return json(await exportUserData(env, user), 200, {
       "content-disposition": `attachment; filename="cmine-fit-export-${new Date().toISOString().slice(0, 10)}.json"`,
     });

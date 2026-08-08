@@ -223,19 +223,39 @@ async function settingNumber(env: WorkerEnv, key: string, fallback: number): Pro
   }
 }
 
-export async function assertAiBudget(env: WorkerEnv): Promise<void> {
+// Two layers: a per-user daily ceiling (one abusive account cannot burn the
+// site's budget or deny AI to everyone else) and the global circuit breaker.
+export async function assertAiBudget(env: WorkerEnv, userId?: string | null): Promise<void> {
   if (!env.DB) return;
   const today = new Date().toISOString().slice(0, 10);
   const month = today.slice(0, 7);
-  const [daily, monthly, dailyLimit, monthlyLimit] = await Promise.all([
+  const [daily, monthly, dailyLimit, monthlyLimit, warningLimit, userLimit] = await Promise.all([
     env.DB.prepare("SELECT COALESCE(SUM(estimated_cost_usd), 0) AS cost FROM generation_runs WHERE created_at >= ?")
       .bind(`${today}T00:00:00.000Z`).first<{ cost: number }>(),
     env.DB.prepare("SELECT COALESCE(SUM(estimated_cost_usd), 0) AS cost FROM generation_runs WHERE created_at >= ?")
       .bind(`${month}-01T00:00:00.000Z`).first<{ cost: number }>(),
     settingNumber(env, "ai_daily_hard_usd", 5),
     settingNumber(env, "ai_monthly_hard_usd", 50),
+    settingNumber(env, "ai_daily_warning_usd", 3),
+    settingNumber(env, "ai_user_daily_hard_usd", 1),
   ]);
-  if (Number(daily?.cost || 0) >= dailyLimit || Number(monthly?.cost || 0) >= monthlyLimit) throw new Error("AI_BUDGET_EXHAUSTED");
+  const dailyCost = Number(daily?.cost || 0);
+  if (dailyCost >= warningLimit) {
+    // Once per day: surface the warning where operators actually look.
+    const marker = await env.DB.prepare("SELECT value_json FROM site_settings WHERE key='ai_budget_warning_last'").first<{ value_json: string }>();
+    if (marker?.value_json !== JSON.stringify(today)) {
+      console.warn("ai_budget_warning", { dailyCost, warningLimit });
+      await env.DB.prepare(`INSERT INTO site_settings (key, value_json, updated_by, updated_at) VALUES ('ai_budget_warning_last', ?, 'system', ?)
+        ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at`)
+        .bind(JSON.stringify(today), new Date().toISOString()).run();
+    }
+  }
+  if (dailyCost >= dailyLimit || Number(monthly?.cost || 0) >= monthlyLimit) throw new Error("AI_BUDGET_EXHAUSTED");
+  if (userId && userLimit > 0) {
+    const userDaily = await env.DB.prepare("SELECT COALESCE(SUM(estimated_cost_usd), 0) AS cost FROM generation_runs WHERE user_id = ? AND created_at >= ?")
+      .bind(userId, `${today}T00:00:00.000Z`).first<{ cost: number }>();
+    if (Number(userDaily?.cost || 0) >= userLimit) throw new Error("AI_USER_BUDGET_EXHAUSTED");
+  }
 }
 
 function extractOpenAiText(payload: unknown): string | null {
@@ -500,7 +520,7 @@ function applyAiPlan(profile: Profile, base: CoachPlan, output: AiPlanOutput): C
 }
 
 export async function generateLlmPlan(env: WorkerEnv, profile: Profile, safetyIdentifier?: string, tier: ProductTier = "free"): Promise<PlanGenerationResult> {
-  await assertAiBudget(env);
+  await assertAiBudget(env, safetyIdentifier);
   const routes = (await routesFor(env, "training_plan", tier)).slice(0, 2);
   if (!routes.length) throw new Error("AI_NOT_CONFIGURED");
   const base = generatePlan(profile);
@@ -544,8 +564,8 @@ export async function generateLlmPlan(env: WorkerEnv, profile: Profile, safetyId
   throw lastError instanceof Error ? lastError : new Error("AI_GENERATION_FAILED");
 }
 
-export async function generateMealVision(env: WorkerEnv, imageDataUrl: string, tier: ProductTier): Promise<MealVisionResult> {
-  await assertAiBudget(env);
+export async function generateMealVision(env: WorkerEnv, imageDataUrl: string, tier: ProductTier, userId?: string | null): Promise<MealVisionResult> {
+  await assertAiBudget(env, userId);
   const routes = (await routesFor(env, "meal_vision", tier)).slice(0, 2);
   if (!routes.length) throw new Error("AI_NOT_CONFIGURED");
   const system = "Identify the visible foods in this meal photo. Do not claim exact calories or exact mass from one image. Return conservative mass ranges, preparation clues, confidence, and uncertainty. Mixed dishes, hidden oils, sauces and unclear scale must set needs_review=true. Return Chinese and English food names.";
@@ -606,7 +626,7 @@ export async function generateCoachChat(env: WorkerEnv, input: {
   knowledge?: Array<{ id: string; title: string; summary: string; publisher: string; url: string }>;
   onDelta?: (delta: string) => void;
 }, tier: ProductTier): Promise<CoachChatResult> {
-  await assertAiBudget(env);
+  await assertAiBudget(env, input.safetyIdentifier);
   const routes = (await routesFor(env, "coach_chat", tier)).slice(0, 2);
   if (!routes.length) throw new Error("AI_NOT_CONFIGURED");
   const schema = {

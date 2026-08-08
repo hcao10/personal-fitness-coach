@@ -151,8 +151,9 @@ export default function AccountDashboard() {
   };
 
   const removeAccount = async () => {
-    if (!window.confirm("确定删除 Cmine Fit 内的训练、计划和进度数据吗？该操作无法撤销，也不会删除你的 Cmine ID。")) return;
-    const response = await fetch("/api/v1/me", { method: "DELETE" });
+    const phrase = window.prompt("此操作将永久删除 Cmine Fit 内的训练、计划和进度数据，无法撤销（不影响你的 Cmine ID）。\n\n请输入 DELETE 以确认：");
+    if (phrase !== "DELETE") { if (phrase !== null) setNotice("确认短语不匹配，未执行删除。"); return; }
+    const response = await fetch("/api/v1/me", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirm: "DELETE" }) });
     if (response.ok) window.location.assign("/");
     else setNotice("暂时无法删除账号数据，请稍后重试。");
   };
