@@ -9,7 +9,8 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "start": "vinext start",
-    "test": "npm run build && node --test tests/*.test.mjs",
+    "test": "node scripts/verify-exercise-assets.mjs && npm run build && node --test tests/*.test.mjs",
+    "pool:generate": "node scripts/build-exercise-pool.mjs && node scripts/verify-exercise-assets.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"

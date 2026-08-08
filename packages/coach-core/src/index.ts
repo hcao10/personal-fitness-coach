@@ -1,4 +1,8 @@
 // Stateless by design: this package has no account, database, or network dependencies.
+import { EXERCISE_POOL, type MovementPattern } from "./exercise-pool";
+
+export { EXERCISE_POOL, type MovementPattern, type PoolExercise } from "./exercise-pool";
+
 export type Goal = "fat_loss" | "muscle" | "recomp" | "arms" | "strength";
 export type Sex = "female" | "male";
 export type Activity = "sedentary" | "light" | "moderate" | "active";
@@ -93,7 +97,10 @@ export function resolveTrainingTrack(profile: Profile): TrainingTrack {
   return "general";
 }
 
-export const EXERCISES: Record<string, Exercise> = {
+// Seventeen hand-curated core movements. They anchor the deterministic session
+// templates below; the wider reviewed pool (exercise-pool.ts) extends the
+// LLM-plannable library and powers pattern-based substitutions.
+const CORE_EXERCISES: Record<string, Exercise> = {
   bench: { id: "bench", name: { zh: "杠铃卧推", en: "Barbell bench press" }, target: { zh: "胸肌 · 肱三头肌", en: "Chest · Triceps" }, cue: { zh: "肩胛骨向后下方收紧，杠铃落在胸骨下缘。", en: "Set the shoulder blades, then lower the bar toward the lower sternum." }, asset: "0025-EIeI8Vf", equipment: "barbell" },
   squat: { id: "squat", name: { zh: "杠铃深蹲", en: "Barbell full squat" }, target: { zh: "臀腿 · 核心", en: "Glutes · Legs · Core" }, cue: { zh: "膝盖跟随脚尖方向，躯干保持稳定。", en: "Track knees over toes and keep the torso braced." }, asset: "0043-qXTaZnJ", equipment: "barbell" },
   deadlift: { id: "deadlift", name: { zh: "罗马尼亚硬拉", en: "Romanian deadlift" }, target: { zh: "臀肌 · 腘绳肌", en: "Glutes · Hamstrings" }, cue: { zh: "髋部后移，背部保持中立，感受腿后侧拉伸。", en: "Push the hips back with a neutral spine and load the hamstrings." }, asset: "0085-wQ2c4XD", equipment: "barbell" },
@@ -112,6 +119,35 @@ export const EXERCISES: Record<string, Exercise> = {
   dumbbellBench: { id: "dumbbellBench", name: { zh: "哑铃卧推", en: "Dumbbell bench press" }, target: { zh: "胸肌 · 肱三头肌", en: "Chest · Triceps" }, cue: { zh: "手腕保持稳定，哑铃在胸部两侧下落。", en: "Keep wrists stacked and lower the dumbbells beside the chest." }, asset: "0289-SpYC0Kp", equipment: "dumbbell" },
   pullup: { id: "pullup", name: { zh: "辅助引体向上", en: "Assisted pull-up" }, target: { zh: "背阔肌 · 肱二头肌", en: "Lats · Biceps" }, cue: { zh: "先下沉肩胛骨，再把胸口拉向横杆。", en: "Depress the shoulder blades before pulling the chest to the bar." }, asset: "0017-kiJ4Z2K", equipment: "gym" },
 };
+
+const CORE_PATTERNS: Record<string, MovementPattern> = {
+  bench: "push_h", squat: "squat", deadlift: "hinge", curl: "iso_biceps", hammer: "iso_biceps",
+  pushdown: "iso_triceps", row: "pull_h", pulldown: "pull_v", shoulder: "push_v", lateral: "iso_shoulder",
+  dumbbellRow: "pull_h", dumbbellDeadlift: "hinge", deadBug: "core", lunge: "lunge",
+  closePushup: "push_h", dumbbellBench: "push_h", pullup: "pull_v",
+};
+
+// Full plannable library: reviewed pool entries plus the curated core. Curated
+// entries win on id collisions so their hand-written cues are preserved.
+export const EXERCISES: Record<string, Exercise> = {
+  ...Object.fromEntries(EXERCISE_POOL.map((exercise) => [exercise.id, exercise])),
+  ...CORE_EXERCISES,
+};
+
+export function exercisePattern(exerciseId: string): MovementPattern | null {
+  return CORE_PATTERNS[exerciseId] || EXERCISE_POOL.find((exercise) => exercise.id === exerciseId)?.pattern || null;
+}
+
+// Same-pattern substitutes the user can actually perform — the basis for
+// "equipment busy / movement hurts" swaps in plans and coach actions.
+export function alternativesFor(exerciseId: string, equipment: Equipment, limit = 5): Exercise[] {
+  const pattern = exercisePattern(exerciseId);
+  if (!pattern) return [];
+  const source = EXERCISES[exerciseId];
+  return EXERCISE_POOL
+    .filter((exercise) => exercise.pattern === pattern && exercise.id !== exerciseId && exercise.asset !== source?.asset && isExerciseAllowed(exercise, equipment))
+    .slice(0, Math.max(1, limit));
+}
 
 const activityFactors: Record<Activity, number> = { sedentary: 1.2, light: 1.375, moderate: 1.55, active: 1.725 };
 const repByExperience: Record<Experience, { sets: number; reps: string; rest: string }> = {
