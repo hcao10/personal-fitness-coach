@@ -1,9 +1,10 @@
 import { calculateWeeklyReview, recommendReview } from "../../packages/domain/src";
-import type { CoachPlan, Profile } from "../../packages/coach-core/src";
+import { alternativesFor, exercisePattern, type CoachPlan, type Profile } from "../../packages/coach-core/src";
+import { runEngine, type EngineSet, type ExerciseMeta } from "../../services/adaptive-engine/src";
 import type { WorkerEnv } from "../platform";
 import type { StoredUser } from "../db";
 import { activatePlan, activeCycleForUser, activePlanForUser, addLocalDays, localDateInTimezone, savePlan } from "../db";
-import { consumeCapability, refundCapability } from "../product";
+import { consumeCapability, refundCapability, tierForUser } from "../product";
 import { generateCoachChat } from "../llm";
 
 function mondayOf(date = new Date()) {
@@ -100,13 +101,44 @@ export async function generateReview(env: WorkerEnv, user: StoredUser, id: strin
     previousWeeklyVolumes, nutritionDays: (nutrition.results || []).map((row) => ({ calories: Number(row.calories || 0), proteinG: Number(row.protein_g || 0) })),
     calorieTarget: active.plan.calories, proteinTarget: active.plan.protein }, active.profile.goal);
   const recommendation = recommendReview(metrics);
+  // Adaptive engine: per-exercise double progression, fatigue and stagnation
+  // analysis over the last 28 days. Deterministic; the LLM below only narrates.
+  const engineWindowStart = addLocalDays(localDateInTimezone(user.timezone || "UTC"), -28);
+  const engineRows = await env.DB.prepare(`SELECT s.exercise_id,s.weight_kg,s.reps,s.rir,s.completed,o.scheduled_date
+    FROM workout_occurrence_sets s JOIN workout_occurrences o ON o.id=s.occurrence_id
+    WHERE s.user_id=? AND o.scheduled_date>=?`).bind(user.id, engineWindowStart)
+    .all<{ exercise_id: string; weight_kg: number | null; reps: number | null; rir: number | null; completed: number; scheduled_date: string }>();
+  const engineSets: EngineSet[] = (engineRows.results || []).map((row) => ({
+    exerciseId: row.exercise_id, date: row.scheduled_date, weightKg: row.weight_kg, reps: row.reps, rir: row.rir, completed: Boolean(row.completed),
+  }));
+  const compoundPatterns = new Set(["push_h", "push_v", "pull_h", "pull_v", "squat", "hinge", "lunge"]);
+  const metaById = new Map<string, ExerciseMeta>();
+  for (const day of active.plan.schedule) {
+    for (const exercise of day.exercises || []) {
+      if (metaById.has(exercise.id)) continue;
+      const pattern = exercisePattern(exercise.id);
+      metaById.set(exercise.id, {
+        exerciseId: exercise.id, targetReps: exercise.reps,
+        compound: pattern ? compoundPatterns.has(pattern) : false,
+        alternatives: alternativesFor(exercise.id, active.profile.equipment).map((alternative) => alternative.id),
+      });
+    }
+  }
+  const engine = runEngine({
+    today: localDateInTimezone(user.timezone || "UTC"),
+    experience: active.profile.experience,
+    sessions: (sessions.results || []).map((row) => ({ date: String(row.completed_at || "").slice(0, 10), rpe: row.rpe, pain: row.pain })),
+    sets: engineSets,
+    exercises: Array.from(metaById.values()),
+  });
   let explanation = recommendation.explanation;
   try {
+    const tier = await tierForUser(env, user.id);
     const ai = await generateCoachChat(env, { message: "请用简洁自然的语言解释这份周度复盘，只解释依据和下一步，不新增事实。",
-      locale: user.locale === "en" ? "en" : "zh", context: { metrics, recommendation, checkin: parseJson(review.checkin_json), profile: active.profile }, history: [], safetyIdentifier: user.id }, "pro");
+      locale: user.locale === "en" ? "en" : "zh", context: { metrics, recommendation, engine, checkin: parseJson(review.checkin_json), profile: active.profile }, history: [], safetyIdentifier: user.id }, tier);
     explanation = ai.reply;
   } catch { /* deterministic recommendation remains authoritative */ }
-  const stored = { ...recommendation, explanation };
+  const stored = { ...recommendation, explanation, engine };
   const now = new Date().toISOString();
   await env.DB.prepare(`UPDATE weekly_reviews SET metrics_json=?,recommendation_json=?,plateau=?,status='generated',updated_at=?
     WHERE id=? AND user_id=?`).bind(JSON.stringify(metrics), JSON.stringify(stored), metrics.plateau ? 1 : 0, now, id, user.id).run();
