@@ -4,6 +4,7 @@ import "./globals.css";
 import PwaRegister from "./pwa-register";
 import { resolveLocale } from "./lib/locale-server";
 import { LOCALE_META, SHIPPABLE_LOCALES } from "../packages/i18n/src";
+import { LocaleProvider } from "./lib/i18n-provider";
 
 const SITE_COPY = {
   zh: {
@@ -65,5 +66,12 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   // language for the initial render.
   const locale = await resolveLocale();
   const meta = LOCALE_META[locale];
-  return <html lang={meta.tag} dir={meta.dir}><body><PwaRegister />{children}</body></html>;
+  // `key` matters: the provider seeds its state from this prop, and a prop
+  // change alone would not reset it. Keying on the locale means a server-side
+  // language change (cookie set on another page, Accept-Language renegotiated)
+  // produces a fresh provider rather than stale state from the previous render.
+  return <html lang={meta.tag} dir={meta.dir}><body>
+    <PwaRegister />
+    <LocaleProvider key={locale} locale={locale}>{children}</LocaleProvider>
+  </body></html>;
 }

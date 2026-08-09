@@ -23,6 +23,10 @@ export const zh = {
     loading: "加载中…",
     notConfigured: "尚未配置",
   },
+  // Chrome shared by every product page (sidebar, bottom nav).
+  shell: {
+    proPitch: "更长期、更贴合的专业指导",
+  },
   // Server error codes. errorJson already carries a stable machine code as its
   // first argument, so localizing these is a lookup on a key that exists rather
   // than a string-matching exercise.
@@ -73,6 +77,9 @@ export const en = {
     retry: "Retry",
     loading: "Loading…",
     notConfigured: "Not configured",
+  },
+  shell: {
+    proPitch: "Longer-term guidance, tuned to you",
   },
   error: {
     AUTH_REQUIRED: "Please sign in with Cmine ID first.",

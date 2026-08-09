@@ -1,9 +1,7 @@
 import CoachApp from "./coach-app";
-import { resolveLocale } from "./lib/locale-server";
 
-export default async function Page() {
-  // Resolved on the server and handed down, so the first render already uses
-  // the right language — reading the cookie on the client instead would flash
-  // Chinese and disagree with <html lang> during hydration.
-  return <CoachApp initialLocale={await resolveLocale()} />;
+// The locale is resolved once in app/layout.tsx and provided to the whole tree,
+// so this page no longer needs to resolve or hand down anything.
+export default function Page() {
+  return <CoachApp />;
 }

@@ -5,8 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { defaultProfile, generatePlan, readPlanInsights, type Activity, type CoachPlan, type Equipment, type Experience, type Goal, type Profile, type TrainingTrack } from "./lib/coach";
 import { AUTH_PROVIDERS, beginCmineLogin, getCmineSession, type CmineUser } from "./lib/auth";
 import { languageOptions, type DisplayLanguage, type Locale } from "./lib/i18n";
-import { translator, DEFAULT_LOCALE } from "../packages/i18n/src";
-import { persistLocale } from "./lib/locale-client";
+import { useLocale } from "./lib/i18n-provider";
 import { localizeApiError } from "./lib/api-error";
 import { CONSENT_STORAGE_KEY, FALLBACK_DISCLAIMER_VERSION, FALLBACK_PRIVACY_VERSION, PRODUCT_VERSION, consentStamp } from "./lib/consent-versions";
 import { useDialog } from "./lib/use-dialog";
@@ -28,13 +27,13 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
   return <span className="field-label">{children}</span>;
 }
 
-export default function CoachApp({ initialLocale = DEFAULT_LOCALE }: { initialLocale?: Locale }) {
-  // Seeded from the server-resolved locale, so the switcher agrees with
-  // <html lang> instead of resetting to Chinese on every navigation — the old
-  // behavior made the English option unreachable in practice.
-  const [locale, setLocale] = useState<Locale>(initialLocale);
+export default function CoachApp() {
+  // The locale lives in the provider that wraps the whole app, not in this
+  // component. When it was local state here, switching language on the homepage
+  // left every other page in Chinese, and nested components had no way to reach
+  // the choice at all.
+  const { locale, t, setLocale: changeLocale } = useLocale();
   const lang: DisplayLanguage = locale === "zh" ? "zh" : "en";
-  const t = translator(locale);
   const [profile, setProfile] = useState<Profile>(defaultProfile);
   const [plan, setPlan] = useState<CoachPlan>(() => generatePlan(defaultProfile));
   const [generating, setGenerating] = useState(false);
@@ -66,11 +65,6 @@ export default function CoachApp({ initialLocale = DEFAULT_LOCALE }: { initialLo
   const consentDialogRef = useDialog(Boolean(user) && accepted === false, null);
   const loginDialogRef = useDialog(loginOpen, () => setLoginOpen(false));
   const adDialogRef = useDialog(adOpen, () => setAdOpen(false));
-
-  const changeLocale = async (next: Locale) => {
-    setLocale(next);
-    await persistLocale(next);
-  };
 
   useEffect(() => {
     queueMicrotask(() => {
