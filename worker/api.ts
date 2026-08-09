@@ -422,7 +422,7 @@ async function planRequest(request: Request, env: WorkerEnv): Promise<Response> 
     return errorJson("AI_NOT_CONFIGURED", "AI 教练尚未配置，计划没有生成，也不会消耗你的额度。", 503);
   }
   try {
-    const result = await generateLlmPlan(env, profile, user.id, tier);
+    const result = await generateLlmPlan(env, profile, user.id, tier, toLocale(user.locale));
     const planId = env.DB ? await savePlan(env, user.id, profile, result.plan, result.source, result.model, { startDate: requestedStartDate, timezone: requestedTimezone,
       changeSummary: ["更新阶段目标与本周训练", "根据训练条件重新编排动作", "保留安全与恢复边界"] }) : null;
     const version = planId ? await planVersionStatus(env, user.id, planId) : null;

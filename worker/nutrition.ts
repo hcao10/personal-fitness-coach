@@ -309,7 +309,7 @@ export async function analyzeMeal(env: WorkerEnv, user: StoredUser, mealId: stri
   try {
     const bytes = await object.arrayBuffer();
     const tier = await tierForUser(env, user.id);
-    const result = await generateMealVision(env, `data:image/jpeg;base64,${arrayBufferToBase64(bytes)}`, tier, user.id);
+    const result = await generateMealVision(env, `data:image/jpeg;base64,${arrayBufferToBase64(bytes)}`, tier, user.id, toLocale(user.locale));
     // Recorded immediately: assertAiBudget sums generation_runs, and the food
     // lookups below can throw, which would otherwise lose an already-billed
     // call from the spend total.

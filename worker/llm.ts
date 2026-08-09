@@ -28,6 +28,8 @@ type AiPlanOutput = {
 };
 
 import type { MealCandidate } from "../packages/api-contracts/src";
+import { DEFAULT_LOCALE, type Locale } from "../packages/i18n/src";
+import { systemPrompt } from "./prompts";
 export type { MealCandidate };
 
 type AiRoute = { provider: "cloudflare" | "openai" | "compatible"; model: string; priority: number };
@@ -525,14 +527,14 @@ function applyAiPlan(profile: Profile, base: CoachPlan, output: AiPlanOutput): C
   };
 }
 
-export async function generateLlmPlan(env: WorkerEnv, profile: Profile, safetyIdentifier?: string, tier: ProductTier = "free"): Promise<PlanGenerationResult> {
+export async function generateLlmPlan(env: WorkerEnv, profile: Profile, safetyIdentifier?: string, tier: ProductTier = "free", locale: Locale = DEFAULT_LOCALE): Promise<PlanGenerationResult> {
   await assertAiBudget(env, safetyIdentifier);
   const routes = (await routesFor(env, "training_plan", tier)).slice(0, 2);
   if (!routes.length) throw new Error("AI_NOT_CONFIGURED");
   const base = generatePlan(profile);
   const allowed = Object.values(EXERCISES).filter((exercise) => isExerciseAllowed(exercise, profile.equipment));
   const trainingDays = base.schedule.filter((day) => !day.restDay).map((day) => day.dayIndex);
-  const system = "You are Cmine Fit's planning engine. Build one safe and realistic training week. This is general fitness guidance, not medical diagnosis or rehabilitation. Never change the fixed metrics or training days. Use only allowed exercise IDs. Respect experience, equipment, limitations and pain. Explain the user-facing rationale without private chain-of-thought. Include clear stop conditions. Return natural Chinese and English.";
+  const system = systemPrompt("training_plan", locale);
   const input = JSON.stringify({
     profile,
     fixed_metrics: {
@@ -570,11 +572,11 @@ export async function generateLlmPlan(env: WorkerEnv, profile: Profile, safetyId
   throw lastError instanceof Error ? lastError : new Error("AI_GENERATION_FAILED");
 }
 
-export async function generateMealVision(env: WorkerEnv, imageDataUrl: string, tier: ProductTier, userId?: string | null): Promise<MealVisionResult> {
+export async function generateMealVision(env: WorkerEnv, imageDataUrl: string, tier: ProductTier, userId?: string | null, locale: Locale = DEFAULT_LOCALE): Promise<MealVisionResult> {
   await assertAiBudget(env, userId);
   const routes = (await routesFor(env, "meal_vision", tier)).slice(0, 2);
   if (!routes.length) throw new Error("AI_NOT_CONFIGURED");
-  const system = "Identify the visible foods in this meal photo. Do not claim exact calories or exact mass from one image. Return conservative mass ranges, preparation clues, confidence, and uncertainty. Mixed dishes, hidden oils, sauces and unclear scale must set needs_review=true. Return Chinese and English food names.";
+  const system = systemPrompt("meal_vision", locale);
   let lastError: unknown = null;
   for (const route of routes) {
     try {
@@ -625,7 +627,7 @@ export async function generateMealVision(env: WorkerEnv, imageDataUrl: string, t
 
 export async function generateCoachChat(env: WorkerEnv, input: {
   message: string;
-  locale: "zh" | "en";
+  locale: Locale;
   context: Record<string, unknown>;
   history: Array<{ role: "user" | "assistant"; content: string }>;
   safetyIdentifier: string;
@@ -672,7 +674,7 @@ export async function generateCoachChat(env: WorkerEnv, input: {
       } },
     },
   };
-  const system = `You are Cmine Fit Coach, a careful long-term fitness assistant. Answer in ${input.locale === "zh" ? "natural Simplified Chinese" : "natural English"}. Structure the reply as: direct conclusion, personal evidence, action today, and limitations when relevant. Use only supplied facts and source IDs. Do not invent completed workouts, health facts, citations, or precision. Never diagnose disease or expose private reasoning. Pain >=4/10 must never lead to greater intensity. High-risk symptoms require stopping training and timely professional help. Proposed actions are previews that require explicit user confirmation. Every action must describe before, after, reason, impact and reversibility. Use null for action fields that do not apply. Set safety_flag.high_risk to true whenever the user describes pain at or above 4 out of 10 in any phrasing, chest pain or pressure, fainting or dizziness, breathing difficulty, numbness, inability to bear weight, a suspected injury, or disordered eating; classify it with the matching category and state the detected signal in detail. When high_risk is true, propose no intensity increases.`;
+  const system = systemPrompt("coach_chat", input.locale);
   const user = JSON.stringify({ message: input.message, context: input.context, recent_messages: input.history.slice(-12), reviewed_knowledge: input.knowledge || [] });
   let lastError: unknown = null;
   for (const route of routes) {

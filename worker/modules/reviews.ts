@@ -7,6 +7,7 @@ import type { StoredUser } from "../db";
 import { activatePlan, activeCycleForUser, activePlanForUser, addLocalDays, localDateInTimezone, savePlan } from "../db";
 import { consumeCapability, refundCapability, tierInfoForUser } from "../product";
 import { generateCoachChat } from "../llm";
+import { REVIEW_EXPLANATION_REQUEST } from "../prompts/tasks";
 
 function mondayOf(date = new Date()) {
   const value = new Date(date); const offset = (value.getUTCDay() + 6) % 7;
@@ -141,7 +142,7 @@ export async function generateReview(env: WorkerEnv, user: StoredUser, id: strin
   if (fullAccess) {
     let explanation = recommendation.explanation;
     try {
-      const ai = await generateCoachChat(env, { message: "请用简洁自然的语言解释这份周度复盘，只解释依据和下一步，不新增事实。",
+      const ai = await generateCoachChat(env, { message: REVIEW_EXPLANATION_REQUEST,
         locale: toLocale(user.locale), context: { metrics, recommendation, engine, checkin: parseJson(review.checkin_json), profile: active.profile }, history: [], safetyIdentifier: user.id }, tierInfo.tier);
       explanation = ai.reply;
     } catch { /* deterministic recommendation remains authoritative */ }
