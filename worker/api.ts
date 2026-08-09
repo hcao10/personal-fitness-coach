@@ -78,12 +78,19 @@ import { expoPushConfigured, runNotifications } from "./modules/notifications";
 import { habitSummary, upsertHabitCommitment } from "./modules/habits";
 import { progressSeries } from "./modules/progress";
 import { enforceRateLimit, RATE_RULES } from "./modules/rate-limit";
+import { isShippableLocale } from "../packages/i18n/src";
 
 const json = (body: unknown, status = 200, headers?: HeadersInit) => Response.json(body, {
   status,
   headers: { "cache-control": "no-store", ...headers },
 });
-const errorJson = (error: string, message: string, status: number, headers?: HeadersInit) => json({ error, message }, status, headers);
+// `error` has always been a stable machine code, which is what makes these
+// localizable at all. The server deliberately does NOT translate: a Worker
+// isolate serves concurrent requests, so any per-request locale held here would
+// be a race, and the client knows the user's language better anyway. Clients
+// localize via errorMessage(code, locale) and fall back to this authored text.
+const errorJson = (error: string, message: string, status: number, headers?: HeadersInit) =>
+  json({ error, message }, status, headers);
 // AI spend windows are keyed on the UTC date (see assertAiBudget), so a budget
 // 429 clears at UTC midnight regardless of the user's own timezone.
 const secondsUntilUtcMidnight = () => {
@@ -786,6 +793,18 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
       habitSummary(env, user.id, user.timezone).catch(() => null),
     ]);
     return json({ ...home, habit });
+  }
+  if (url.pathname === "/api/v1/me/locale" && request.method === "PUT") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    const body = await request.json().catch(() => null) as { locale?: unknown } | null;
+    if (!isShippableLocale(body?.locale)) return errorJson("INVALID_LOCALE", "不支持的语言。", 400);
+    // users.locale drives everything that runs without a browser: LLM reply
+    // language, push notifications and the weekly coach letter. Before this
+    // endpoint existed the column was written once as 'zh' and never updated,
+    // so every user received Chinese regardless of what they picked.
+    if (env.DB) await env.DB.prepare("UPDATE users SET locale=?,updated_at=? WHERE id=?")
+      .bind(body.locale, new Date().toISOString(), user.id).run();
+    return json({ ok: true, locale: body.locale });
   }
   if (url.pathname === "/api/v1/progress/series" && request.method === "GET") {
     const user = await requireUser(request, env); return user instanceof Response ? user : json(await progressSeries(env, user.id));

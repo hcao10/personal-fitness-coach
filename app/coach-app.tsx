@@ -5,7 +5,9 @@ import { useEffect, useRef, useState } from "react";
 import { defaultProfile, generatePlan, type Activity, type CoachPlan, type Equipment, type Experience, type Goal, type Profile, type TrainingTrack } from "./lib/coach";
 import { AUTH_PROVIDERS, beginCmineLogin, getCmineSession, type CmineUser } from "./lib/auth";
 import { languageOptions, type DisplayLanguage, type Locale } from "./lib/i18n";
-import { translator } from "../packages/i18n/src";
+import { translator, DEFAULT_LOCALE } from "../packages/i18n/src";
+import { persistLocale } from "./lib/locale-client";
+import { localizeApiError } from "./lib/api-error";
 import { CONSENT_STORAGE_KEY, FALLBACK_DISCLAIMER_VERSION, FALLBACK_PRIVACY_VERSION, PRODUCT_VERSION, consentStamp } from "./lib/consent-versions";
 import { useDialog } from "./lib/use-dialog";
 
@@ -26,8 +28,11 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
   return <span className="field-label">{children}</span>;
 }
 
-export default function CoachApp() {
-  const [locale, setLocale] = useState<Locale>("zh");
+export default function CoachApp({ initialLocale = DEFAULT_LOCALE }: { initialLocale?: Locale }) {
+  // Seeded from the server-resolved locale, so the switcher agrees with
+  // <html lang> instead of resetting to Chinese on every navigation — the old
+  // behavior made the English option unreachable in practice.
+  const [locale, setLocale] = useState<Locale>(initialLocale);
   const lang: DisplayLanguage = locale === "zh" ? "zh" : "en";
   const t = translator(locale);
   const [profile, setProfile] = useState<Profile>(defaultProfile);
@@ -61,6 +66,11 @@ export default function CoachApp() {
   const consentDialogRef = useDialog(Boolean(user) && accepted === false, null);
   const loginDialogRef = useDialog(loginOpen, () => setLoginOpen(false));
   const adDialogRef = useDialog(adOpen, () => setAdOpen(false));
+
+  const changeLocale = async (next: Locale) => {
+    setLocale(next);
+    await persistLocale(next);
+  };
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -138,7 +148,7 @@ export default function CoachApp() {
     let revealPlan = false;
     try {
       const response = await fetch("/api/plans", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ profile, consent: accepted === true, startDate, timezone }) });
-      const result = await response.json() as { plan?: CoachPlan; planId?: string | null; planStatus?: "active" | "draft"; source?: "llm" | "rules"; message?: string };
+      const result = await response.json() as { plan?: CoachPlan; planId?: string | null; planStatus?: "active" | "draft"; source?: "llm" | "rules"; error?: string; message?: string };
       if (response.ok && result.plan) {
         const source = result.source === "llm" ? "llm" : "rules";
         setPlan(result.plan);
@@ -157,7 +167,7 @@ export default function CoachApp() {
       } else {
         setPlanReady(false);
         setPlanSource(null);
-        setToast(result.message || (t("home.theAiCoachIs")));
+        setToast(localizeApiError(result, locale, t("home.theAiCoachIs")));
       }
     } catch {
       setPlanReady(false);
@@ -203,7 +213,7 @@ export default function CoachApp() {
         <nav className="topnav" aria-label="Primary navigation"><a href="#coach">{t("home.navCoach")}</a><a href="/nutrition">{t("home.linkNutrition")}</a><a href="#editions">{t("home.navAbout")}</a><a href="/pricing">{t("home.navPricing")}</a><a href="/admin">{t("home.navAdmin")}</a></nav>
         <div className="header-actions">
           <label className="language-select"><span className="sr-only">Language</span>
-            <select value={locale} onChange={(event) => setLocale(event.target.value as Locale)}>
+            <select value={locale} onChange={(event) => void changeLocale(event.target.value as Locale)}>
               {languageOptions.map((language) => <option key={language.value} value={language.value}>{language.label}</option>)}
             </select>
           </label>
