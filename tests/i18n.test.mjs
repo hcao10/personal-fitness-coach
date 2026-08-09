@@ -49,6 +49,29 @@ test("non-Chinese locales are actually translated, not passthrough", () => {
   }
 });
 
+// The failure mode of a large, partly machine-assisted catalog: a value that is
+// not identical to the Chinese — so the passthrough check above misses it — but
+// still has Chinese left inside it. A half-translated string reaches users
+// looking deliberate.
+test("no non-Chinese locale leaks Chinese characters", () => {
+  const HAN = /\p{Script=Han}/u;
+  for (const locale of LOCALES.filter((value) => value !== "zh")) {
+    const leaked = flatten(MESSAGES[locale]).filter(([, value]) => HAN.test(value));
+    assert.deepEqual(leaked.map(([key]) => key), [],
+      `${locale} contains Chinese characters — the catalog is only partly translated`);
+  }
+});
+
+// Guards a migration that quietly skipped a page: the namespace would exist,
+// compile, and contain nothing, while the page kept its hardcoded strings.
+test("every product-page namespace actually carries copy", () => {
+  const PAGE_NAMESPACES = ["home", "today", "coach", "nutrition", "progress", "account", "pricing", "onboarding", "exercises", "auth", "shell"];
+  for (const namespace of PAGE_NAMESPACES) {
+    const entries = flatten(MESSAGES.zh[namespace] || {});
+    assert.ok(entries.length > 0, `namespace "${namespace}" is empty — its page was not migrated`);
+  }
+});
+
 test("the Chinese catalog carries no untranslated English sentences", () => {
   // Guards the reverse mistake: an English string left behind in the zh
   // catalog. Short Latin values (units, "kcal", design labels) are fine; a long

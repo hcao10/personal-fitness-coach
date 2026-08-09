@@ -1,6 +1,25 @@
 import type { Locale } from "../locales.ts";
+import type { Widen } from "./widen.ts";
 import { homeZh } from "./home.zh.ts";
 import { homeEn } from "./home.en.ts";
+import { todayZh } from "./today.zh.ts";
+import { todayEn } from "./today.en.ts";
+import { coachZh } from "./coach.zh.ts";
+import { coachEn } from "./coach.en.ts";
+import { nutritionZh } from "./nutrition.zh.ts";
+import { nutritionEn } from "./nutrition.en.ts";
+import { progressZh } from "./progress.zh.ts";
+import { progressEn } from "./progress.en.ts";
+import { accountZh } from "./account.zh.ts";
+import { accountEn } from "./account.en.ts";
+import { pricingZh } from "./pricing.zh.ts";
+import { pricingEn } from "./pricing.en.ts";
+import { onboardingZh } from "./onboarding.zh.ts";
+import { onboardingEn } from "./onboarding.en.ts";
+import { exercisesZh } from "./exercises.zh.ts";
+import { exercisesEn } from "./exercises.en.ts";
+import { authZh } from "./auth.zh.ts";
+import { authEn } from "./auth.en.ts";
 
 // Chinese is the schema. Every other locale is `satisfies Messages`, so a
 // missing key, an extra key or a wrong type is a compile error rather than a
@@ -51,15 +70,20 @@ export const zh = {
     MEAL_IMAGE_TOO_LARGE: "图片太大，请换一张或降低分辨率。",
     DELETE_CONFIRMATION_REQUIRED: "删除账户需要在请求中确认。",
     INVALID_HABIT_COMMITMENT: "训练时间承诺无效：需要 HH:MM 时间，地点不超过 60 字。",
+    INVALID_LOCALE: "不支持的语言。",
   },
   home: homeZh,
+  today: todayZh,
+  coach: coachZh,
+  nutrition: nutritionZh,
+  progress: progressZh,
+  account: accountZh,
+  pricing: pricingZh,
+  onboarding: onboardingZh,
+  exercises: exercisesZh,
+  auth: authZh,
 } as const;
 
-// The Chinese catalog is `as const`, which would otherwise demand that every
-// other locale repeat the *same literal strings*. Widening the leaves to
-// `string` keeps what actually matters — identical key sets, identical shape —
-// while letting each locale carry its own text.
-type Widen<T> = { [K in keyof T]: T[K] extends string ? string : Widen<T[K]> };
 export type Messages = Widen<typeof zh>;
 
 export const en = {
@@ -102,8 +126,18 @@ export const en = {
     MEAL_IMAGE_TOO_LARGE: "That image is too large — try another one or lower the resolution.",
     DELETE_CONFIRMATION_REQUIRED: "Deleting your account requires an explicit confirmation in the request.",
     INVALID_HABIT_COMMITMENT: "Invalid training commitment: a HH:MM time is required and the place must be 60 characters or fewer.",
+    INVALID_LOCALE: "That language is not supported.",
   },
   home: homeEn,
+  today: todayEn,
+  coach: coachEn,
+  nutrition: nutritionEn,
+  progress: progressEn,
+  account: accountEn,
+  pricing: pricingEn,
+  onboarding: onboardingEn,
+  exercises: exercisesEn,
+  auth: authEn,
 } as const satisfies Messages;
 
 export const MESSAGES: Record<Locale, Messages> = { zh, en };

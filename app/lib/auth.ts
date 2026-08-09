@@ -1,5 +1,8 @@
 "use client";
 
+import { translator } from "../../packages/i18n/src";
+import { readLocale } from "./locale-client";
+
 export type CmineUser = {
   sub: string;
   email?: string | null;
@@ -22,15 +25,19 @@ export async function getCmineSession(): Promise<{ user: CmineUser | null; point
 }
 
 export async function beginCmineLogin(returnTo = "/"): Promise<{ ok: boolean; message?: string }> {
+  // Not a component, so useT() is unavailable here. The locale is read from the
+  // cookie the language switcher persists, at call time rather than at module
+  // scope, so a switch during the session is picked up.
+  const t = translator(readLocale());
   try {
     const response = await fetch("/api/auth/config", { cache: "no-store" });
     const config = await response.json() as { cmine?: boolean };
-    if (!config.cmine) return { ok: false, message: "Cmine ID 登录暂时不可用，请稍后再试。" };
+    if (!config.cmine) return { ok: false, message: t("auth.signInUnavailable") };
     const safeReturnTo = returnTo.startsWith("/") && !returnTo.startsWith("//") ? returnTo : "/";
     window.location.assign(`/api/auth/cmine/start?returnTo=${encodeURIComponent(safeReturnTo)}`);
     return { ok: true };
   } catch {
-    return { ok: false, message: "暂时无法连接登录服务，请稍后重试。" };
+    return { ok: false, message: t("auth.signInServiceUnreachable") };
   }
 }
 

@@ -1,0 +1,140 @@
+// Copy for app/coach. Chinese is the schema: a key added here must be
+// added to coach.en.ts or the build fails.
+export const coachZh = {
+  // Page chrome
+  eyebrow: "COACH / 长期陪伴",
+  title: "根据现实状态，决定下一步",
+  memoryChip: "Coach 对我的了解 · {count}",
+  newChatAction: "＋ 新对话",
+  // Default title for a conversation the client creates on the user's behalf.
+  newChatTitle: "新的对话",
+
+  // Daily brief card
+  dailyBriefKicker: "DAILY BRIEF / 今日简报",
+  dataStatePlanOnly: "主要根据当前计划",
+  dataStatePersonalized: "结合最近记录",
+  dataStatePartial: "部分个性化",
+
+  // Phase card
+  currentPhase: "当前阶段",
+  weekProgress: "第 {current}/{total} 周",
+  restDay: "恢复日",
+  noActivePlan: "还没有生效计划",
+  noActivePlanHint: "先完成建档，Coach 才能结合目标和现实条件陪你执行。",
+  quotaLabel: "本周期 Coach 消息",
+  quotaRemaining: "{count} 条可用",
+
+  // Suggested prompts
+  quickAskTitle: "现在可以问",
+  quickAskHint: "Coach 会结合你的计划与最近记录，不会编造不存在的数据。",
+  promptDeload: "今天状态不好，要不要减量？",
+  promptSwapExercise: "帮我替换一个更适合当前器械的动作",
+  promptWhyThisPlan: "为什么这样安排我的训练？",
+  promptNoProgress: "我最近几周为什么没有进展？",
+
+  // Conversation list and empty chat
+  conversationsTitle: "连续对话",
+  emptyTitle: "不是搜索答案，是一起决定下一步",
+  emptyHint: "问计划原因、动作替代、恢复、饮食或停滞。任何修改都会先给你看，再由你确认。",
+
+  // Message body
+  you: "你",
+  thinking: "正在结合你的计划和记录…",
+  basisLabel: "与你有关的依据",
+  sourcesLabel: "参考资料",
+
+  // Action proposals. Every one of these is a preview: nothing is applied until
+  // the reader accepts it, and accepting still leaves the plan change to be
+  // confirmed on the plan versions page.
+  actionReplaceExercise: "替换动作",
+  actionShortenSession: "缩短训练",
+  actionAdjustLoad: "调整负荷",
+  actionRescheduleWorkout: "训练改期",
+  actionPlanAdjustment: "生成计划调整",
+  actionLogWorkout: "创建训练草稿",
+  actionLogMeasurement: "创建测量草稿",
+  actionCreateMealDraft: "创建餐食草稿",
+  actionScheduleReview: "发起复盘",
+  actionCurrent: "当前",
+  actionProposed: "建议",
+  actionKeep: "保持当前",
+  actionAccept: "接受并继续",
+  actionAccepted: "已接受",
+  actionRejected: "已保持当前",
+  actionExpired: "已过期",
+  actionFailed: "执行失败",
+  actionUnavailable: "这条建议暂时无法执行。",
+  actionExpiredNotice: "这条建议已过期，请让 Coach 根据最新计划重新判断。",
+  actionAcceptedNotice: "建议已处理；正式计划仍需在版本页面确认。",
+  actionRejectedNotice: "已保留当前安排。",
+
+  // Message feedback
+  feedbackQuestion: "这条建议有帮助吗？",
+  feedbackHelpful: "有帮助",
+  feedbackNeedsWork: "需改进",
+  feedbackThanks: "谢谢，你的反馈会帮助我们改进 Coach。",
+  feedbackNoted: "已记录。后续建议会优先做到更清楚、更可执行。",
+
+  // Composer and chat errors
+  composerPlaceholder: "告诉 Coach 你今天的状态，或问一个训练问题…",
+  stop: "停止",
+  send: "发送 ↑",
+  retry: "重试",
+  viewEntitlements: "查看权益",
+  replyUnavailable: "Coach 暂时无法回复。",
+  sendFailed: "发送失败",
+
+  // Coach memory page
+  memoryEyebrow: "COACH MEMORY / 个性化控制",
+  memoryTitle: "你决定 Coach 可以了解什么",
+  backToCoach: "← 返回 Coach",
+  memoryLoading: "正在读取个性化设置…",
+
+  personalizationSection: "01 / 个性化方式",
+  personalizationHeading: "不是黑盒记忆，全部由你控制",
+  personalizationHint: "关闭记忆后，Coach 不再把稳定偏好加入后续对话。训练档案仍用于生成你主动请求的计划。",
+  memoryToggle: "使用 Coach 记忆",
+  memoryToggleHint: "在后续咨询中使用你保存的日程、训练和饮食偏好。",
+  proactiveToggle: "主动建议",
+  proactiveToggleHint: "在今日简报和复盘中显示少量、可执行的提醒。",
+  answerStyleLabel: "回答方式",
+  modePersonalized: "结合个人数据",
+  modeEducation: "仅通用教育支持",
+  toneLabel: "表达风格",
+  toneSupportive: "温和支持",
+  toneDirect: "直接明确",
+  toneConcise: "简洁",
+
+  knowledgeSection: "02 / Coach 对我的了解",
+  knowledgeHeading: "可查看、可修正、可删除",
+  knowledgeHint: "档案信息来自你的建档；主动提供的信息由你保存；系统观察必须标明来源和更新时间。",
+  sourceProfile: "训练档案",
+  sourceObserved: "系统观察",
+  sourceDeclared: "你主动提供",
+  editInProfile: "在训练档案中修改 ↗",
+  deleteMemory: "删除",
+  memoryEmpty: "Coach 还没有保存额外偏好。你可以从下面添加第一条。",
+
+  addSection: "03 / 主动告诉 Coach",
+  addHeading: "保存一条长期有用的信息",
+  memoryKeyGoal: "当前目标",
+  memoryKeyEquipment: "可用器械",
+  memoryKeyLimitations: "伤病与动作限制",
+  memoryKeySchedule: "日程偏好",
+  memoryKeyTrainingPreference: "训练偏好",
+  memoryKeyFoodPreference: "饮食偏好",
+  memoryKeyTravel: "旅行与临时条件",
+  memoryKeyOther: "其他",
+  addPlaceholder: "例如：工作日通常只能在晚上训练，最多 35 分钟。",
+  saving: "保存中…",
+  remember: "让 Coach 记住",
+  proLocked: "Pro 解锁长期记忆",
+  sensitiveHint: "请不要保存密码、身份证号或医疗诊断等不必要的敏感信息。",
+  freeTierHint: "免费版仍可管理训练档案和个性化开关；Pro 才会把日程与稳定偏好带入后续对话。",
+
+  preferenceSaveFailed: "设置暂时没有保存成功，请重试。",
+  memoryProRequired: "保存长期 Coach 记忆需要 Cmine Fit Pro；训练档案和隐私控制仍然可用。",
+  memorySaveFailed: "这条信息暂时没有保存成功，请重试。",
+  memorySaved: "Coach 已记住。你随时可以修改或删除。",
+  memoryDeleteFailed: "删除失败，请重试。",
+} as const;

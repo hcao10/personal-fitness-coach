@@ -157,7 +157,7 @@ plans/preview 可匿名调用并限速；保存、积分、订阅与历史数据
 - D1 持久化用户、资料、计划、测量、训练反馈、积分流水、设置和审计事件。
 - OpenAI Responses API 使用显式配置的 `OPENAI_MODEL`（无默认值）、`reasoning.effort=medium` 和严格 JSON Schema。
 - BMR、TDEE、热量下限、宏量营养、训练频率、器械限制由 `coach-core` 决定；模型只能编排与解释。
-- `planRationale` 是面向用户的双语安排理由，不是也不保存模型的隐藏思维链。
+- `planRationale` 是面向用户的安排理由，不是也不保存模型的隐藏思维链。它由模型撰写，因此是**单语言**的，创作语言记录在 `insights.contentLocale`；与之相对，`stopConditions`、动作名与日程标题是人审过的内容，多语言并按读者语言渲染。判据见 HARDENING_PLAN 的阶段 7。
 - 用户中心支持资料恢复、计划历史、测量趋势、训练完成/反馈、导出和删除。
 - 管理后台统一使用 Cmine ID 会话，并叠加 Cmine Fit 自身的 `admin` 产品角色；`ADMIN_EMAILS` 仅用于首次引导管理员，写操作记录 `admin_audit_events`。
 - PWA Manifest 和移动端布局是第二阶段原生 App 之前的可安装交付形态。
