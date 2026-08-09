@@ -6,6 +6,38 @@ export const progressEn = {
   eyebrow: "PROGRESS / Long-term view",
   title: "See what changed, then decide what's next",
 
+  // Keyed by the engine's machine `kind`. The deload wording is safety copy and
+  // keeps the same force as the Chinese: "stop … and consult a professional",
+  // not a softened suggestion.
+  reviewKind: {
+    collect_more_data: {
+      title: "Log one more week first",
+      explanation: "Fewer than two qualifying sessions this week, so there is not enough to judge whether the plan needs changing.",
+      change1: "Stay on the current plan",
+      change2: "Record RPE and pain after each session",
+    },
+    deload: {
+      title: "Take a deload week",
+      explanation: "Pain or training intensity has reached the range where adding more load is not appropriate.",
+      change1: "Cut total weekly sets by 10%",
+      change2: "Hold load targets where they are",
+      change3: "If pain persists, stop the movement and consult a professional",
+    },
+    progress: {
+      title: "Adjust the plan slightly",
+      explanation: "Three consecutive qualifying weeks with steady execution, but the trend is behind target.",
+      change1: "Increase total weekly sets by up to 10%",
+      change2: "Increase load targets on the main lifts by up to 5%",
+      change3: "Keep your existing equipment and movement limits",
+    },
+    hold: {
+      title: "Keep the current rhythm",
+      explanation: "Execution and recovery show no signal that the plan needs changing yet.",
+      change1: "Keep the current training structure",
+      change2: "Keep logging recovery and pain next week",
+    },
+  },
+
   // Weekly review panel.
   reviewEyebrow: "This week's review",
   reviewPrompt: "Tell us how you recovered this week",

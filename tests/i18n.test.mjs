@@ -88,6 +88,32 @@ test("translator resolves keys and interpolates", () => {
   assert.equal(translator("zh")("nav.today"), "今日");
 });
 
+// Grouping used to be a trap: MessageKey stopped at two levels, so a nested
+// object typechecked as a key and rendered "[object Object]". With a
+// thousand-key catalog, grouping is how it stays readable — it has to resolve.
+test("nested keys resolve at any depth", () => {
+  assert.equal(translator("en")("progress.reviewKind.deload.title"), "Take a deload week");
+  assert.match(translator("zh")("progress.reviewKind.deload.change3"), /停止相关动作/);
+});
+
+test("a key naming a group returns the key, never [object Object]", () => {
+  // Unreachable through the type system; this covers a value that crossed a
+  // runtime boundary, where a visible key beats a rendered object.
+  assert.equal(translator("en")("progress.reviewKind"), "progress.reviewKind");
+  assert.equal(translator("en")("nope.not.a.key"), "nope.not.a.key");
+});
+
+// The deload branch fires at pain >= 4/10 — the same threshold the coach safety
+// screen uses. Whatever language the reader picked, they must get the
+// stop-and-consult instruction, not another language's copy of it.
+test("the deload recommendation carries its safety instruction in every locale", () => {
+  for (const locale of SHIPPABLE_LOCALES) {
+    const bullets = MESSAGES[locale].progress.reviewKind.deload;
+    assert.ok(bullets.change3.trim().length > 0, `${locale} deload is missing its safety bullet`);
+  }
+  assert.match(MESSAGES.en.progress.reviewKind.deload.change3, /consult a professional/i);
+});
+
 test("format leaves unknown placeholders visible instead of blanking them", () => {
   assert.equal(format("hello {name}", { name: "world" }), "hello world");
   assert.equal(format("hello {missing}", {}), "hello {missing}");

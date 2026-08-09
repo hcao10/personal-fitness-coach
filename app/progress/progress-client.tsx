@@ -5,18 +5,52 @@ import ProductShell from "../components/product-shell";
 import { beginCmineLogin } from "../lib/auth";
 import { useLocale } from "../lib/i18n-provider";
 import { localizeApiError, type ApiErrorBody } from "../lib/api-error";
-import { numberFormatter, pick, type LocalizedPartial } from "../../packages/i18n/src";
+import { numberFormatter, pick, type LocalizedPartial, type MessageKey } from "../../packages/i18n/src";
 
 // The engine strings the API sends (`deloadReason`, `teaser`) are localized on
 // the server in every locale it supports — this file used to read `.zh` off
 // them, so an English reader got Chinese engine text. They are typed as
 // localized values now and read through `pick`.
 type ReviewEngine = { deloadRecommended?: boolean; deloadReason?: LocalizedPartial | null; adjustmentCount?: number; stagnationCount?: number; teaser?: LocalizedPartial | null };
-type Review = { id: string; weekStart: string; status: string; plateau: boolean; metrics?: { completedSessions: number; adherencePct: number; averageRpe: number | null; maxPain: number; weightTrendKgPerWeek: number | null }; recommendation?: { title: string; explanation: string; changes: string[]; locked?: boolean; engine?: ReviewEngine } };
+// `kind` is the engine's machine verdict; `title`/`explanation`/`changes` are the
+// Chinese prose the domain package emits alongside it. The prose is only usable
+// for a Chinese reader, so everything below renders from `kind`.
+type ReviewKind = "collect_more_data" | "deload" | "progress" | "hold";
+type Review = { id: string; weekStart: string; status: string; plateau: boolean; metrics?: { completedSessions: number; adherencePct: number; averageRpe: number | null; maxPain: number; weightTrendKgPerWeek: number | null }; recommendation?: { kind?: ReviewKind; title: string; explanation: string; changes: string[]; locked?: boolean; engine?: ReviewEngine } };
+
+// Listed explicitly rather than derived, because each kind has a different
+// number of bullets and the compiler checks each key against the catalog.
+const REVIEW_CHANGE_KEYS = {
+  collect_more_data: ["progress.reviewKind.collect_more_data.change1", "progress.reviewKind.collect_more_data.change2"],
+  deload: ["progress.reviewKind.deload.change1", "progress.reviewKind.deload.change2", "progress.reviewKind.deload.change3"],
+  progress: ["progress.reviewKind.progress.change1", "progress.reviewKind.progress.change2", "progress.reviewKind.progress.change3"],
+  hold: ["progress.reviewKind.hold.change1", "progress.reviewKind.hold.change2"],
+} as const satisfies Record<ReviewKind, readonly MessageKey[]>;
+
+const isReviewKind = (value: unknown): value is ReviewKind =>
+  Object.prototype.hasOwnProperty.call(REVIEW_CHANGE_KEYS, value as string);
 export default function ProgressClient() {
   const { locale, t } = useLocale();
   const [reviews, setReviews] = useState<Review[]>([]); const [recovery, setRecovery] = useState(3); const [sleep, setSleep] = useState(3); const [pain, setPain] = useState(0); const [busy, setBusy] = useState(false); const [message, setMessage] = useState("");
   const load = async () => { const response = await fetch("/api/v1/reviews", { cache: "no-store" }); if (response.status === 401) { await beginCmineLogin("/progress"); return; } if (response.ok) setReviews((await response.json() as { reviews: Review[] }).reviews); };
+  // Reviews stored before the engine recorded a `kind` keep their Chinese prose;
+  // showing it to a Chinese reader is right, and to anyone else it would not be,
+  // so they get an honest placeholder instead of another language's text.
+  const reviewTitle = (review: Review | undefined, fallback: string) => {
+    const kind = review?.recommendation?.kind;
+    if (isReviewKind(kind)) return t(`progress.reviewKind.${kind}.title`);
+    return locale === "zh" && review?.recommendation?.title ? review.recommendation.title : fallback;
+  };
+  const reviewExplanation = (review: Review) => {
+    const kind = review.recommendation?.kind;
+    if (isReviewKind(kind)) return t(`progress.reviewKind.${kind}.explanation`);
+    return locale === "zh" ? review.recommendation?.explanation || "" : "";
+  };
+  const reviewChanges = (review: Review): string[] => {
+    const kind = review.recommendation?.kind;
+    if (isReviewKind(kind)) return REVIEW_CHANGE_KEYS[kind].map((key) => t(key));
+    return locale === "zh" ? review.recommendation?.changes || [] : [];
+  };
   useEffect(() => {
     void fetch("/api/v1/reviews", { cache: "no-store" }).then(async (response) => {
       if (response.status === 401) { await beginCmineLogin("/progress"); return; }
@@ -26,12 +60,12 @@ export default function ProgressClient() {
   const generate = async () => { if (!current) return; setBusy(true); setMessage(""); const checked = await fetch(`/api/v1/reviews/${current.id}/check-in`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ recovery, sleep, pain }) }); if (checked.ok) { const generated = await fetch(`/api/v1/reviews/${current.id}/generate`, { method: "POST" }); if (!generated.ok) setMessage(localizeApiError(await generated.json().catch(() => null) as ApiErrorBody | null, locale, t("progress.generateFailed"))); } await load(); setBusy(false); };
   const decide = async (decision: "accept" | "reject") => { if (!current) return; setBusy(true); const response = await fetch(`/api/v1/reviews/${current.id}/${decision}`, { method: "POST" }); setMessage(response.ok ? decision === "accept" ? t("progress.planActivated") : t("progress.planKept") : t("progress.actionFailed")); await load(); setBusy(false); };
   return <ProductShell active="/progress" eyebrow={t("progress.eyebrow")} title={t("progress.title")}>
-    <div className="progress-grid"><section className="review-card"><span>{t("progress.reviewEyebrow")}</span><h2>{current?.recommendation?.title || t("progress.reviewPrompt")}</h2>{current?.recommendation ? <><p>{current.recommendation.explanation}</p><div className="review-metrics"><article><b>{current.metrics?.adherencePct || 0}%</b><span>{t("progress.metricAdherence")}</span></article><article><b>{current.metrics?.completedSessions || 0}</b><span>{t("progress.metricSessions")}</span></article><article><b>{current.metrics?.averageRpe ?? "—"}</b><span>{t("progress.metricAverageRpe")}</span></article><article><b>{current.metrics?.maxPain || 0}/10</b><span>{t("progress.metricPeakPain")}</span></article></div>{current.recommendation.locked ? <>
+    <div className="progress-grid"><section className="review-card"><span>{t("progress.reviewEyebrow")}</span><h2>{current?.recommendation ? reviewTitle(current, t("progress.reviewPrompt")) : t("progress.reviewPrompt")}</h2>{current?.recommendation ? <><p>{reviewExplanation(current)}</p><div className="review-metrics"><article><b>{current.metrics?.adherencePct || 0}%</b><span>{t("progress.metricAdherence")}</span></article><article><b>{current.metrics?.completedSessions || 0}</b><span>{t("progress.metricSessions")}</span></article><article><b>{current.metrics?.averageRpe ?? "—"}</b><span>{t("progress.metricAverageRpe")}</span></article><article><b>{current.metrics?.maxPain || 0}/10</b><span>{t("progress.metricPeakPain")}</span></article></div>{current.recommendation.locked ? <>
         {current.recommendation.engine?.deloadRecommended && current.recommendation.engine.deloadReason && <p>{pick(current.recommendation.engine.deloadReason, locale)}</p>}
         <p>{t("progress.engineSummary", { count: current.recommendation.engine?.adjustmentCount || 0, stalled: (current.recommendation.engine?.stagnationCount || 0) > 0 ? t("progress.engineStagnation", { count: current.recommendation.engine!.stagnationCount! }) : "", teaser: pick(current.recommendation.engine?.teaser, locale) || "" })}</p>
         <div className="review-actions"><a className="review-generate" href="/pricing">{t("progress.unlockAdjustments")}</a></div>
-      </> : <><ul>{current.recommendation.changes.map((change) => <li key={change}>{change}</li>)}</ul>{current.status === "generated" && <div className="review-actions"><button onClick={() => void decide("reject")}>{t("progress.keepCurrentPlan")}</button><button onClick={() => void decide("accept")}>{t("progress.acceptAdjustments")}</button></div>}</>}</> : <><div className="review-sliders"><label>{t("progress.recoveryLabel")} <b aria-hidden="true">{recovery}/5</b><input type="range" aria-label={t("progress.recoveryLabel")} aria-valuetext={`${recovery} / 5`} min="1" max="5" value={recovery} onChange={(event) => setRecovery(Number(event.target.value))} /></label><label>{t("progress.sleepLabel")} <b aria-hidden="true">{sleep}/5</b><input type="range" aria-label={t("progress.sleepLabel")} aria-valuetext={`${sleep} / 5`} min="1" max="5" value={sleep} onChange={(event) => setSleep(Number(event.target.value))} /></label><label>{t("progress.painLabel")} <b aria-hidden="true">{pain}/10</b><input type="range" aria-label={t("progress.painLabel")} aria-valuetext={`${pain} / 10`} min="0" max="10" value={pain} onChange={(event) => setPain(Number(event.target.value))} /></label></div><button className="review-generate" disabled={busy} onClick={() => void generate()}>{busy ? t("progress.generating") : t("progress.generateReview")}</button></>}{message && <p className="form-message">{message}</p>}</section>
-      <aside className="review-history"><span>{t("progress.historyEyebrow")}</span>{reviews.slice(1).map((review) => <article key={review.id}><small>{review.weekStart}</small><b>{review.recommendation?.title || t("progress.historyPlaceholderTitle")}</b><em>{review.status}</em></article>)}{reviews.length <= 1 && <p>{t("progress.historyEmpty")}</p>}</aside></div>
+      </> : <><ul>{reviewChanges(current).map((change) => <li key={change}>{change}</li>)}</ul>{current.status === "generated" && <div className="review-actions"><button onClick={() => void decide("reject")}>{t("progress.keepCurrentPlan")}</button><button onClick={() => void decide("accept")}>{t("progress.acceptAdjustments")}</button></div>}</>}</> : <><div className="review-sliders"><label>{t("progress.recoveryLabel")} <b aria-hidden="true">{recovery}/5</b><input type="range" aria-label={t("progress.recoveryLabel")} aria-valuetext={`${recovery} / 5`} min="1" max="5" value={recovery} onChange={(event) => setRecovery(Number(event.target.value))} /></label><label>{t("progress.sleepLabel")} <b aria-hidden="true">{sleep}/5</b><input type="range" aria-label={t("progress.sleepLabel")} aria-valuetext={`${sleep} / 5`} min="1" max="5" value={sleep} onChange={(event) => setSleep(Number(event.target.value))} /></label><label>{t("progress.painLabel")} <b aria-hidden="true">{pain}/10</b><input type="range" aria-label={t("progress.painLabel")} aria-valuetext={`${pain} / 10`} min="0" max="10" value={pain} onChange={(event) => setPain(Number(event.target.value))} /></label></div><button className="review-generate" disabled={busy} onClick={() => void generate()}>{busy ? t("progress.generating") : t("progress.generateReview")}</button></>}{message && <p className="form-message">{message}</p>}</section>
+      <aside className="review-history"><span>{t("progress.historyEyebrow")}</span>{reviews.slice(1).map((review) => <article key={review.id}><small>{review.weekStart}</small><b>{reviewTitle(review, t("progress.historyPlaceholderTitle"))}</b><em>{review.status}</em></article>)}{reviews.length <= 1 && <p>{t("progress.historyEmpty")}</p>}</aside></div>
     <ProgressCharts />
   </ProductShell>;
 }

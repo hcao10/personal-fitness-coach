@@ -4,6 +4,43 @@ export const progressZh = {
   eyebrow: "PROGRESS / 长期进度",
   title: "看清变化，再决定下一步",
 
+  // The weekly recommendation, keyed by the engine's machine `kind`.
+  //
+  // packages/domain returns Chinese prose alongside that kind, and this page
+  // used to render it verbatim — so an English reader in the highest-risk state
+  // was shown "持续疼痛时停止相关动作并咨询专业人员" in a language they had not
+  // chosen. The engine decides; the words come from here, per locale, reviewed.
+  // These strings are the same text as the domain package's, so nothing about
+  // the recommendation changes — only which language it arrives in.
+  reviewKind: {
+    collect_more_data: {
+      title: "先补充一周记录",
+      explanation: "本周有效训练不足两次，暂时无法可靠判断计划是否需要调整。",
+      change1: "继续当前计划",
+      change2: "完成训练后记录 RPE 与疼痛",
+    },
+    deload: {
+      title: "建议安排减量周",
+      explanation: "疼痛或训练强度已经达到不适合继续加量的范围。",
+      change1: "训练总组数减少 10%",
+      change2: "负重目标不增加",
+      change3: "持续疼痛时停止相关动作并咨询专业人员",
+    },
+    progress: {
+      title: "建议小幅重排计划",
+      explanation: "连续三个有效训练周执行稳定，但目标趋势低于预期。",
+      change1: "训练总组数最多增加 10%",
+      change2: "核心动作负重目标最多增加 5%",
+      change3: "保留现有器械与动作限制",
+    },
+    hold: {
+      title: "继续当前节奏",
+      explanation: "当前执行和恢复没有显示需要立即改动计划的信号。",
+      change1: "保持当前训练结构",
+      change2: "下周继续记录恢复与疼痛",
+    },
+  },
+
   // Weekly review panel.
   reviewEyebrow: "本周复盘",
   reviewPrompt: "先告诉我们这一周的恢复情况",
