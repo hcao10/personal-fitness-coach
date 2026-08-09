@@ -48,12 +48,16 @@ export default function MemoryClient() {
   const load = async () => {
     const response = await fetch("/api/v1/coach/memory", { cache: "no-store" });
     if (response.status === 401) {
-      await beginCmineLogin("/coach/memory");
+      await beginCmineLogin("/coach/memory", locale);
       return;
     }
     if (response.ok) setSnapshot(await response.json() as Snapshot);
   };
 
+  // Mount-only on purpose. `load` is redefined on every render, so listing it
+  // would re-fetch on every render — the dependency the rule asks for is the
+  // one that breaks it.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { const task = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(task); }, []);
 
   const savePreference = async (patch: Partial<Snapshot["preferences"]>) => {

@@ -3,6 +3,9 @@
 export const authZh = {
   // Mobile OAuth hand-off fallback — shown in the system browser when the deep
   // link back into the app did not fire.
+  // Brand + separator + assurance clause, the same shape as home.aiPersonalizedSafetyChecked.
+  // It is a security claim on an OAuth callback, so it is copy, not ornament.
+  secureSignInBadge: "CMINE FIT · 安全登录",
   returnToAppTitle: "返回 Cmine Fit App",
   returnToAppHeading: "请返回 Cmine Fit App",
   returnToAppBody: "登录结果会通过系统安全链接交给 App。若 App 没有自动打开，请确认已安装最新开发构建后重新登录。",

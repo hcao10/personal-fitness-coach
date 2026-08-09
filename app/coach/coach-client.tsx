@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import ProductShell from "../components/product-shell";
+import { localizeApiError, type ApiErrorBody } from "../lib/api-error";
 import { beginCmineLogin } from "../lib/auth";
-import { useLocale } from "../lib/i18n-provider";
+import { useLocale, useLocaleRef } from "../lib/i18n-provider";
 import { dateFormatter, pick, type Localized, type MessageKey } from "../../packages/i18n/src";
 
 type Evidence = { label: string; value: string; observedAt?: string | null; source?: string | null };
@@ -27,16 +28,23 @@ const actionNames: Record<string, MessageKey> = { replace_exercise: "coach.actio
 
 export default function CoachClient() {
   const { locale, t } = useLocale();
+  const localeRef = useLocaleRef();
+  // The bootstrap effect below needs exactly one message, and it has to stay
+  // mount-only: `t` is a new function identity on every locale switch, so listing
+  // it as a dependency would re-run the whole bootstrap and POST a second empty
+  // conversation each time the reader changes language. Hoisting the value out of
+  // the effect satisfies the dependency check without moving that behaviour.
+  const newChatTitleRef = useRef(t("coach.newChatTitle"));
   const [home, setHome] = useState<Home | null>(null); const [conversations, setConversations] = useState<Conversation[]>([]); const [active, setActive] = useState<string | null>(null); const [messages, setMessages] = useState<Message[]>([]);
   const [text, setText] = useState(""); const [sending, setSending] = useState(false); const [error, setError] = useState(""); const [notice, setNotice] = useState(""); const endRef = useRef<HTMLDivElement>(null); const abortRef = useRef<AbortController | null>(null);
   const loadHome = async () => { const response = await fetch("/api/v1/coach/home", { cache: "no-store" }); if (response.ok) setHome(await response.json() as Home); };
   const loadMessages = async (id: string) => { const response = await fetch(`/api/v1/coach/conversations/${id}/messages`, { cache: "no-store" }); if (response.ok) setMessages((await response.json() as { messages: Message[] }).messages); };
-  useEffect(() => { void (async () => { const response = await fetch("/api/v1/coach/conversations", { cache: "no-store" }); if (response.status === 401) { await beginCmineLogin("/coach"); return; } if (!response.ok) return;
-    let list = (await response.json() as { conversations: Conversation[] }).conversations; if (!list.length) { const created = await fetch("/api/v1/coach/conversations", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: t("coach.newChatTitle") }) }); if (created.ok) list = [(await created.json() as { conversation: Conversation }).conversation]; }
+  useEffect(() => { void (async () => { const response = await fetch("/api/v1/coach/conversations", { cache: "no-store" }); if (response.status === 401) { await beginCmineLogin("/coach", localeRef.current); return; } if (!response.ok) return;
+    let list = (await response.json() as { conversations: Conversation[] }).conversations; if (!list.length) { const created = await fetch("/api/v1/coach/conversations", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: newChatTitleRef.current }) }); if (created.ok) list = [(await created.json() as { conversation: Conversation }).conversation]; }
     setConversations(list); if (list[0]) { setActive(list[0].id); await loadMessages(list[0].id); } await loadHome();
     const prompt = new URLSearchParams(window.location.search).get("prompt"); if (prompt) setText(prompt.slice(0, 1000));
     const draft = sessionStorage.getItem("cmine_fit_coach_draft"); if (draft) setText((current) => current || draft.slice(0, 2000));
-  })(); }, []);
+  })(); }, [localeRef]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
   useEffect(() => { sessionStorage.setItem("cmine_fit_coach_draft", text); }, [text]);
   useEffect(() => { if (!notice) return; const timer = window.setTimeout(() => setNotice(""), 4000); return () => window.clearTimeout(timer); }, [notice]);
@@ -48,21 +56,26 @@ export default function CoachClient() {
     const controller = new AbortController(); abortRef.current = controller;
     try {
       const response = await fetch(`/api/v1/coach/conversations/${active}/messages`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message: content, clientMutationId: tempId }), signal: controller.signal });
-      if (!response.ok || !response.body) throw new Error(t("coach.replyUnavailable"));
+      // A refused turn (RATE_LIMITED, MESSAGE_REQUIRED, CONVERSATION_NOT_FOUND…)
+      // answers with an error JSON instead of a stream, and its code is the only
+      // thing that tells the reader which of those it was.
+      if (!response.ok || !response.body) { const body = (await response.json().catch(() => null)) as ApiErrorBody | null; throw new Error(localizeApiError(body, locale, t("coach.replyUnavailable"))); }
       const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = "";
       while (true) { const { done, value } = await reader.read(); if (done) break; buffer += decoder.decode(value, { stream: true }); const blocks = buffer.split("\n\n"); buffer = blocks.pop() || "";
         for (const block of blocks) { const event = block.match(/^event: (.+)$/m)?.[1]; const raw = block.match(/^data: (.+)$/m)?.[1]; if (!event || !raw) continue; const data = JSON.parse(raw) as Record<string, unknown>;
           if (event === "message.delta") setMessages((current) => current.map((item) => item.id === `${tempId}:assistant` ? { ...item, content: item.content + String(data.delta || "") } : item));
           if (event === "message.metadata") setMessages((current) => current.map((item) => item.id === `${tempId}:assistant` ? { ...item, intent: String(data.intent || ""), basis: data.basis as Evidence[] || [], limitations: data.limitations as string[] || [], sources: data.sources as Source[] || [] } : item));
           if (event === "action.proposed") setMessages((current) => current.map((item) => item.id === `${tempId}:assistant` ? { ...item, actions: [...(item.actions || []), data as unknown as Action] } : item));
-          if (event === "message.error") setError(String(data.message || t("coach.replyUnavailable")));
+          // The stream carries { error, retryable, message }; `message` is authored
+          // in Chinese, so it is the code that has to drive what an English reader sees.
+          if (event === "message.error") setError(localizeApiError(data as ApiErrorBody, locale, t("coach.replyUnavailable")));
         }
       }
       await loadMessages(active); await loadHome();
     } catch (caught) { if ((caught as Error).name !== "AbortError") setError(caught instanceof Error ? caught.message : t("coach.sendFailed")); }
     finally { abortRef.current = null; setSending(false); }
   };
-  const decide = async (action: Action, decision: "accept" | "reject") => { const response = await fetch(`/api/v1/coach/actions/${action.id}/${decision}`, { method: "POST" }); const body = await response.json().catch(() => null); if (!response.ok) return setNotice(body?.message || t("coach.actionUnavailable"));
+  const decide = async (action: Action, decision: "accept" | "reject") => { const response = await fetch(`/api/v1/coach/actions/${action.id}/${decision}`, { method: "POST" }); const body = await response.json().catch(() => null); if (!response.ok) return setNotice(localizeApiError(body, locale, t("coach.actionUnavailable")));
     setMessages((current) => current.map((message) => ({ ...message, actions: message.actions?.map((item) => item.id === action.id ? { ...item, status: String(body.status || (decision === "accept" ? "accepted" : "rejected")) } : item) })));
     setNotice(body.status === "expired" ? t("coach.actionExpiredNotice") : decision === "accept" ? t("coach.actionAcceptedNotice") : t("coach.actionRejectedNotice")); await loadHome(); };
   const feedback = async (messageId: string, rating: 1 | -1) => { await fetch(`/api/v1/coach/messages/${messageId}/feedback`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ rating }) }); setNotice(rating === 1 ? t("coach.feedbackThanks") : t("coach.feedbackNoted")); };

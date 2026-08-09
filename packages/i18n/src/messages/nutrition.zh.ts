@@ -101,6 +101,13 @@ export const nutritionZh = {
   templateMacros: "{calories} kcal · 蛋白质 {protein}g",
   templateAddToToday: "一键加入今天 →",
   recipeSummary: "{servings} 份 · 全菜谱 {calories} kcal",
+  // The counted phrase interpolated into `recipeSummary`. Chinese keeps its
+  // measure word (份) in the sentence, so the counted form here is the numeral
+  // alone; English has to inflect the noun, which is why this is a plural group
+  // rather than a bare number. Chinese has one plural category, so `one` is
+  // never selected for zh — it is present because every locale must carry the
+  // same key set.
+  recipeServingsCount: { one: "{count}", other: "{count}" },
   recipePerServing: "每份约 {calories} kcal",
 
   // 07 / HISTORY

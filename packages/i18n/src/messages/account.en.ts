@@ -7,6 +7,7 @@ export const accountEn = {
   metaDescription: "See your plans, training progress and body records.",
 
   loading: "Gathering your training records…",
+  signinEyebrow: "YOUR TRAINING, CONNECTED",
   signinTitleA: "Make every session",
   signinTitleB: "lead into the next.",
   signinText: "Sign in with Cmine ID and your plans, completed sessions, body changes and every adjustment that follows stay safely in one place.",
@@ -27,15 +28,16 @@ export const accountEn = {
   signOut: "Sign out",
 
   welcomeBack: "Welcome back, {name}",
-  welcomeFallbackName: "someone who keeps showing up",
+  welcomeBackNoName: "Welcome back — good to see you again",
   heroRestTitle: "Today, take recovery just as seriously.",
   heroNoPlanTitle: "Start with your first personal plan.",
   heroNoPlanFocus: "Update your training profile and AI will lay out a full week around your goals and real constraints.",
+  heroFocusFallback: "No focus noted for today — work through the session as it is written.",
   heroViewToday: "View today's training",
   createFirstPlan: "Create your first plan",
   restDay: "Recovery day",
   restDayFocus: "Easy movement · sleep first",
-  exerciseCount: "{count} exercises",
+  exerciseCount: { one: "{count} exercise", other: "{count} exercises" },
 
   metricWorkouts: "Sessions done",
   metricWorkoutsHint: "Training days saved",
@@ -59,7 +61,7 @@ export const accountEn = {
   planHistoryIntro: "Every generation keeps the body data, model version and full plan it was built from.",
   planFallbackTitle: "Personal training plan",
   planSummaryFallback: "{days} training days · {calories} kcal",
-  planWeeks: "{weeks} weeks",
+  planWeeks: { one: "{count} week", other: "{count} weeks" },
   planHistoryEmpty: "No saved plans yet.",
 
   progressIntro: "Read the long-term trend instead of letting one day set the pace.",
@@ -121,7 +123,10 @@ export const accountEn = {
 
   membershipIntro: "Status, quota, renewal and cancellation all come from your real entitlements and payment records.",
   currentPlan: "Current plan",
-  quotaRemaining: "{plans} plans left · {scans} meal scans left",
+  quotaRemaining: {
+    plans: { one: "{count} plan left", other: "{count} plans left" },
+    scans: { one: "{count} meal scan left", other: "{count} meal scans left" },
+  },
   periodEnds: "ends {date}",
   periodRenews: "renews {date}",
   proTrialHeadline: "Every Pro capability is unlocked during your trial.",
@@ -162,9 +167,16 @@ export const accountEn = {
   habitSaveFailed: "Could not save — check the time format.",
   habitStreakWeeks: "Week {weeks} of your streak",
   habitFirstWeek: "Your first week starts now",
-  habitStats: "Longest streak {weeks} weeks · {sessions} sessions in total",
-  habitOnTrack: " · on track this week",
-  habitShortSessionNote: ". A shortened 20-minute session counts too.",
+  // Complete sentences rather than fragments joined at render: the English
+  // versions of the old pieces began with a bare period, and clause order is not
+  // something a language is obliged to share.
+  habitStats: "{weeks} · {sessions}. A shortened 20-minute session counts too.",
+  habitStatsOnTrack: "{weeks} · {sessions} · on track this week. A shortened 20-minute session counts too.",
+  habitLongestWeeks: { one: "Longest streak {count} week", other: "Longest streak {count} weeks" },
+  habitTotalSessions: { one: "{count} session in total", other: "{count} sessions in total" },
+
+  milestoneFallbackTitle: "A new milestone",
+  milestoneFallbackMessage: "You reached a new training milestone.",
 
   notificationsTitle: "Notification preferences",
   notificationsIntro: "Push arrives only for the types and hours you allow; anything due during quiet hours is held back.",
@@ -195,7 +207,9 @@ export const accountEn = {
   deleteBody: "Removes your user, plans and progress here. Your Cmine ID is not deleted.",
   deleteAction: "Delete data",
 
-  footerTagline: "CMINE FIT · Understands training, understands you better",
+  // The Chinese is a two-beat parallel with an implied subject that English does
+  // not license the same way; a calque of it is verbless and repeats the verb.
+  footerTagline: "CMINE FIT · Knows training. Knows you better.",
   footerDisclaimer: "Health and training guidance does not replace medical diagnosis, treatment or rehabilitation.",
 
   profileSaveFailed: "Could not save your training profile.",

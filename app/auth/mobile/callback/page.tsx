@@ -15,7 +15,7 @@ export default async function MobileCallbackFallback() {
   const t = translator(await resolveLocale());
   return <main className="mobile-callback-page">
     <section>
-      <span>CMINE FIT · SECURE SIGN-IN</span>
+      <span>{t("auth.secureSignInBadge")}</span>
       <h1>{t("auth.returnToAppHeading")}</h1>
       <p>{t("auth.returnToAppBody")}</p>
       <a href="cminefit://auth/callback">{t("auth.openApp")}</a>

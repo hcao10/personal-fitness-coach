@@ -4,8 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { beginCmineLogin, signOutCmine } from "../lib/auth";
 import { defaultProfile, readPlanInsights, type CoachPlan, type Localized, type Profile } from "../lib/coach";
-import { useLocale, useT } from "../lib/i18n-provider";
-import { dateFormatter, type Locale, type MessageKey } from "../../packages/i18n/src";
+import { useLocale, useT, useLocaleRef } from "../lib/i18n-provider";
+import { dateFormatter, pick, type Locale, type MessageKey } from "../../packages/i18n/src";
+import { localizeApiError, type ApiErrorBody } from "../lib/api-error";
 
 type StoredPlan = {
   id: string;
@@ -70,6 +71,7 @@ function dateText(value: string, locale: Locale) {
 
 export default function AccountDashboard() {
   const { locale, t } = useLocale();
+  const localeRef = useLocaleRef();
   const [data, setData] = useState<AccountData | null>(null);
   const [loading, setLoading] = useState(true);
   const [signedOut, setSignedOut] = useState(false);
@@ -132,7 +134,7 @@ export default function AccountDashboard() {
     });
     setSavingProfile(false);
     if (!response.ok) {
-      setNotice((await response.json().catch(() => null))?.message || t("account.profileSaveFailed"));
+      setNotice(localizeApiError(await response.json().catch(() => null) as ApiErrorBody | null, locale, t("account.profileSaveFailed")));
       return;
     }
     setNotice(t("account.profileSaved"));
@@ -148,7 +150,7 @@ export default function AccountDashboard() {
     });
     setSavingMeasurement(false);
     if (!response.ok) {
-      setNotice((await response.json().catch(() => null))?.message || t("account.measurementSaveFailed"));
+      setNotice(localizeApiError(await response.json().catch(() => null) as ApiErrorBody | null, locale, t("account.measurementSaveFailed")));
       return;
     }
     setMeasurement({ weightKg: "", bodyFatPct: "", waistCm: "", armCm: "", note: "" });
@@ -173,7 +175,7 @@ export default function AccountDashboard() {
       body: JSON.stringify({ dayIndex: today, ...feedback }),
     });
     setSavingFeedback(false);
-    if (!response.ok) return setNotice((await response.json().catch(() => null))?.message || t("account.feedbackSaveFailed"));
+    if (!response.ok) return setNotice(localizeApiError(await response.json().catch(() => null) as ApiErrorBody | null, locale, t("account.feedbackSaveFailed")));
     setNotice(t("account.feedbackSaved"));
     await loadAccount();
   };
@@ -181,7 +183,7 @@ export default function AccountDashboard() {
   const openBillingPortal = async () => {
     const response = await fetch("/api/v1/billing/portal", { method: "POST" });
     const body = await response.json().catch(() => null);
-    if (!response.ok || !body?.url) return setNotice(body?.message || t("account.billingPortalFailed"));
+    if (!response.ok || !body?.url) return setNotice(localizeApiError(body as ApiErrorBody | null, locale, t("account.billingPortalFailed")));
     window.location.assign(body.url);
   };
 
@@ -192,7 +194,7 @@ export default function AccountDashboard() {
       body: JSON.stringify({ reward }),
     });
     const body = await response.json().catch(() => null);
-    if (!response.ok) return setNotice(body?.message || t("account.redeemFailed"));
+    if (!response.ok) return setNotice(localizeApiError(body as ApiErrorBody | null, locale, t("account.redeemFailed")));
     setNotice(reward === "meal_scan" ? t("account.redeemedMealScan") : t("account.redeemedPlanRefresh"));
     await loadAccount();
   };
@@ -208,7 +210,7 @@ export default function AccountDashboard() {
         <span>YOUR TRAINING, CONNECTED</span>
         <h1>{t("account.signinTitleA")}<br />{t("account.signinTitleB")}</h1>
         <p>{t("account.signinText")}</p>
-        <button onClick={() => void beginCmineLogin("/account")}><b>C</b> {t("account.signinButton")} <em>→</em></button>
+        <button onClick={() => void beginCmineLogin("/account", localeRef.current)}><b>C</b> {t("account.signinButton")} <em>→</em></button>
         <Link href="/">{t("account.signinBackHome")}</Link>
       </section>
     </main>;
@@ -241,15 +243,22 @@ export default function AccountDashboard() {
 
       <section className="account-hero" id="today">
         <div>
-          <span>{t("account.welcomeBack", { name: data.user.name?.split(" ")[0] || t("account.welcomeFallbackName") })}</span>
-          <h1>{todayPlan?.restDay ? t("account.heroRestTitle") : todayPlan ? todayPlan.title[locale] : t("account.heroNoPlanTitle")}</h1>
-          <p>{todayPlan?.focus[locale] || t("account.heroNoPlanFocus")}</p>
+          {/* A stand-in *name* has to describe the reader in the third person,
+              which is not what "Welcome back, …" is addressing — so the no-name
+              case is its own complete greeting. */}
+          <span>{data.user.name?.split(" ")[0]
+            ? t("account.welcomeBack", { name: data.user.name.split(" ")[0] })
+            : t("account.welcomeBackNoName")}</span>
+          <h1>{todayPlan?.restDay ? t("account.heroRestTitle") : todayPlan ? (pick(todayPlan.title, locale) || t("account.planFallbackTitle")) : t("account.heroNoPlanTitle")}</h1>
+          {/* A plan that exists but carries no focus must not fall back to the
+              no-plan line, which would be untrue for someone who has one. */}
+          <p>{todayPlan ? (pick(todayPlan.focus, locale) || t("account.heroFocusFallback")) : t("account.heroNoPlanFocus")}</p>
           {data.latestPlan ? <Link href="/today">{t("account.heroViewToday")} <b>→</b></Link> : <Link href="/onboarding">{t("account.createFirstPlan")} <b>→</b></Link>}
         </div>
         <article>
           <small>TODAY</small>
           <b>{todayPlan?.restDay ? t("account.restDay") : todayPlan ? `${todayPlan.duration} min` : "—"}</b>
-          <span>{todayPlan?.restDay ? t("account.restDayFocus") : t("account.exerciseCount", { count: todayPlan?.exercises.length || 0 })}</span>
+          <span>{todayPlan?.restDay ? t("account.restDayFocus") : t.plural("account.exerciseCount", todayPlan?.exercises.length || 0)}</span>
         </article>
       </section>
 
@@ -276,9 +285,9 @@ export default function AccountDashboard() {
         {data.plans.length ? <div className="plan-history">
           {data.plans.map((item, index) => <article key={item.id}>
             <div><span>{String(data.plans.length - index).padStart(2, "0")}</span><small>{dateText(item.createdAt, locale)}</small></div>
-            <h3>{item.plan?.schedule.find((day) => !day.restDay)?.title[locale] || t("account.planFallbackTitle")}</h3>
+            <h3>{pick(item.plan?.schedule.find((day) => !day.restDay)?.title, locale) || t("account.planFallbackTitle")}</h3>
             <p>{readPlanInsights(item.plan?.insights, locale)?.summary || t("account.planSummaryFallback", { days: item.profile?.days || "—", calories: item.plan?.calories || "—" })}</p>
-            <footer><span>{item.model}</span><b>{t("account.planWeeks", { weeks: item.plan?.weeks || "—" })}</b></footer>
+            <footer><span>{item.model}</span><b>{t.plural("account.planWeeks", item.plan?.weeks || 0)}</b></footer>
           </article>)}
         </div> : <div className="account-empty"><p>{t("account.planHistoryEmpty")}</p><Link href="/#coach">{t("account.createFirstPlan")} →</Link></div>}
       </section>
@@ -334,10 +343,9 @@ export default function AccountDashboard() {
         <div className="account-section-title"><div><span>07 / MEMBERSHIP</span><h2>{t("account.membership")}</h2></div><p>{t("account.membershipIntro")}</p></div>
         <div className="membership-current">
           <div><span>{t("account.currentPlan")}</span><h3>{data.product.membership.name}</h3><p>
-            {t("account.quotaRemaining", {
-              plans: data.product.usage.capabilities["plan.generate"]?.remaining ?? 0,
-              scans: data.product.usage.capabilities["meal.scan"]?.remaining ?? 0,
-            })}
+            {/* Two independent counts cannot share one plural form, so each is
+                its own counted phrase and the join happens here. */}
+            {`${t.plural("account.quotaRemaining.plans", data.product.usage.capabilities["plan.generate"]?.remaining ?? 0)} · ${t.plural("account.quotaRemaining.scans", data.product.usage.capabilities["meal.scan"]?.remaining ?? 0)}`}
             {data.product.membership.currentPeriodEnd && ` · ${data.product.membership.cancelAtPeriodEnd
               ? t("account.periodEnds", { date: dateText(data.product.membership.currentPeriodEnd, locale) })
               : t("account.periodRenews", { date: dateText(data.product.membership.currentPeriodEnd, locale) })}`}
@@ -480,7 +488,7 @@ function HabitCommitmentCard() {
   const save = async () => {
     const response = await fetch("/api/v1/habits/commitment", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ cueTime, cuePlace }) });
     const body = await response.json().catch(() => ({})) as { message?: string };
-    setMessage(response.ok ? t("account.habitSaved") : body.message || t("account.habitSaveFailed"));
+    setMessage(response.ok ? t("account.habitSaved") : localizeApiError(body as ApiErrorBody | null, locale, t("account.habitSaveFailed")));
   };
   return <section className="account-panel" id="habit">
     <div className="account-section-title"><div><span>07.5 / HABIT</span><h2>{t("account.habitTitle")}</h2></div><p>{t("account.habitIntro")}</p></div>
@@ -500,8 +508,14 @@ function HabitCommitmentCard() {
       {habit && <article>
         <div>
           <h3>{habit.streak.currentWeeks > 0 ? t("account.habitStreakWeeks", { weeks: habit.streak.currentWeeks }) : t("account.habitFirstWeek")}</h3>
-          <p>{t("account.habitStats", { weeks: habit.streak.longestWeeks, sessions: habit.totalSessions })}{habit.streak.activeThisWeek ? t("account.habitOnTrack") : ""}{t("account.habitShortSessionNote")}</p>
-          {habit.milestones.length > 0 && <p>{habit.milestones.at(-1)!.title[locale]} — {habit.milestones.at(-1)!.message[locale]}</p>}
+          {/* One complete sentence per case, rather than three fragments joined:
+              the English pieces began with a bare period, and clause order is
+              not something a language is obliged to share. */}
+          <p>{t(habit.streak.activeThisWeek ? "account.habitStatsOnTrack" : "account.habitStats", {
+            weeks: t.plural("account.habitLongestWeeks", habit.streak.longestWeeks),
+            sessions: t.plural("account.habitTotalSessions", habit.totalSessions),
+          })}</p>
+          {habit.milestones.length > 0 && <p>{pick(habit.milestones.at(-1)!.title, locale) || t("account.milestoneFallbackTitle")} — {pick(habit.milestones.at(-1)!.message, locale) || t("account.milestoneFallbackMessage")}</p>}
         </div>
       </article>}
     </div>

@@ -64,7 +64,7 @@ export default function PricingClient() {
   ];
 
   const checkout = async (interval: "monthly" | "yearly") => {
-    if (!signedIn) return void beginCmineLogin("/pricing");
+    if (!signedIn) return void beginCmineLogin("/pricing", locale);
     setWorking(interval);
     const response = await fetch("/api/v1/billing/checkout", {
       method: "POST",
@@ -90,15 +90,18 @@ export default function PricingClient() {
     </header>
 
     <section className="pricing-hero">
-      <span>PROFESSIONAL PLANS</span>
+      <span>{t("pricing.heroEyebrow")}</span>
       <h1>{t("pricing.heroTitleLine1")}<br />{t("pricing.heroTitleLine2")}</h1>
+      {/* Two sentences, two messages: the separator between them is part of the
+          copy, so `heroTrialNote` carries its own leading space in the locales
+          that need one. Do not add {" "} here — Chinese does not take one. */}
       <p>{t("pricing.heroIntro")}{limits?.trialDays ? t("pricing.heroTrialNote", { days: limits.trialDays }) : ""}</p>
       <div><b>{catalog?.configured ? t("pricing.statusLiveTitle") : t("pricing.statusPendingTitle")}</b><span>{catalog?.configured ? t("pricing.statusLiveDetail") : t("pricing.statusPendingDetail")}</span></div>
     </section>
 
     <section className="pricing-grid" aria-label={t("pricing.plansRegionLabel")}>
       <article>
-        <header><span>START</span><b>{t("pricing.freeBadge")}</b></header>
+        <header><span>{t("pricing.freeEyebrow")}</span><b>{t("pricing.freeBadge")}</b></header>
         <h2>{t("pricing.freeTitle")}</h2>
         <div className="plan-price"><strong>{t("pricing.freePrice")}</strong><small>{t("pricing.freePriceNote")}</small></div>
         <p>{t("pricing.freeSummary")}</p>

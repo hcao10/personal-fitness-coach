@@ -6,9 +6,10 @@ export const exercisesEn = {
   metaTitle: "Exercise catalog · Cmine Fit",
   metaDescription: "Find exercises and their safety cues by body part, equipment or name.",
 
-  // The Chinese eyebrow pairs an English ornament with a Chinese gloss; in
-  // English the gloss would just repeat the ornament, so only the ornament stays.
-  eyebrow: "EXERCISE CATALOG",
+  // Every page eyebrow is a two-part "ORNAMENT / GLOSS". A literal translation
+  // of the Chinese gloss would just repeat the ornament here, so English says
+  // what the page is actually for instead of dropping the second half.
+  eyebrow: "EXERCISE CATALOG / FORM AND SAFETY CUES",
   title: "Know the exercise before you train it",
   backToToday: "Back to today's training",
 
@@ -20,8 +21,12 @@ export const exercisesEn = {
   equipmentBarbell: "Barbell",
   equipmentCable: "Cable",
   equipmentBand: "Resistance band",
-  equipmentMachine: "Machine",
+  // The option sends `equipment=leverage machine`, which the catalog matches
+  // exactly — smith, sled, elliptical and stepmill machines are separate values
+  // and never come back. "Machine" promised all of them, so it names the one.
+  equipmentMachine: "Leverage machine",
   catalogNote: "There are {count} exercises to browse. Your AI plan currently draws on the safety-reviewed subset, and nothing here replaces an exercise in your plan until you confirm it.",
+  catalogNotePending: "Loading the exercise catalog. Your AI plan currently draws on the safety-reviewed subset, and nothing here replaces an exercise in your plan until you confirm it.",
   loading: "Loading the exercise catalog…",
 
   demoAlt: "{name} demonstration",

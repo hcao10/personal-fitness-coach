@@ -1,10 +1,10 @@
 // Copy for app/account. Chinese is the schema: a key added here must be
 // added to account.en.ts or the build fails.
 //
-// Flat on purpose. `translator()` splits a key on the first dot and looks the
-// remainder up in one table, and `MessageKey` is `${namespace}.${key}` — a
-// nested group would neither type-check at the call site nor resolve at
-// runtime, so related keys share a prefix instead.
+// Mostly flat: related keys share a prefix rather than nest. `translator()` and
+// `MessageKey` resolve a dotted path at any depth, so grouping is kept for the
+// case where several values are one message — the plural forms of a counted
+// noun, which English distinguishes and Chinese does not.
 export const accountZh = {
   // Page metadata (browser tab, search results).
   metaTitle: "我的训练 · Cmine Fit",
@@ -12,6 +12,9 @@ export const accountZh = {
 
   // Loading and signed-out states.
   loading: "正在整理你的训练记录…",
+  // The eyebrow above the signed-out headline. Unlike the 01/02 rail numbers it
+  // is a tagline carrying meaning, not a typographic ornament, so it is copy.
+  signinEyebrow: "你的训练，前后连贯",
   signinTitleA: "让每一次训练",
   signinTitleB: "都接得上下一次。",
   signinText: "使用 Cmine ID 登录后，你的计划、完成记录、身体变化和下一次调整会安全保存在同一个地方。",
@@ -34,17 +37,26 @@ export const accountZh = {
   newPlan: "生成新计划",
   signOut: "安全退出",
 
-  // Hero.
+  // Hero. A reader whose account carries no name gets their own greeting: a
+  // stand-in *name* has to describe the reader in the third person, which is
+  // not what "欢迎回来，…" or "Welcome back, …" is addressing.
   welcomeBack: "欢迎回来，{name}",
-  welcomeFallbackName: "今天也在进步的你",
+  welcomeBackNoName: "欢迎回来，今天也在进步的你",
   heroRestTitle: "今天，把恢复也认真完成。",
   heroNoPlanTitle: "从第一份专属计划开始。",
   heroNoPlanFocus: "更新训练档案后，让 AI 根据你的目标和现实条件安排完整一周。",
+  // For a plan that exists but carries no focus text in any language. The
+  // no-plan line above would be untrue for someone who does have a plan.
+  heroFocusFallback: "这份计划没有写今天的重点，按训练内容完成即可。",
   heroViewToday: "查看今日训练",
   createFirstPlan: "生成第一份计划",
   restDay: "恢复日",
   restDayFocus: "轻松活动 · 睡眠优先",
-  exerciseCount: "{count} 个动作",
+  // A counted noun is a group of plural forms rather than one string, because
+  // English needs "1 exercise" against "2 exercises" and `plural()` picks the
+  // form. Chinese has a single plural category, so both forms carry the same
+  // text; the repetition is what keeps one key set across every locale.
+  exerciseCount: { one: "{count} 个动作", other: "{count} 个动作" },
 
   // Metric tiles.
   metricWorkouts: "完成训练",
@@ -71,7 +83,7 @@ export const accountZh = {
   planHistoryIntro: "每次生成都会保留当时的身体资料、模型版本和完整计划。",
   planFallbackTitle: "专属训练计划",
   planSummaryFallback: "{days} 个训练日 · {calories} kcal",
-  planWeeks: "{weeks} 周",
+  planWeeks: { one: "{count} 周", other: "{count} 周" },
   planHistoryEmpty: "还没有保存的计划。",
 
   // Body progress.
@@ -136,7 +148,13 @@ export const accountZh = {
   // Membership and quota.
   membershipIntro: "当前状态、额度、续费和取消信息都来自真实权益与支付记录。",
   currentPlan: "当前方案",
-  quotaRemaining: "计划剩余 {plans} 次 · 饭菜识别剩余 {scans} 次",
+  // Two independent counts cannot share one plural form, so each is its own
+  // counted phrase and the render joins them; the Chinese reads exactly as the
+  // single string this replaced.
+  quotaRemaining: {
+    plans: { one: "计划剩余 {count} 次", other: "计划剩余 {count} 次" },
+    scans: { one: "饭菜识别剩余 {count} 次", other: "饭菜识别剩余 {count} 次" },
+  },
   periodEnds: "{date} 到期",
   periodRenews: "{date} 续费",
   proTrialHeadline: "试用期内，全部专业能力已解锁。",
@@ -178,12 +196,19 @@ export const accountZh = {
   habitSaveFailed: "保存失败，请检查时间格式。",
   habitStreakWeeks: "连续训练第 {weeks} 周",
   habitFirstWeek: "本周开始你的第一周",
-  // Rendered back to back: stats, then the streak clause only when it applies,
-  // then the closing note. The leading separator and punctuation stay inside
-  // the fragments so each language can punctuate its own way.
-  habitStats: "最长纪录 {weeks} 周 · 累计 {sessions} 次训练",
-  habitOnTrack: " · 本周已达标",
-  habitShortSessionNote: "。完成 20 分钟缩短版同样算数。",
+  // One complete sentence per week state. These used to be three fragments
+  // concatenated at render — a clause opening with " · " and a note opening
+  // with "。" — which forced every language to punctuate the way Chinese does
+  // and left the English reading ". A shortened…". {weeks} and {sessions}
+  // arrive already counted, from the two groups below.
+  habitStats: "{weeks} · {sessions}。完成 20 分钟缩短版同样算数。",
+  habitStatsOnTrack: "{weeks} · {sessions} · 本周已达标。完成 20 分钟缩短版同样算数。",
+  habitLongestWeeks: { one: "最长纪录 {count} 周", other: "最长纪录 {count} 周" },
+  habitTotalSessions: { one: "累计 {count} 次训练", other: "累计 {count} 次训练" },
+  // Milestones are dataset content. When one arrives with no text in any
+  // language these say only what is actually known, instead of a blank line.
+  milestoneFallbackTitle: "新的里程碑",
+  milestoneFallbackMessage: "你达成了一个新的训练里程碑。",
 
   // Notification preferences.
   notificationsTitle: "通知偏好",

@@ -3,6 +3,7 @@ import type { Widen } from "./widen.ts";
 
 // Copy for app/auth (callback screens).
 export const authEn = {
+  secureSignInBadge: "CMINE FIT · SECURE SIGN-IN",
   returnToAppTitle: "Return to the Cmine Fit app",
   returnToAppHeading: "Go back to the Cmine Fit app",
   returnToAppBody: "Your sign-in result is handed to the app over a secure system link. If the app did not open on its own, check that the latest development build is installed, then sign in again.",

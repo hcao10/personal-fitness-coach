@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { localizeApiError } from "../lib/api-error";
 import { beginCmineLogin } from "../lib/auth";
 import { useLocale, useT } from "../lib/i18n-provider";
-import { dateFormatter } from "../../packages/i18n/src";
+import { dateFormatter, plural } from "../../packages/i18n/src";
 import type { FoodReference, MealCandidateMatch } from "../../packages/api-contracts/src";
 
 type Food = FoodReference;
@@ -105,7 +106,7 @@ export default function NutritionDashboard() {
     const uploadBody = await upload.json().catch(() => null);
     if (!upload.ok) {
       setWorking(false);
-      return setNotice(uploadBody?.message || t("nutrition.noticeUploadFailed"));
+      return setNotice(localizeApiError(uploadBody, locale, t("nutrition.noticeUploadFailed")));
     }
     setMealId(uploadBody.mealId);
     const analysis = await fetch("/api/v1/meals/analyze", {
@@ -115,7 +116,7 @@ export default function NutritionDashboard() {
     });
     const analysisBody = await analysis.json().catch(() => null);
     setWorking(false);
-    if (!analysis.ok) return setNotice(analysisBody?.message || t("nutrition.noticeAnalyzeFailed"));
+    if (!analysis.ok) return setNotice(localizeApiError(analysisBody, locale, t("nutrition.noticeAnalyzeFailed")));
     setNeedsReview(Boolean(analysisBody.needsReview));
     setCandidates((analysisBody.candidates || []).map((item: Candidate) => ({
       ...item,
@@ -162,7 +163,7 @@ export default function NutritionDashboard() {
     });
     const body = await response.json().catch(() => null);
     setWorking(false);
-    if (!response.ok) return setNotice(body?.message || t("nutrition.noticeMealSaveFailed"));
+    if (!response.ok) return setNotice(localizeApiError(body, locale, t("nutrition.noticeMealSaveFailed")));
     setCandidates([]);
     setMealId("");
     setFile(null);
@@ -181,7 +182,7 @@ export default function NutritionDashboard() {
     const body = await response.json().catch(() => null);
     setWorking(false);
     setFoods(response.ok ? body.foods || [] : []);
-    if (!response.ok) setNotice(body?.message || t("nutrition.noticeSearchFailed"));
+    if (!response.ok) setNotice(localizeApiError(body, locale, t("nutrition.noticeSearchFailed")));
   };
 
   const findBarcode = async (value = barcode) => {
@@ -190,7 +191,7 @@ export default function NutritionDashboard() {
     const response = await fetch(`/api/v1/foods/barcode/${encodeURIComponent(value)}`);
     const body = await response.json().catch(() => null);
     setWorking(false);
-    if (!response.ok) return setNotice(body?.message || t("nutrition.noticeBarcodeNotFound"));
+    if (!response.ok) return setNotice(localizeApiError(body, locale, t("nutrition.noticeBarcodeNotFound")));
     setManualFood(body.food);
     setNotice(t("nutrition.noticeBarcodeFound"));
   };
@@ -229,7 +230,7 @@ export default function NutritionDashboard() {
     });
     const body = await response.json().catch(() => null);
     setWorking(false);
-    if (!response.ok) return setNotice(body?.message || t("nutrition.noticeFoodLogFailed"));
+    if (!response.ok) return setNotice(localizeApiError(body, locale, t("nutrition.noticeFoodLogFailed")));
     setManualFood(null);
     setNotice(t("nutrition.noticeFoodLogged"));
     await load();
@@ -247,7 +248,7 @@ export default function NutritionDashboard() {
       name: recipeName, servings: recipeServings, items: recipeItems.map((item) => ({ name: item.food.name, grams: item.grams, nutritionRef: item.food.ref, userCorrected: true })),
     }) });
     const body = await response.json().catch(() => null); setWorking(false);
-    if (!response.ok) return setNotice(body?.message || t("nutrition.noticeRecipeSaveFailed"));
+    if (!response.ok) return setNotice(localizeApiError(body, locale, t("nutrition.noticeRecipeSaveFailed")));
     setRecipeName(""); setRecipeItems([]); setNotice(t("nutrition.noticeRecipeSaved")); await load();
   };
 
@@ -266,7 +267,7 @@ export default function NutritionDashboard() {
     setWorking(true);
     const response = await fetch("/api/v1/foods/custom", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: customName, per100g: customMacros }) });
     const body = await response.json().catch(() => null); setWorking(false);
-    if (!response.ok) return setNotice(body?.message || t("nutrition.noticeCustomFoodSaveFailed"));
+    if (!response.ok) return setNotice(localizeApiError(body, locale, t("nutrition.noticeCustomFoodSaveFailed")));
     setManualFood(body.food); setCustomName(""); setCustomMacros({ calories: 0, proteinG: 0, carbsG: 0, fatG: 0 }); setNotice(t("nutrition.noticeCustomFoodSaved"));
   };
 
@@ -282,7 +283,7 @@ export default function NutritionDashboard() {
   if (signedIn === null) return <main className="nutrition-page"><div className="nutrition-loading">{t("nutrition.loading")}</div></main>;
   if (!signedIn) return <main className="nutrition-page">
     <header className="nutrition-header"><Link className="brand" href="/"><span className="brand-mark">C</span><span>CMINE <b>FIT</b></span></Link></header>
-    <section className="nutrition-signin"><span>NUTRITION, CONFIRMED BY YOU</span><h1>{t("nutrition.signedOutTitleLine1")}<br />{t("nutrition.signedOutTitleLine2")}</h1><p>{t("nutrition.signedOutBody")}</p><button onClick={() => void beginCmineLogin("/nutrition")}>{t("nutrition.signedOutAction")}</button></section>
+    <section className="nutrition-signin"><span>NUTRITION, CONFIRMED BY YOU</span><h1>{t("nutrition.signedOutTitleLine1")}<br />{t("nutrition.signedOutTitleLine2")}</h1><p>{t("nutrition.signedOutBody")}</p><button onClick={() => void beginCmineLogin("/nutrition", locale)}>{t("nutrition.signedOutAction")}</button></section>
   </main>;
 
   return <main className="nutrition-page">
@@ -344,7 +345,7 @@ export default function NutritionDashboard() {
       <article className="nutrition-card recipe-builder"><header><span>05 / RECIPE</span><h2>{t("nutrition.recipeCardTitle")}</h2></header><div className="recipe-meta"><input value={recipeName} onChange={(event) => setRecipeName(event.target.value)} placeholder={t("nutrition.recipeNamePlaceholder")} /><label>{t("nutrition.servings")}<input type="number" min="1" max="100" value={recipeServings} onChange={(event) => setRecipeServings(Number(event.target.value))} /></label></div>{recipeItems.length ? <div className="recipe-item-list">{recipeItems.map((item, index) => <div key={item.food.ref}><b>{item.food.name}</b><input type="number" min="1" max="5000" value={item.grams} onChange={(event) => setRecipeItems((current) => current.map((entry, itemIndex) => itemIndex === index ? { ...entry, grams: Number(event.target.value) } : entry))} /><span>g</span><button onClick={() => setRecipeItems((current) => current.filter((_, itemIndex) => itemIndex !== index))}>{t("nutrition.removeItem")}</button></div>)}</div> : <div className="account-empty">{t("nutrition.recipeEmpty")}</div>}<div className="recipe-actions"><button onClick={() => void saveRecipe()} disabled={working}>{t("nutrition.saveAsRecipe")}</button><button onClick={() => void saveTemplate()} disabled={working}>{t("nutrition.saveAsTemplate")}</button></div></article>
     </section>
 
-    {(templates.length > 0 || recipes.length > 0) && <section className="nutrition-card saved-food-tools"><header><div><span>06 / SAVED</span><h2>{t("nutrition.savedTitle")}</h2></div><p>{t("nutrition.savedHint")}</p></header>{templates.length > 0 && <div className="template-list">{templates.map((template) => <button key={template.id} onClick={() => void logTemplate(template)}><b>{template.name}</b><span>{t("nutrition.templateMacros", { calories: Math.round(template.totals.calories), protein: Math.round(template.totals.proteinG) })}</span><small>{t("nutrition.templateAddToToday")}</small></button>)}</div>}{recipes.length > 0 && <div className="recipe-summary-list">{recipes.map((recipe) => <article key={recipe.id}><b>{recipe.name}</b><span>{t("nutrition.recipeSummary", { servings: recipe.servings, calories: Math.round(recipe.totals.calories) })}</span><small>{t("nutrition.recipePerServing", { calories: Math.round(recipe.totals.calories / recipe.servings) })}</small></article>)}</div>}</section>}
+    {(templates.length > 0 || recipes.length > 0) && <section className="nutrition-card saved-food-tools"><header><div><span>06 / SAVED</span><h2>{t("nutrition.savedTitle")}</h2></div><p>{t("nutrition.savedHint")}</p></header>{templates.length > 0 && <div className="template-list">{templates.map((template) => <button key={template.id} onClick={() => void logTemplate(template)}><b>{template.name}</b><span>{t("nutrition.templateMacros", { calories: Math.round(template.totals.calories), protein: Math.round(template.totals.proteinG) })}</span><small>{t("nutrition.templateAddToToday")}</small></button>)}</div>}{recipes.length > 0 && <div className="recipe-summary-list">{recipes.map((recipe) => <article key={recipe.id}><b>{recipe.name}</b><span>{t("nutrition.recipeSummary", { servings: plural(locale, recipe.servings, { one: t("nutrition.recipeServingsCount.one"), other: t("nutrition.recipeServingsCount.other") }), calories: Math.round(recipe.totals.calories) })}</span><small>{t("nutrition.recipePerServing", { calories: Math.round(recipe.totals.calories / recipe.servings) })}</small></article>)}</div>}</section>}
 
     <section className="nutrition-card meal-history">
       <header><div><span>07 / HISTORY</span><h2>{t("nutrition.historyTitle")}</h2></div><p>{t("nutrition.historyHint")}</p></header>

@@ -54,12 +54,21 @@ export const todayEn = {
   restDayTitle: "Recovery day",
   restDayBody: "Easy walking, some mobility work and enough sleep — that is the whole plan today.",
 
+  // Fallbacks for plan content that is missing in the reader's language.
+  // Shown instead of a blank line, and never instead of a safety instruction.
+  sessionTitleFallback: "Today's session",
+  sessionFocusFallback: "No focus note for this session.",
+  exerciseNameFallback: "Unnamed exercise",
+  exerciseTargetFallback: "Target area not listed",
+  exerciseCueFallback: "No form cue is available for this exercise.",
+  exerciseProgressionFallback: "No progression note yet.",
+
   // Exercise card
   zoomExerciseAria: "Enlarge {name}",
   exerciseDemoAlt: "{name} demonstration",
   zoom: "Enlarge",
   exercisePrompt: "How should I do {name} right now?",
-  exerciseIssueLink: "Movement hurts, or the machine is taken?",
+  exerciseIssueLink: "Movement does not feel right, or the machine is taken?",
 
   // Form cues and safety — reviewed copy, do not soften
   safetySummary: "Form cues and safety notes",

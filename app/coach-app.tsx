@@ -178,8 +178,8 @@ export default function CoachApp() {
     if (completed.has(key)) return;
     if (user && planId) {
       const response = await fetch("/api/completions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ planId, dayIndex, exerciseId }) });
-      const result = await response.json() as { points?: number; message?: string };
-      if (!response.ok) { setToast(result.message || (t("home.couldNotSyncThis"))); return; }
+      const result = await response.json() as { points?: number; error?: string; message?: string };
+      if (!response.ok) { setToast(localizeApiError(result, locale, t("home.couldNotSyncThis"))); return; }
       if (typeof result.points === "number") setPoints(result.points);
     }
     setCompleted((current) => new Set(current).add(key));
@@ -191,8 +191,10 @@ export default function CoachApp() {
     setPlanStatus("active"); setToast(t("home.theNewPlanIs"));
   };
   const signIn = async (resumeIntake = false) => {
-    const result = await beginCmineLogin(resumeIntake ? "/onboarding?resume=intake" : "/");
-    if (!result.ok) { setLoginOpen(false); setToast(result.message || "登录暂不可用。"); }
+    const result = await beginCmineLogin(resumeIntake ? "/onboarding?resume=intake" : "/", locale);
+    // beginCmineLogin already resolved its message in `locale`; the fallback is
+    // a catalog key rather than the Chinese literal that used to sit here.
+    if (!result.ok) { setLoginOpen(false); setToast(result.message || t("auth.signInUnavailable")); }
   };
   const currentDay = plan.schedule[activeDay] || plan.schedule[0];
   const goalLabel = goalOptions.find((goal) => goal.value === profile.goal)?.[lang] || "";
@@ -431,7 +433,7 @@ export default function CoachApp() {
 
       {adOpen && <div ref={adDialogRef} className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setAdOpen(false)} role="dialog" aria-modal="true" aria-labelledby="ad-title">
         <div className="small-modal ad-modal"><button className="modal-close" aria-label={t("home.close")} onClick={() => setAdOpen(false)}>×</button><span className="modal-icon" aria-hidden="true">◆</span><h2 id="ad-title">{t("home.adTitle")}</h2><p>{t("home.adText")}</p><div className="ad-reward"><b>+10</b><span>{t("home.points")}</span></div>
-          <button className="primary-cta" disabled={adClaimed} onClick={async () => { const response = await fetch("/api/points/claim-ad", { method: "POST" }); const result = await response.json() as { message?: string }; setAdClaimed(response.ok); setToast(result.message || (t("home.rewardAdsAreNot"))); window.setTimeout(() => setAdOpen(false), 900); }}><span>{adClaimed ? t("home.completed") : t("home.playAd")}</span><b>▶</b></button>
+          <button className="primary-cta" disabled={adClaimed} onClick={async () => { const response = await fetch("/api/points/claim-ad", { method: "POST" }); const result = await response.json() as { error?: string; message?: string }; setAdClaimed(response.ok); setToast(localizeApiError(result, locale, t("home.rewardAdsAreNot"))); window.setTimeout(() => setAdOpen(false), 900); }}><span>{adClaimed ? t("home.completed") : t("home.playAd")}</span><b>▶</b></button>
         </div>
       </div>}
       {toast && <div className="toast" role="status"><span>✓</span>{toast}</div>}

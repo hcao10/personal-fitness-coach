@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import ProductShell from "../components/product-shell";
 import { defaultProfile, generatePlan, type Activity, type BeginnerBarrier, type Equipment, type Experience, type Goal, type Profile, type Sex, type TrainingTrack } from "../lib/coach";
 import { beginCmineLogin, getCmineSession } from "../lib/auth";
-import { useLocale, useT } from "../lib/i18n-provider";
+import { useLocale, useT, useLocaleRef } from "../lib/i18n-provider";
 import { localizeApiError, type ApiErrorBody } from "../lib/api-error";
 import type { MessageKey } from "../lib/i18n";
 
@@ -18,6 +18,7 @@ const recommendedStartDate = () => { const date = new Date(); if (date.getHours(
 
 export default function OnboardingClient() {
   const { locale, t } = useLocale();
+  const localeRef = useLocaleRef();
   const [step, setStep] = useState(0); const [draft, setDraft] = useState<Draft>(initial);
   const [loading, setLoading] = useState(true); const [saving, setSaving] = useState(false); const [consent, setConsent] = useState(false); const [message, setMessage] = useState("");
   const [startDate, setStartDate] = useState(recommendedStartDate);
@@ -28,7 +29,7 @@ export default function OnboardingClient() {
 
   useEffect(() => { void (async () => {
     const session = await getCmineSession();
-    if (!session.user) { await beginCmineLogin("/onboarding"); return; }
+    if (!session.user) { await beginCmineLogin("/onboarding", localeRef.current); return; }
     const response = await fetch("/api/v1/onboarding", { cache: "no-store" });
     const state = response.ok ? await response.json() as { step?: number; draft?: Partial<Draft> } : {};
     let merged = { ...initial, ...(state.draft || {}) };
@@ -39,7 +40,7 @@ export default function OnboardingClient() {
       setStep(6);
     } else setStep(Math.max(0, Math.min(6, Number(state.step || 0))));
     setDraft(merged); setLoading(false);
-  })(); }, []);
+  })(); }, [localeRef]);
 
   const saveAndMove = async (next: number) => {
     setSaving(true); setMessage("");
@@ -67,7 +68,7 @@ export default function OnboardingClient() {
     <section className="onboarding-layout">
       <div className="onboarding-steps">{steps.map((name, index) => <button key={name} className={index === step ? "active" : index < step ? "done" : ""} onClick={() => index <= step && setStep(index)}><b>{index < step ? "✓" : index + 1}</b><span>{t(name)}</span></button>)}</div>
       <div className="onboarding-card">
-        {step === 0 && <div className="onboarding-welcome"><span>2–3 MINUTES</span><h2>{t("onboarding.welcomeTitle")}</h2><p>{t("onboarding.welcomeBody")}</p><button className="primary-cta" onClick={() => void saveAndMove(1)}>{t("onboarding.welcomeCta")} <b>→</b></button></div>}
+        {step === 0 && <div className="onboarding-welcome"><span>{t("onboarding.welcomeDuration")}</span><h2>{t("onboarding.welcomeTitle")}</h2><p>{t("onboarding.welcomeBody")}</p><button className="primary-cta" onClick={() => void saveAndMove(1)}>{t("onboarding.welcomeCta")} <b>→</b></button></div>}
         {step === 1 && <Step title={t("onboarding.goalTitle")} note={t("onboarding.goalNote")}>
           <div className="track-choice">
             <button className={draft.trainingTrack === "beginner_fat_loss" ? "active" : ""} onClick={() => setDraft((current) => ({ ...current, trainingTrack: "beginner_fat_loss", goal: "fat_loss", experience: "beginner", days: Math.min(4, current.days), sessionMinutes: [20, 30, 45].includes(current.sessionMinutes) ? current.sessionMinutes : 30 }))}><span>{t("onboarding.trackBeginnerBadge")}</span><b>{t("onboarding.trackBeginnerName")}</b><small>{t("onboarding.trackBeginnerBlurb")}</small></button>

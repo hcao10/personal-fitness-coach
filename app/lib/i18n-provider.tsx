@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { DEFAULT_LOCALE, translator, type Locale } from "../../packages/i18n/src";
 import { persistLocale } from "./locale-client";
 
@@ -54,6 +54,23 @@ export function useLocale() {
 /** The translator for the current locale. `const t = useT()`, then `t("today.title")`. */
 export function useT() {
   return useLocaleContext().t;
+}
+
+/**
+ * The current locale behind a stable ref.
+ *
+ * For mount-only effects that need the locale in a branch which may fire much
+ * later — a 401 redirect, say. Putting `locale` in the dependency array would
+ * re-run the whole effect every time the reader switches language, which for an
+ * auth check means a redundant request and possibly a second redirect; leaving
+ * it out captures a value that can go stale. A ref is neither: the effect runs
+ * once and still reads the language the reader has right now.
+ */
+export function useLocaleRef() {
+  const { locale } = useLocaleContext();
+  const ref = useRef(locale);
+  useEffect(() => { ref.current = locale; }, [locale]);
+  return ref;
 }
 
 export { DEFAULT_LOCALE };

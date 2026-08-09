@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { beginCmineLogin } from "../lib/auth";
+import { useLocale } from "../lib/i18n-provider";
 
 type AdminUser = { id: string; email: string | null; name: string | null; status: string; createdAt?: string; created_at?: string };
 type AiRoute = { id: string; task: string; tier: string; priority: number; provider: "cloudflare" | "openai" | "compatible"; model: string; enabled: boolean };
@@ -34,6 +35,10 @@ function dateTime(value: string) {
 }
 
 export default function AdminDashboard() {
+  // This console is deliberately Chinese-only — it has one operator and
+  // translating it buys nothing. The locale is still read rather than assumed,
+  // because the sign-in helper it feeds is shared with pages that are not.
+  const { locale } = useLocale();
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [error, setError] = useState("");
   const [errorCode, setErrorCode] = useState("");
@@ -113,7 +118,7 @@ export default function AdminDashboard() {
       <h1>{errorCode === "AUTH_REQUIRED" ? "先确认你的 Cmine 身份。" : "当前账号不能进入管理后台。"}</h1>
       <p>{error}</p>
       {errorCode === "AUTH_REQUIRED"
-        ? <button className="admin-login-button" onClick={() => void beginCmineLogin("/admin")}>使用 Cmine ID 登录 →</button>
+        ? <button className="admin-login-button" onClick={() => void beginCmineLogin("/admin", locale)}>使用 Cmine ID 登录 →</button>
         : <Link href="/account">查看当前登录账号</Link>}
     </section>;
   }

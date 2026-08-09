@@ -22,6 +22,11 @@ export const exercisesZh = {
   equipmentBand: "弹力带",
   equipmentMachine: "固定器械",
   catalogNote: "目录收录 {count} 个动作可供浏览；AI 训练计划当前使用其中经过安全审核的动作子集。目录中的动作不会未经确认直接替换你的计划。",
+  // Shown while the count is still unknown. Interpolating a dash into the
+  // sentence above reads as a placeholder in Chinese but is simply
+  // ungrammatical in English, so the pending state gets its own sentence —
+  // carrying the same safety line, which must not disappear while loading.
+  catalogNotePending: "正在加载动作目录；AI 训练计划当前使用其中经过安全审核的动作子集。目录中的动作不会未经确认直接替换你的计划。",
   loading: "正在加载动作目录…",
 
   demoAlt: "{name} 动作示范",

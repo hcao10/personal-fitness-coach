@@ -52,6 +52,15 @@ export const todayZh = {
   restDayTitle: "恢复日",
   restDayBody: "轻松步行、活动度练习和充足睡眠，就是今天的计划。",
 
+  // Fallbacks for plan content that is missing in the reader's language.
+  // Shown instead of a blank line, and never instead of a safety instruction.
+  sessionTitleFallback: "今日训练",
+  sessionFocusFallback: "本次训练暂无重点说明。",
+  exerciseNameFallback: "未命名动作",
+  exerciseTargetFallback: "未标注目标部位",
+  exerciseCueFallback: "该动作暂无要点说明。",
+  exerciseProgressionFallback: "暂无进阶建议。",
+
   // Exercise card
   zoomExerciseAria: "放大查看 {name}",
   exerciseDemoAlt: "{name} 动作示范",

@@ -13,6 +13,12 @@ export const pricingZh = {
   navNutrition: "饮食记录",
   navMyTraining: "我的训练",
 
+  // The small all-caps labels above the headline and above the free plan are
+  // copy, not decoration — the same way home.startHere / home.progressive are
+  // catalogued. Left in the markup they served an English reader Chinese page
+  // text under an English eyebrow.
+  heroEyebrow: "专业计划",
+
   // The headline is split across a <br /> in the markup, so each line is its
   // own message — a locale that breaks the sentence elsewhere changes only the
   // text, not the JSX.
@@ -27,6 +33,7 @@ export const pricingZh = {
 
   plansRegionLabel: "Cmine Fit 订阅方案",
 
+  freeEyebrow: "起步",
   freeBadge: "当前可用",
   freeTitle: "免费版",
   freePrice: "免费",

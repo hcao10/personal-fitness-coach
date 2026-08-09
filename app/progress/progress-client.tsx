@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import ProductShell from "../components/product-shell";
 import { beginCmineLogin } from "../lib/auth";
-import { useLocale } from "../lib/i18n-provider";
+import { useLocale, useLocaleRef } from "../lib/i18n-provider";
 import { localizeApiError, type ApiErrorBody } from "../lib/api-error";
 import { numberFormatter, pick, type LocalizedPartial, type MessageKey } from "../../packages/i18n/src";
 
@@ -31,8 +31,9 @@ const isReviewKind = (value: unknown): value is ReviewKind =>
   Object.prototype.hasOwnProperty.call(REVIEW_CHANGE_KEYS, value as string);
 export default function ProgressClient() {
   const { locale, t } = useLocale();
+  const localeRef = useLocaleRef();
   const [reviews, setReviews] = useState<Review[]>([]); const [recovery, setRecovery] = useState(3); const [sleep, setSleep] = useState(3); const [pain, setPain] = useState(0); const [busy, setBusy] = useState(false); const [message, setMessage] = useState("");
-  const load = async () => { const response = await fetch("/api/v1/reviews", { cache: "no-store" }); if (response.status === 401) { await beginCmineLogin("/progress"); return; } if (response.ok) setReviews((await response.json() as { reviews: Review[] }).reviews); };
+  const load = async () => { const response = await fetch("/api/v1/reviews", { cache: "no-store" }); if (response.status === 401) { await beginCmineLogin("/progress", locale); return; } if (response.ok) setReviews((await response.json() as { reviews: Review[] }).reviews); };
   // Reviews stored before the engine recorded a `kind` keep their Chinese prose;
   // showing it to a Chinese reader is right, and to anyone else it would not be,
   // so they get an honest placeholder instead of another language's text.
@@ -53,10 +54,10 @@ export default function ProgressClient() {
   };
   useEffect(() => {
     void fetch("/api/v1/reviews", { cache: "no-store" }).then(async (response) => {
-      if (response.status === 401) { await beginCmineLogin("/progress"); return; }
+      if (response.status === 401) { await beginCmineLogin("/progress", localeRef.current); return; }
       if (response.ok) setReviews((await response.json() as { reviews: Review[] }).reviews);
     });
-  }, []); const current = reviews[0];
+  }, [localeRef]); const current = reviews[0];
   const generate = async () => { if (!current) return; setBusy(true); setMessage(""); const checked = await fetch(`/api/v1/reviews/${current.id}/check-in`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ recovery, sleep, pain }) }); if (checked.ok) { const generated = await fetch(`/api/v1/reviews/${current.id}/generate`, { method: "POST" }); if (!generated.ok) setMessage(localizeApiError(await generated.json().catch(() => null) as ApiErrorBody | null, locale, t("progress.generateFailed"))); } await load(); setBusy(false); };
   const decide = async (decision: "accept" | "reject") => { if (!current) return; setBusy(true); const response = await fetch(`/api/v1/reviews/${current.id}/${decision}`, { method: "POST" }); setMessage(response.ok ? decision === "accept" ? t("progress.planActivated") : t("progress.planKept") : t("progress.actionFailed")); await load(); setBusy(false); };
   return <ProductShell active="/progress" eyebrow={t("progress.eyebrow")} title={t("progress.title")}>

@@ -22,7 +22,9 @@ export const onboardingZh = {
   completeFailed: "资料确认失败，请重试。",
   planFailed: "资料已经保存。AI 暂时无法生成计划，你可以稍后从“今日”重试。",
 
-  // Step 0 — welcome.
+  // Step 0 — welcome. The duration badge is a promise about how long the intake
+  // takes, so it belongs in the catalog rather than hardcoded in the JSX.
+  welcomeDuration: "2–3 分钟",
   welcomeTitle: "让计划适合你的生活，而不是让生活迁就计划。",
   welcomeBody: "你可以逐步填写，也可以稍后继续。只有在最后确认后，我们才会生成完整计划。",
   welcomeCta: "开始建立计划",

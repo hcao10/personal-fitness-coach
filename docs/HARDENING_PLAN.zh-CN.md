@@ -59,7 +59,7 @@
 | 2 | 首页全量迁移：112 处内联三元 + 74 键遗留 copy 表 → 统一词表（由可重跑的 codemod 完成） | ☑ |
 | 3 | 语言解析与持久化：cookie + `users.locale` + Accept-Language；`<html lang>`/`dir`/元数据服务端解析；语言选择跨页面保持 | ☑ |
 | 4 | 服务端错误消息按 code 本地化（客户端翻译，避免 Worker isolate 竞态） | ☑ |
-| 5 | 其余产品页（today/coach/nutrition/progress/account/pricing/onboarding/exercises，约 1000 条） | ☐ |
+| 5 | 其余产品页（today/coach/nutrition/progress/account/pricing/onboarding/exercises + auth 回调） | ☑ 2026-08-09 |
 | 6 | 移动端接入同一词表 | ☐ |
 | 7 | LLM 提示与 `_zh`/`_en` 结构化 schema 泛化为按 locale | ☑ 2026-08-09（L7-6 归入阶段 9，见下方分步） |
 | 8 | 按语言的安全分诊 + 上线闸门测试 | ☑ 2026-08-09 |
