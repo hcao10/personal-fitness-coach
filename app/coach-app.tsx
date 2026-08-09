@@ -6,6 +6,7 @@ import { defaultProfile, generatePlan, type Activity, type CoachPlan, type Equip
 import { AUTH_PROVIDERS, beginCmineLogin, getCmineSession, type CmineUser } from "./lib/auth";
 import { copy, languageOptions, type DisplayLanguage, type Locale } from "./lib/i18n";
 import { CONSENT_STORAGE_KEY, FALLBACK_DISCLAIMER_VERSION, FALLBACK_PRIVACY_VERSION, PRODUCT_VERSION, consentStamp } from "./lib/consent-versions";
+import { useDialog } from "./lib/use-dialog";
 
 const goalOptions: { value: Goal; zh: string; en: string }[] = [
   { value: "arms", zh: "手臂线条", en: "Defined arms" },
@@ -55,6 +56,10 @@ export default function CoachApp() {
   const [dateOptions] = useState(() => { const today = new Date(); const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1); return { today: localDate(today), tomorrow: localDate(tomorrow) }; });
   const [timezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
   const planRef = useRef<HTMLElement>(null);
+  // The consent gate passes null: it must be answered, not dismissed.
+  const consentDialogRef = useDialog(Boolean(user) && accepted === false, null);
+  const loginDialogRef = useDialog(loginOpen, () => setLoginOpen(false));
+  const adDialogRef = useDialog(adOpen, () => setAdOpen(false));
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -233,11 +238,14 @@ export default function CoachApp() {
         <div className="section-heading"><p>01 / INTAKE</p><div><h2>{t.profileTitle}</h2><span>{t.profileHint}</span></div></div>
         <div className="intake-grid">
           <div className="form-card">
-            <div className="homepage-track-selector"><button className={profile.trainingTrack !== "intermediate_hypertrophy" ? "active" : ""} onClick={() => selectTrack("beginner_fat_loss")}><span>{lang === "zh" ? "核心路径" : "START HERE"}</span><b>{lang === "zh" ? "新手日常减脂" : "Beginner fat loss"}</b><small>{lang === "zh" ? "20–45 分钟，从坚持和日常饮食开始。" : "20–45 minute sessions built for consistency."}</small></button><button className={profile.trainingTrack === "intermediate_hypertrophy" ? "active" : ""} onClick={() => selectTrack("intermediate_hypertrophy")}><span>{lang === "zh" ? "专业路径" : "PROGRESSIVE"}</span><b>{lang === "zh" ? "中级系统增肌" : "Intermediate hypertrophy"}</b><small>{lang === "zh" ? "组次、RIR、渐进负荷与周期复盘。" : "Sets, RIR, progression and training reviews."}</small></button></div>
+            {/* Single-select button groups are exposed as radio groups: styling
+                the chosen one with a class leaves the selection invisible to
+                assistive technology. */}
+            <div className="homepage-track-selector" role="radiogroup" aria-label={lang === "zh" ? "训练路径" : "Training track"}><button role="radio" aria-checked={profile.trainingTrack !== "intermediate_hypertrophy"} className={profile.trainingTrack !== "intermediate_hypertrophy" ? "active" : ""} onClick={() => selectTrack("beginner_fat_loss")}><span>{lang === "zh" ? "核心路径" : "START HERE"}</span><b>{lang === "zh" ? "新手日常减脂" : "Beginner fat loss"}</b><small>{lang === "zh" ? "20–45 分钟，从坚持和日常饮食开始。" : "20–45 minute sessions built for consistency."}</small></button><button role="radio" aria-checked={profile.trainingTrack === "intermediate_hypertrophy"} className={profile.trainingTrack === "intermediate_hypertrophy" ? "active" : ""} onClick={() => selectTrack("intermediate_hypertrophy")}><span>{lang === "zh" ? "专业路径" : "PROGRESSIVE"}</span><b>{lang === "zh" ? "中级系统增肌" : "Intermediate hypertrophy"}</b><small>{lang === "zh" ? "组次、RIR、渐进负荷与周期复盘。" : "Sets, RIR, progression and training reviews."}</small></button></div>
             <div className="form-section">
               <div className="form-section-title"><span>01</span><h3>{t.basics}</h3></div>
-              <div className="segmented">
-                {(["female", "male"] as const).map((sex) => <button key={sex} className={profile.sex === sex ? "active" : ""} onClick={() => patchProfile("sex", sex)}>{lang === "zh" ? (sex === "female" ? "女性" : "男性") : sex === "female" ? "Female" : "Male"}</button>)}
+              <div className="segmented" role="radiogroup" aria-label={lang === "zh" ? "生理性别" : "Sex"}>
+                {(["female", "male"] as const).map((sex) => <button key={sex} role="radio" aria-checked={profile.sex === sex} className={profile.sex === sex ? "active" : ""} onClick={() => patchProfile("sex", sex)}>{lang === "zh" ? (sex === "female" ? "女性" : "男性") : sex === "female" ? "Female" : "Male"}</button>)}
               </div>
               <div className="field-grid three">
                 <label><FieldLabel>{lang === "zh" ? "年龄" : "Age"}</FieldLabel><span className="input-unit"><input aria-label={lang === "zh" ? "年龄" : "Age"} type="number" min="16" max="85" value={profile.age} onChange={(e) => patchProfile("age", Number(e.target.value))} /><em>{lang === "zh" ? "岁" : "yr"}</em></span></label>
@@ -247,8 +255,8 @@ export default function CoachApp() {
             </div>
             <div className="form-section">
               <div className="form-section-title"><span>02</span><h3>{t.goal}</h3></div>
-              <div className="goal-grid">
-                {goalOptions.map((goal) => <button key={goal.value} className={profile.goal === goal.value ? "active" : ""} onClick={() => patchProfile("goal", goal.value)}><span>{goal.value === "arms" ? "◎" : goal.value === "fat_loss" ? "↘" : goal.value === "muscle" ? "＋" : goal.value === "recomp" ? "◇" : "↑"}</span>{goal[lang]}</button>)}
+              <div className="goal-grid" role="radiogroup" aria-label={t.goal}>
+                {goalOptions.map((goal) => <button key={goal.value} role="radio" aria-checked={profile.goal === goal.value} className={profile.goal === goal.value ? "active" : ""} onClick={() => patchProfile("goal", goal.value)}><span aria-hidden="true">{goal.value === "arms" ? "◎" : goal.value === "fat_loss" ? "↘" : goal.value === "muscle" ? "＋" : goal.value === "recomp" ? "◇" : "↑"}</span>{goal[lang]}</button>)}
               </div>
               {profile.trainingTrack === "intermediate_hypertrophy" ? <div className="track-detail-fields"><label><FieldLabel>{lang === "zh" ? "系统训练月数" : "Training months"}</FieldLabel><input type="number" min="3" max="600" value={profile.trainingAgeMonths || 0} onChange={(event) => patchProfile("trainingAgeMonths", Number(event.target.value))} /></label><label><FieldLabel>{lang === "zh" ? "优先提升部位" : "Priority muscles"}</FieldLabel><input value={profile.weakPoints || ""} onChange={(event) => patchProfile("weakPoints", event.target.value)} placeholder={lang === "zh" ? "例如：背阔肌、三角肌中束" : "e.g. lats, side delts"} /></label></div> : <div className="track-detail-fields"><label><FieldLabel>{lang === "zh" ? "最主要的困难" : "Main barrier"}</FieldLabel><select value={profile.beginnerBarrier || "confidence"} onChange={(event) => patchProfile("beginnerBarrier", event.target.value as Profile["beginnerBarrier"])}><option value="confidence">{lang === "zh" ? "不知道怎么开始" : "Not sure how to start"}</option><option value="time">{lang === "zh" ? "时间不完整" : "Limited time"}</option><option value="consistency">{lang === "zh" ? "难以坚持" : "Consistency"}</option><option value="food">{lang === "zh" ? "饮食容易失控" : "Food choices"}</option><option value="feedback">{lang === "zh" ? "缺少反馈" : "Lack of feedback"}</option></select></label><label><FieldLabel>{lang === "zh" ? "偏好时长" : "Preferred duration"}</FieldLabel><select value={profile.sessionMinutes || 30} onChange={(event) => patchProfile("sessionMinutes", Number(event.target.value))}><option value="20">20 min</option><option value="30">30 min</option><option value="45">45 min</option></select></label></div>}
               <div className="field-grid two">
@@ -348,9 +356,12 @@ export default function CoachApp() {
         <div className="week-layout" id="library">
           <div className="week-main">
             <div className="week-heading"><div><span>03 / TRAINING</span><h3>{t.weekPlan}</h3></div><button onClick={() => document.getElementById("coach")?.scrollIntoView({ behavior: "smooth" })}>{t.update} ↗</button></div>
-            <div className="day-tabs" role="tablist">
-              {plan.schedule.map((day, index) => <button key={index} role="tab" aria-selected={activeDay === index} className={activeDay === index ? "active" : ""} onClick={() => setActiveDay(index)}><span>{scheduleDateLabel(startDate, index, lang)}</span><b>{day.restDay ? "REST" : day.duration + "M"}</b></button>)}
+            <div className="day-tabs" role="tablist" aria-label={t.weekPlan}>
+              {plan.schedule.map((day, index) => <button key={index} id={`day-tab-${index}`} role="tab" aria-selected={activeDay === index} aria-controls="day-panel" tabIndex={activeDay === index ? 0 : -1} className={activeDay === index ? "active" : ""} onClick={() => setActiveDay(index)}><span>{scheduleDateLabel(startDate, index, lang)}</span><b>{day.restDay ? "REST" : day.duration + "M"}</b></button>)}
             </div>
+            {/* The tabs previously controlled nothing: role="tablist" without a
+                matching tabpanel leaves the relationship broken for AT. */}
+            <div id="day-panel" role="tabpanel" aria-labelledby={`day-tab-${activeDay}`} tabIndex={-1}>
             <div className="workout-head"><div><p>{currentDay.focus[lang]}</p><h3>{currentDay.title[lang]}</h3></div><div><span>{currentDay.restDay ? "—" : currentDay.exercises.length}</span><small>{currentDay.restDay ? t.recovery : lang === "zh" ? "个动作" : "exercises"}</small></div></div>
             {currentDay.restDay ? (
               <div className="recovery-panel"><span>↻</span><div><h4>{currentDay.focus[lang]}</h4><p>{lang === "zh" ? "恢复不是偷懒，是让下一次训练真正发生适应。保持轻松活动，并优先保证睡眠。" : "Recovery is where adaptation happens. Keep movement easy and prioritize sleep."}</p></div></div>
@@ -372,6 +383,7 @@ export default function CoachApp() {
                 })}
               </div>
             )}
+            </div>
           </div>
           <aside className="coach-sidebar">
             {planRationale.length > 0 && <article className="rationale-card"><div className="card-kicker">{lang === "zh" ? "为什么这样安排" : "Why this plan fits"}</div>{planRationale.map((reason, index) => <div key={reason}><span>{String(index + 1).padStart(2, "0")}</span><p>{reason}</p></div>)}</article>}
@@ -394,7 +406,7 @@ export default function CoachApp() {
 
       <footer><a className="brand" href="#top"><span className="brand-mark">C</span><span>CMINE <b>FIT</b></span></a><p>{t.footerNote}</p><span>© 2026 Cmine Fit · Exercise media © Gym visual · <a className="admin-link" href="/admin">{t.navAdmin}</a></span></footer>
 
-      {user && accepted === false && <div className="modal-backdrop safety-backdrop" role="dialog" aria-modal="true" aria-labelledby="disclaimer-title">
+      {user && accepted === false && <div ref={consentDialogRef} className="modal-backdrop safety-backdrop" role="dialog" aria-modal="true" aria-labelledby="disclaimer-title">
         <div className="safety-modal">
           <div className="modal-stripe"><span>SAFETY FIRST</span><b>01 / 03</b></div><h2 id="disclaimer-title">{t.disclaimerTitle}</h2><p className="disclaimer-intro">{t.disclaimerIntro}</p>
           <label className={healthCheck ? "checked" : ""}><input type="checkbox" checked={healthCheck} onChange={(e) => setHealthCheck(e.target.checked)} /><span>{healthCheck ? "✓" : ""}</span><p>{t.disclaimerHealth}</p></label>
@@ -404,14 +416,14 @@ export default function CoachApp() {
         </div>
       </div>}
 
-      {loginOpen && <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setLoginOpen(false)} role="dialog" aria-modal="true">
-        <div className="small-modal"><button className="modal-close" onClick={() => setLoginOpen(false)}>×</button><span className="modal-icon">↗</span><h2>{t.signinTitle}</h2><p>{t.signinText}</p>
+      {loginOpen && <div ref={loginDialogRef} className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setLoginOpen(false)} role="dialog" aria-modal="true" aria-labelledby="signin-title">
+        <div className="small-modal"><button className="modal-close" aria-label={lang === "zh" ? "关闭" : "Close"} onClick={() => setLoginOpen(false)}>×</button><span className="modal-icon" aria-hidden="true">↗</span><h2 id="signin-title">{t.signinTitle}</h2><p>{t.signinText}</p>
           <div className="provider-list">{AUTH_PROVIDERS.map((provider) => <button key={provider.id} onClick={() => void signIn(anonymousPreview)}><span>C</span>{provider.label}<em>→</em></button>)}</div>
         </div>
       </div>}
 
-      {adOpen && <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setAdOpen(false)} role="dialog" aria-modal="true">
-        <div className="small-modal ad-modal"><button className="modal-close" onClick={() => setAdOpen(false)}>×</button><span className="modal-icon">◆</span><h2>{t.adTitle}</h2><p>{t.adText}</p><div className="ad-reward"><b>+10</b><span>{t.points}</span></div>
+      {adOpen && <div ref={adDialogRef} className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setAdOpen(false)} role="dialog" aria-modal="true" aria-labelledby="ad-title">
+        <div className="small-modal ad-modal"><button className="modal-close" aria-label={lang === "zh" ? "关闭" : "Close"} onClick={() => setAdOpen(false)}>×</button><span className="modal-icon" aria-hidden="true">◆</span><h2 id="ad-title">{t.adTitle}</h2><p>{t.adText}</p><div className="ad-reward"><b>+10</b><span>{t.points}</span></div>
           <button className="primary-cta" disabled={adClaimed} onClick={async () => { const response = await fetch("/api/points/claim-ad", { method: "POST" }); const result = await response.json() as { message?: string }; setAdClaimed(response.ok); setToast(result.message || (lang === "zh" ? "奖励广告暂不可用" : "Reward ads are not available yet")); window.setTimeout(() => setAdOpen(false), 900); }}><span>{adClaimed ? t.completed : t.playAd}</span><b>▶</b></button>
         </div>
       </div>}
