@@ -1,1 +1,1 @@
-export * from "../../packages/coach-core/src";
+export * from "../../packages/coach-core/src/index.ts";

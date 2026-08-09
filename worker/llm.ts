@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { decoratePlanSchedule, describeSession, EXERCISES, generatePlan, isExerciseAllowed, type CoachPlan, type Profile, type WorkoutDay } from "../app/lib/coach";
-import { actionsAllowedUnderRisk, auditContentLocale } from "../packages/domain/src";
+import { decoratePlanSchedule, describeSession, EXERCISES, generatePlan, isExerciseAllowed, type CoachPlan, type Profile, type WorkoutDay } from "../app/lib/coach.ts";
+import { actionsAllowedUnderRisk, auditContentLocale } from "../packages/domain/src/index.ts";
 import type { WorkerEnv } from "./platform";
 import type { ProductTier } from "./product";
 
@@ -23,8 +23,8 @@ type AiPlanOutput = {
 };
 
 import type { MealCandidate } from "../packages/api-contracts/src";
-import { DEFAULT_LOCALE, SHIPPABLE_LOCALES, type Locale } from "../packages/i18n/src";
-import { systemPrompt } from "./prompts";
+import { DEFAULT_LOCALE, SHIPPABLE_LOCALES, type Locale } from "../packages/i18n/src/index.ts";
+import { systemPrompt } from "./prompts/index.ts";
 export type { MealCandidate };
 
 type AiRoute = { provider: "cloudflare" | "openai" | "compatible"; model: string; priority: number };
@@ -482,7 +482,17 @@ function parseJson<T>(text: string): T {
   }
 }
 
-function applyAiPlan(profile: Profile, base: CoachPlan, output: AiPlanOutput, locale: Locale): CoachPlan {
+/**
+ * Turns a model's plan into a CoachPlan, rejecting anything the rules engine
+ * would not have produced.
+ *
+ * Exported for tests. These checks are the boundary between "the model
+ * suggested" and "the product prescribed" — an unknown exercise ID, a training
+ * day the user did not ask for, or equipment they do not have all have to die
+ * here, and that is worth asserting directly rather than only through a live
+ * provider call.
+ */
+export function applyAiPlan(profile: Profile, base: CoachPlan, output: AiPlanOutput, locale: Locale): CoachPlan {
   if (!Array.isArray(output.days) || !Array.isArray(output.plan_rationale)) throw new Error("AI_SCHEMA_INVALID");
   const sorted = [...output.days].sort((a, b) => a.day_index - b.day_index);
   if (sorted.length !== 7 || sorted.some((day, index) => day.day_index !== index)) throw new Error("AI_SCHEDULE_INVALID");
