@@ -1,68 +1,14 @@
-// A locale may only be listed here once `copy` below has a full translation for
-// it — the `Record<Locale, …>` type on `copy` enforces this at compile time.
-export type Locale = "zh" | "en";
-export type DisplayLanguage = "zh" | "en";
+// Locale registry and message catalog live in packages/i18n so the web app, the
+// worker and the Expo app share one source of truth. This module is the thin
+// web-side adapter.
+import { LOCALE_META, SHIPPABLE_LOCALES, type Locale } from "../../packages/i18n/src";
 
-export const languageOptions: { value: Locale; label: string }[] = [
-  { value: "zh", label: "简体中文" }, { value: "en", label: "English" },
-];
+export type { Locale };
+export type DisplayLanguage = Locale;
+export { translator, type MessageKey } from "../../packages/i18n/src";
 
-export const copy = {
-  zh: {
-    aspiration: "更好的向往", expertPlan: "专业的规划", openCore: "一切由你", proEdition: "专业增强版", navCoach: "AI 计划", navLibrary: "动作指导", navAbout: "选择你的方式", navPricing: "专业计划", navAdmin: "管理后台",
-    login: "登录", logout: "退出", eyebrow: "懂训练，更懂你", titleA: "低效盲目训练", titleB: "为您定制的专属计划如下：",
-    subtitle: "Cmine Fit 从你的目标、身体状态、时间和器械出发，规划一份真正适合你、也能长期坚持的一周计划。",
-    socialProof: "每份计划，都从你的真实条件开始", profileTitle: "先认识你，再写计划", profileHint: "约 60 秒 · 随时可以调整",
-    basics: "身体数据", goal: "主要目标", routine: "训练现实", preview: "实时计划预览", generate: "生成我的完整计划",
-    update: "更新计划", estimate: "当前建议", calories: "每日热量", protein: "蛋白质", weeks: "建议周期", daysUnit: "周",
-    kcal: "kcal", grams: "g", planTitle: "你的一周，从这里开始", planSub: "训练日、恢复日和饮食目标已经按照你的条件排好。",
-    nutrition: "能量与营养", bmr: "基础代谢 BMR", tdee: "日常消耗 TDEE", delta: "每日热量差", carbs: "碳水", fat: "脂肪",
-    weekPlan: "本周训练", recovery: "恢复日", minutes: "分钟", sets: "组", complete: "记录完成", completed: "已完成",
-    coachNotes: "Coach 注意事项",
-    note1: "每组保留 2–3 次余力。动作稳定后，再增加重量或次数。",
-    note2: "疼痛不是训练效果。出现锐痛、胸闷、眩晕时立即停止并寻求专业帮助。",
-    note3: "连续两周体重或围度无变化，再小幅调整热量；不要每天追着体重改计划。",
-    dietTitle: "饮食执行原则", diet1: "每餐先安排一掌心优质蛋白，再补蔬菜和主食。",
-    diet2: "训练前 1–2 小时摄入易消化碳水；训练后优先补足蛋白和水分。",
-    diet3: "每周保留 10–15% 的弹性热量，计划才更容易长期坚持。",
-    points: "积分", watchAd: "看内容 +10", upgrade: "了解专业指导", editions: "Cmine Fit，只为更好的你",
-    openTitle: "Cmine Fit 自主版", openText: "轻量、自由、可自行部署。无需账号，也能完成身体信息整理、核心指标计算和一周训练规划。",
-    proTitle: "Cmine Fit 专业版", proText: "这是一个陪你长期进步的项目。它会记住你的训练变化与生活节奏，持续给出更细致、更适合当下状态的计划、提醒和专业指导。",
-    viewSource: "按自己的方式开始", signinTitle: "让每一次进步都有连续性",
-    signinText: "登录 Cmine ID，安全保存你的训练档案、AI 计划和之后的每一次调整。", notReady: "暂不可用",
-    adTitle: "用一点时间，换一份更细的建议", adText: "完成一次激励内容后可获得 10 积分，用于兑换更详细的计划分析与指导。",
-    playAd: "开始观看", disclaimerTitle: "开始前，请先确认安全边界",
-    disclaimerIntro: "Cmine Fit 提供一般性健身与营养信息，不是医疗诊断、治疗或康复方案。",
-    disclaimerHealth: "我了解：如有心血管疾病、孕产期、慢性病、伤病或饮食障碍，应先咨询医生或合格专业人士。",
-    disclaimerEstimate: "我了解：热量、周期和训练建议均为估算；若训练中出现锐痛、胸闷、眩晕或呼吸困难，应立即停止。",
-    accept: "同意并开始", footerNote: "健康建议经过规则约束，但 AI 仍可能出错。请以你的身体反馈和专业意见为准。",
-  },
-  en: {
-    aspiration: "A better ambition", expertPlan: "Expert planning", openCore: "Your way", proEdition: "Professional guidance", navCoach: "AI plan", navLibrary: "Exercise guide", navAbout: "Choose your way", navPricing: "Plans", navAdmin: "Admin",
-    login: "Sign in", logout: "Sign out", eyebrow: "Understands training. Understands you better.", titleA: "Inefficient, aimless training", titleB: "Your personalized plan starts here:",
-    subtitle: "Cmine Fit starts with your goals, body, schedule and equipment to shape a week that truly fits — and lasts.",
-    socialProof: "Every plan starts with your real constraints", profileTitle: "Tell us about you", profileHint: "About 60 seconds · Edit anytime",
-    basics: "Body profile", goal: "Primary goal", routine: "Training reality", preview: "Live plan preview", generate: "Build my full plan",
-    update: "Update plan", estimate: "Current recommendation", calories: "Daily calories", protein: "Protein", weeks: "Suggested cycle", daysUnit: "weeks",
-    kcal: "kcal", grams: "g", planTitle: "Your week starts here", planSub: "Training, recovery and nutrition are mapped to your real constraints.",
-    nutrition: "Energy & nutrition", bmr: "Basal metabolism", tdee: "Daily expenditure", delta: "Daily balance", carbs: "Carbs", fat: "Fat",
-    weekPlan: "This week", recovery: "Recovery", minutes: "min", sets: "sets", complete: "Mark complete", completed: "Completed",
-    coachNotes: "Coach notes", note1: "Keep 2–3 reps in reserve. Add load only after the movement feels controlled.",
-    note2: "Pain is not progress. Stop for sharp pain, chest pressure, dizziness or unusual breathlessness.",
-    note3: "Adjust calories only after two consistent weeks without change — not after every weigh-in.",
-    dietTitle: "Nutrition principles", diet1: "Anchor each meal with a palm-sized protein source, then add vegetables and carbs.",
-    diet2: "Choose easy-to-digest carbs 1–2 hours before training; prioritize protein and fluids afterward.",
-    diet3: "Keep 10–15% of weekly calories flexible so the plan can survive real life.",
-    points: "Points", watchAd: "View content +10", upgrade: "Explore professional guidance", editions: "Cmine Fit is built for a better you",
-    openTitle: "Cmine Fit, your way", openText: "Lightweight, flexible and ready to self-host. Build a personal profile, understand key metrics and create a full week without an account.",
-    proTitle: "Cmine Fit Professional", proText: "A long-term coaching project that learns from your progress and real-life rhythm, then keeps refining your plans, reminders and guidance for where you are now.",
-    viewSource: "Start your way", signinTitle: "Keep every step connected",
-    signinText: "Sign in with Cmine ID to securely keep your training profile, AI plans, and every adjustment that follows.", notReady: "Unavailable",
-    adTitle: "A little time for a deeper recommendation", adText: "Complete one rewarded activity to earn 10 points toward more detailed plan analysis and guidance.",
-    playAd: "Start ad", disclaimerTitle: "Before we begin, confirm the safety boundary",
-    disclaimerIntro: "Cmine Fit offers general fitness and nutrition information. It is not medical diagnosis, treatment or rehabilitation.",
-    disclaimerHealth: "I understand that cardiovascular conditions, pregnancy, chronic illness, injuries or eating disorders require advice from a qualified professional first.",
-    disclaimerEstimate: "I understand that calorie, timeline and training outputs are estimates, and I should stop for sharp pain, chest pressure, dizziness or breathing difficulty.",
-    accept: "Agree & begin", footerNote: "Safety rules constrain the advice, but AI can still be wrong. Prioritize your body’s feedback and professional guidance.",
-  },
-} as const satisfies Record<Locale, Record<string, string>>;
+// Only locales that passed the launch gate are offered. A locale that merely
+// compiles is deliberately not shown — that gap is what let a nine-language
+// picker ship with seven of them rendering English.
+export const languageOptions: { value: Locale; label: string }[] =
+  SHIPPABLE_LOCALES.map((locale) => ({ value: locale, label: LOCALE_META[locale].nativeLabel }));
