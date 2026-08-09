@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { LOCALES, SHIPPABLE_LOCALES, LOCALE_META, MESSAGES, translator, errorMessage, format, placeholders, plural, pick, localeFromAcceptLanguage } from "../packages/i18n/src/index.ts";
+import { LOCALES, SHIPPABLE_LOCALES, LOCALE_META, MESSAGES, translator, errorMessage, format, placeholders, plural, pick, localeFromAcceptLanguage, toLocale, DEFAULT_LOCALE } from "../packages/i18n/src/index.ts";
 
 // The type system already guarantees identical key sets (each catalog is
 // `satisfies Messages`). These tests cover what types cannot express: that the
@@ -87,6 +87,20 @@ test("pick falls back explicitly and reports nothing rather than blank", () => {
   assert.equal(pick({ zh: "中文", en: "English" }, "en"), "English");
   assert.equal(pick({ zh: "中文" }, "en"), "中文");
   assert.equal(pick(null, "en"), null);
+});
+
+// The inline `x.locale === "en" ? "en" : "zh"` idiom this replaced was not a
+// narrowing but a two-language assumption: it kept compiling as locales were
+// added and served Chinese to everyone who had picked a third language.
+test("toLocale passes every shippable locale through untouched", () => {
+  for (const locale of SHIPPABLE_LOCALES) assert.equal(toLocale(locale), locale);
+});
+
+test("toLocale rejects unusable values rather than guessing", () => {
+  for (const value of [null, undefined, "", "ko", "en-US", "zh-CN", 42, {}]) {
+    assert.equal(toLocale(value), DEFAULT_LOCALE, `${JSON.stringify(value)} should fall back`);
+  }
+  assert.equal(toLocale("ko", "en"), "en", "an explicit fallback wins over the default");
 });
 
 test("Accept-Language negotiation honors quality and ignores unshippable languages", () => {

@@ -6,6 +6,7 @@ import type { WorkerEnv } from "../platform";
 import { localDateInTimezone } from "../db";
 import { computeStreak, composeWeeklyLetter, inQuietHours, isoWeekStart, summarizeWeeks, trainingReminderMessage } from "../../services/habit-engine/src";
 import { habitSummary } from "./habits";
+import { toLocale } from "../../packages/i18n/src";
 
 async function settingNumber(env: WorkerEnv, key: string, fallback: number): Promise<number> {
   if (!env.DB) return fallback;
@@ -110,7 +111,7 @@ export async function runNotifications(env: WorkerEnv) {
     const quietEnd = user.quiet_end || "08:00";
     if (inQuietHours(clock.time, quietStart, quietEnd)) continue;
     const localDate = localDateInTimezone(user.timezone || "UTC");
-    const locale = user.locale === "en" ? "en" : "zh";
+    const locale = toLocale(user.locale);
 
     // Training reminder at the user's committed cue hour on planned training days.
     const cueHour = (user.cue_time || "18:00").slice(0, 2);

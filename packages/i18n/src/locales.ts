@@ -41,6 +41,18 @@ export const isShippableLocale = (value: unknown): value is Locale =>
   isLocale(value) && SHIPPABLE_LOCALES.includes(value);
 
 /**
+ * The single place an untrusted string becomes a Locale — stored `users.locale`,
+ * a request body field, a client option.
+ *
+ * Call sites used to write `value === "en" ? "en" : "zh"` inline, which is not a
+ * narrowing but a two-language assumption: adding a third locale would compile
+ * everywhere and silently serve Chinese to everyone who picked it. Here an
+ * unshippable value degrades to the default once, deliberately, in one place.
+ */
+export const toLocale = (value: unknown, fallback: Locale = DEFAULT_LOCALE): Locale =>
+  isShippableLocale(value) ? value : fallback;
+
+/**
  * A value that exists in every locale. Replaces the closed `{ zh, en }` literals
  * that were written out in thirty-odd places across coach-core, the adaptive
  * engine and the habit engine — with this, widening `Locale` is one edit rather

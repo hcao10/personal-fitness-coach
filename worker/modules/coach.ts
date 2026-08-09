@@ -1,4 +1,5 @@
 import { actionsAllowedUnderRisk, assessSafety, safetyGuidance } from "../../packages/domain/src";
+import { toLocale } from "../../packages/i18n/src";
 import { EXERCISES, isExerciseAllowed, type CoachPlan, type Profile } from "../../packages/coach-core/src";
 import type { WorkerEnv } from "../platform";
 import type { StoredUser } from "../db";
@@ -73,10 +74,10 @@ async function buildContext(env: WorkerEnv, user: StoredUser, conversationId: st
     coachMemorySnapshot(env, user.id),
     env.DB!.prepare("SELECT summary FROM coach_conversations WHERE id=? AND user_id=?").bind(conversationId, user.id).first<{ summary: string | null }>(),
   ]);
-  if (memory.preferences.coachingMode === "education") return { locale: user.locale, timezone: user.timezone, coachingMode: "education", tone: memory.preferences.tone,
+  if (memory.preferences.coachingMode === "education") return { locale: toLocale(user.locale), timezone: user.timezone, coachingMode: "education", tone: memory.preferences.tone,
     profile: null, activePlan: null, recentWorkouts: [], recentWorkoutSets: [], recentMeasurements: [], nutrition14Days: [], recentReviews: [], healthSummaries: [], coachMemory: [], conversationSummary: null };
   const workouts = Number(occurrenceWorkouts.results?.length || 0) ? occurrenceWorkouts : legacyWorkouts;
-  return { locale: user.locale, timezone: user.timezone, profile, activePlan: cycle ? { id: cycle.planId, versionId: cycle.versionId, startDate: cycle.startDate, phaseWeeks: cycle.phaseWeeks, plan: cycle.plan } : null,
+  return { locale: toLocale(user.locale), timezone: user.timezone, profile, activePlan: cycle ?{ id: cycle.planId, versionId: cycle.versionId, startDate: cycle.startDate, phaseWeeks: cycle.phaseWeeks, plan: cycle.plan } : null,
     recentWorkouts: workouts.results || [], recentWorkoutSets: workoutSets.results || [], recentMeasurements: measurements.results || [],
     nutrition14Days: nutrition.results || [], recentReviews: (reviews.results || []).map((row) => ({ ...row,
       metrics_json: parseJson(String((row as Record<string, unknown>).metrics_json || "")), recommendation_json: parseJson(String((row as Record<string, unknown>).recommendation_json || "")) })),
@@ -102,7 +103,7 @@ export async function sendCoachMessage(env: WorkerEnv, user: StoredUser, convers
   const now = new Date().toISOString(); const userMessageId = crypto.randomUUID();
   await env.DB.prepare(`INSERT INTO coach_messages (id,conversation_id,user_id,role,content,client_mutation_id,created_at)
     VALUES (?,?,?,'user',?,?,?)`).bind(userMessageId, conversationId, user.id, message, input.clientMutationId || null, now).run();
-  const locale = user.locale === "en" ? "en" : "zh";
+  const locale = toLocale(user.locale);
   const triage = assessSafety(message);
   // Severity decides whether the model is consulted at all:
   //  - emergency (chest pain, fainting, cannot bear weight): the only correct

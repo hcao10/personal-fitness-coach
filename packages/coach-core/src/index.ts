@@ -1,6 +1,12 @@
 // Stateless by design: this package has no account, database, or network dependencies.
 import { EXERCISE_POOL, type MovementPattern } from "./exercise-pool";
 
+// Keeps the package standalone (no dependency on packages/i18n) while collapsing
+// what used to be a dozen separate { zh; en } literals into one alias: widening
+// the product to a third language becomes one edit here plus one in the shared
+// locale registry, instead of a hunt through every type in the file.
+export type Localized<T = string> = { zh: T; en: T };
+
 export { EXERCISE_POOL, type MovementPattern, type PoolExercise } from "./exercise-pool";
 
 export type Goal = "fat_loss" | "muscle" | "recomp" | "arms" | "strength";
@@ -39,9 +45,9 @@ export type Profile = {
 
 export type Exercise = {
   id: string;
-  name: { zh: string; en: string };
-  target: { zh: string; en: string };
-  cue: { zh: string; en: string };
+  name: Localized;
+  target: Localized;
+  cue: Localized;
   asset: string;
   equipment: Equipment | "barbell" | "cable";
   difficulty?: "beginner" | "intermediate" | "advanced";
@@ -54,26 +60,26 @@ export type PlannedExercise = Exercise & {
   rest: string;
   restSeconds?: number;
   targetRir?: number | null;
-  progression?: { zh: string; en: string };
+  progression?: Localized;
   suggestedLoadMultiplier?: number;
 };
 export type WorkoutDay = {
   dayIndex: number;
-  title: { zh: string; en: string };
-  focus: { zh: string; en: string };
+  title: Localized;
+  focus: Localized;
   duration: number;
   exercises: PlannedExercise[];
   restDay?: boolean;
   variants?: {
-    short: { duration: number; exerciseIds: string[]; note: { zh: string; en: string } };
-    recovery: { duration: number; exerciseIds: string[]; intensityScale: number; note: { zh: string; en: string } };
+    short: { duration: number; exerciseIds: string[]; note: Localized };
+    recovery: { duration: number; exerciseIds: string[]; intensityScale: number; note: Localized };
   };
 };
 export type PlanPhase = {
   kind: "habit_foundation" | "hypertrophy_build" | "general_build";
   lengthWeeks: number;
   currentWeek: number;
-  weeklyFocus: Array<{ zh: string; en: string }>;
+  weeklyFocus: Array<Localized>;
 };
 export type CoachPlan = {
   bmr: number; tdee: number; calories: number; calorieDelta: number; bmi: number;
@@ -82,11 +88,11 @@ export type CoachPlan = {
   phase?: PlanPhase;
   schedule: WorkoutDay[]; confidence: "high" | "medium";
   insights?: {
-    summary: { zh: string; en: string };
-    planRationale: { zh: string[]; en: string[] };
-    coachNotes: { zh: string[]; en: string[] };
-    dietGuidance: { zh: string[]; en: string[] };
-    stopConditions?: { zh: string[]; en: string[] };
+    summary: Localized;
+    planRationale: Localized<string[]>;
+    coachNotes: Localized<string[]>;
+    dietGuidance: Localized<string[]>;
+    stopConditions?: Localized<string[]>;
   };
 };
 
@@ -156,7 +162,7 @@ const repByExperience: Record<Experience, { sets: number; reps: string; rest: st
   advanced: { sets: 4, reps: "6–10", rest: "90s" },
 };
 
-type SessionSeed = { title: { zh: string; en: string }; focus: { zh: string; en: string }; exerciseIds: string[] };
+type SessionSeed = { title: Localized; focus: Localized; exerciseIds: string[] };
 const sessionLibraries: Record<Goal, SessionSeed[]> = {
   arms: [
     { title: { zh: "手臂线条 A", en: "Arm definition A" }, focus: { zh: "二头 · 三头 · 肩", en: "Biceps · Triceps · Delts" }, exerciseIds: ["curl", "pushdown", "hammer", "lateral", "deadBug"] },

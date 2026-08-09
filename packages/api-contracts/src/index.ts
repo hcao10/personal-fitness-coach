@@ -100,6 +100,49 @@ export type PlanVersion = {
   createdAt: string;
 };
 
+/**
+ * A food row as the nutrition API returns it. `per100g` is the only field every
+ * source guarantees; the rest describe provenance, which the UI must surface
+ * because a community-submitted label and a USDA record are not equal evidence.
+ */
+export type FoodReference = {
+  ref: string;
+  source: "usda" | "open_food_facts" | "user" | "canonical";
+  sourceRef: string;
+  name: string;
+  brand: string | null;
+  servingSize: string | null;
+  per100g: { calories: number; proteinG: number; carbsG: number; fatG: number };
+  sourceKind?: "official" | "brand_label" | "community" | "user";
+  dataQuality?: number;
+  attribution?: string;
+  region?: string | null;
+};
+
+/**
+ * One dish the vision model believes it saw. Ranges rather than point estimates
+ * are deliberate: a photo cannot support a single gram figure, and pretending
+ * otherwise is the kind of claim this product does not make.
+ *
+ * `nameZh`/`nameEn` encode a language in the field name, which the per-locale
+ * LLM design forbids — they become `name` + `contentLocale` when meal_vision
+ * goes single-locale. Defined here exactly once so that is one edit, not three:
+ * the worker, the web dashboard and the Expo app each used to declare their own
+ * copy of this shape, free to drift apart without the compiler noticing.
+ */
+export type MealCandidate = {
+  nameZh: string;
+  nameEn: string;
+  preparation: string;
+  estimatedMinG: number;
+  estimatedMaxG: number;
+  confidence: number;
+  uncertainty: string;
+};
+
+/** What `POST /api/v1/meals/:id/analyze` returns: candidates after food matching. */
+export type MealCandidateMatch = MealCandidate & { suggestedFood: FoodReference | null };
+
 export type SyncMutation = {
   mutationId: string;
   deviceId: string;

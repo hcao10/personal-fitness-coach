@@ -78,7 +78,7 @@ import { expoPushConfigured, runNotifications } from "./modules/notifications";
 import { habitSummary, upsertHabitCommitment } from "./modules/habits";
 import { progressSeries } from "./modules/progress";
 import { enforceRateLimit, RATE_RULES } from "./modules/rate-limit";
-import { isShippableLocale } from "../packages/i18n/src";
+import { isShippableLocale, toLocale } from "../packages/i18n/src";
 
 const json = (body: unknown, status = 200, headers?: HeadersInit) => Response.json(body, {
   status,
@@ -681,7 +681,7 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
     const profile = profileFrom(body?.profile);
     if (!profile) return errorJson("INVALID_PROFILE", "训练档案不完整或超出安全范围。", 400);
     if (body?.consent !== true) return errorJson("CONSENT_REQUIRED", "请先确认健康免责声明。", 412);
-    await recordConsent(request, env, user.id, body.locale === "en" ? "en" : "zh");
+    await recordConsent(request, env, user.id, toLocale(body.locale));
     return json(await completeOnboarding(env, user.id, profile), 201);
   }
   if (url.pathname === "/api/v1/onboarding/skip" && request.method === "POST") {
@@ -1154,7 +1154,7 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
     const body = await request.json().catch(() => ({})) as { locale?: string; timezone?: string; productVersion?: string };
     const user = await getSessionUser(request, env);
     if (!env.DB) return errorJson("DATABASE_NOT_CONFIGURED", "数据库尚未连接。", 503);
-    await recordConsent(request, env, user?.id || null, body.locale === "en" ? "en" : "zh", {
+    await recordConsent(request, env, user?.id || null, toLocale(body.locale), {
       timezone: typeof body.timezone === "string" ? body.timezone : null,
       productVersion: typeof body.productVersion === "string" ? body.productVersion : null,
     });

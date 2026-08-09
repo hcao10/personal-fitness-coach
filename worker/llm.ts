@@ -27,15 +27,8 @@ type AiPlanOutput = {
   days: AiDay[];
 };
 
-export type MealCandidate = {
-  nameZh: string;
-  nameEn: string;
-  preparation: string;
-  estimatedMinG: number;
-  estimatedMaxG: number;
-  confidence: number;
-  uncertainty: string;
-};
+import type { MealCandidate } from "../packages/api-contracts/src";
+export type { MealCandidate };
 
 type AiRoute = { provider: "cloudflare" | "openai" | "compatible"; model: string; priority: number };
 type ProviderResult = {

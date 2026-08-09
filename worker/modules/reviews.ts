@@ -1,4 +1,5 @@
 import { calculateWeeklyReview, recommendReview } from "../../packages/domain/src";
+import { toLocale } from "../../packages/i18n/src";
 import { alternativesFor, exercisePattern, type CoachPlan, type Profile } from "../../packages/coach-core/src";
 import { runEngine, type EngineSet, type ExerciseMeta } from "../../services/adaptive-engine/src";
 import type { WorkerEnv } from "../platform";
@@ -141,7 +142,7 @@ export async function generateReview(env: WorkerEnv, user: StoredUser, id: strin
     let explanation = recommendation.explanation;
     try {
       const ai = await generateCoachChat(env, { message: "请用简洁自然的语言解释这份周度复盘，只解释依据和下一步，不新增事实。",
-        locale: user.locale === "en" ? "en" : "zh", context: { metrics, recommendation, engine, checkin: parseJson(review.checkin_json), profile: active.profile }, history: [], safetyIdentifier: user.id }, tierInfo.tier);
+        locale: toLocale(user.locale), context: { metrics, recommendation, engine, checkin: parseJson(review.checkin_json), profile: active.profile }, history: [], safetyIdentifier: user.id }, tierInfo.tier);
       explanation = ai.reply;
     } catch { /* deterministic recommendation remains authoritative */ }
     stored = { ...recommendation, explanation, engine };

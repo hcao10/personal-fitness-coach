@@ -13,6 +13,7 @@ export type StoredUser = {
   role: string;
   cmineRole: string;
   status: string;
+  /** Raw column value — may be stale or unshippable; narrow it with toLocale. */
   locale: string;
   timezone: string;
 };

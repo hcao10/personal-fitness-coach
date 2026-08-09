@@ -1,24 +1,8 @@
 import * as ImageManipulator from "expo-image-manipulator";
 import { api, apiRequest, ApiError } from "./api";
 
-export type NutritionReference = {
-  ref: string;
-  name: string;
-  source: string;
-  attribution?: string;
-  per100g: { calories: number; proteinG: number; carbsG: number; fatG: number };
-};
-
-export type MealCandidate = {
-  nameZh: string;
-  nameEn: string;
-  preparation: string;
-  estimatedMinG: number;
-  estimatedMaxG: number;
-  confidence: number;
-  uncertainty: string;
-  suggestedFood: NutritionReference | null;
-};
+export type { FoodReference as NutritionReference } from "../../../packages/api-contracts/src";
+export type { MealCandidateMatch as MealCandidate } from "../../../packages/api-contracts/src";
 
 export type AnalyzeResult = {
   candidates: MealCandidate[];

@@ -3,32 +3,15 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { beginCmineLogin } from "../lib/auth";
+import type { FoodReference, MealCandidateMatch } from "../../packages/api-contracts/src";
 
-type Food = {
-  ref: string;
-  source: "usda" | "open_food_facts" | "user" | "canonical";
-  sourceRef: string;
-  name: string;
-  brand: string | null;
-  servingSize: string | null;
-  per100g: { calories: number; proteinG: number; carbsG: number; fatG: number };
-  sourceKind?: "official" | "brand_label" | "community" | "user";
-  dataQuality?: number;
-  attribution?: string;
-  region?: string | null;
-};
+type Food = FoodReference;
 type RecipeIngredient = { food: Food; grams: number };
 type Recipe = { id: string; name: string; servings: number; totals: { calories: number; proteinG: number; carbsG: number; fatG: number } };
 type MealTemplate = { id: string; name: string; mealType: string; totals: { calories: number; proteinG: number; carbsG: number; fatG: number }; items: Array<{ name: string; grams: number; source: string; sourceRef?: string; calories: number; proteinG: number; carbsG: number; fatG: number }> };
-type Candidate = {
-  nameZh: string;
-  nameEn: string;
-  preparation: string;
-  estimatedMinG: number;
-  estimatedMaxG: number;
-  confidence: number;
-  uncertainty: string;
-  suggestedFood: Food | null;
+// The server contract plus the fields the review panel fills in locally as the
+// user corrects portions before confirming.
+type Candidate = MealCandidateMatch & {
   grams?: number;
   calories?: number;
   proteinG?: number;

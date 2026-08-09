@@ -5,6 +5,7 @@ import { recordGenerationRun } from "./telemetry";
 import type { WorkerEnv } from "./platform";
 import { consumeCapability, refundCapability, tierForUser } from "./product";
 import { sha256 } from "./security";
+import { toLocale } from "../packages/i18n/src";
 
 export type NutritionReference = {
   ref: string;
@@ -199,7 +200,7 @@ export async function searchFoods(env: WorkerEnv, query: string, options: { user
   const started = Date.now();
   const clean = query.trim().slice(0, 100);
   if (clean.length < 2) return [];
-  const locale = options.locale === "en" ? "en" : "zh";
+  const locale = toLocale(options.locale);
   const local = await localFoodSearch(env, clean, options.userId, locale, options.region);
   const requests: Promise<NutritionReference[]>[] = [];
   requests.push(fetch(`https://world.openfoodfacts.org/cgi/search.pl?${new URLSearchParams({
