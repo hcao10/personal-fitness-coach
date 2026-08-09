@@ -16,11 +16,13 @@
 
 ## S2 仓库卫生（开源/协作前）
 
-- ☐ `dist/`、`.openai/*.tar.gz` 移出 git；fork 残留大文件清理（需评估是否 squash 重建历史）
-- ☐ 移动端 `app.json` 真实 client_id 移入 EAS 环境并在 IdP 轮换旧 id
-- ☑ wrangler.toml account_id 已移除（2026-08-08，两个边车 worker 已用登录态重新部署）
-- ☐ 根 LICENSE 改为专有声明（开源仓库已独立正确授权）
-- ☐ Prettier 全量格式化 + `.git-blame-ignore-revs`
+- ☑ 2026-08-08 构建产物核实：`dist/` 与 `.openai/*.tar.gz` **本就未被 git 跟踪**（审计误报），`.gitignore` 已正确覆盖
+- ☑ 2026-08-08 fork 残留清理：删除上游演示页 `index.html`（14.2 MB）与 `setup.html`、`DATASET_README.md`；新增 `data/README.md` 说明数据集来源、许可与动作池再生流程。`data/exercises.json` 与 `images/`、`videos/` **保留**——它们是动作池的再生输入
+- ☑ 2026-08-08 移动端标识出库：新增 `apps/mobile/app.config.js` 从 `EXPO_PUBLIC_*` 注入；`app.json` 中的真实 client_id 清空。**仍需你在 IdP 侧轮换旧 client id**
+- ☑ 2026-08-08 wrangler.toml account_id 移除，两个边车 worker 已用登录态重新部署
+- ☑ 2026-08-08 根 LICENSE 改为三段式：产品代码专有、数据集保留上游 MIT 署名、媒体归 Gym visual
+- ☐ Prettier 全量格式化 + `.git-blame-ignore-revs`（新代码已按可读风格写，历史超长行待批量处理）
+- ☐ git 历史仍含已删除的大文件与旧 client_id；如需公开主仓库须 squash 重建
 
 ## S3 真实环境验收清单
 

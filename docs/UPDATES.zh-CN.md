@@ -4,6 +4,17 @@
 
 ## 2026-08-08
 
+### F3 移动端习惯功能 + S2 仓库卫生
+- **F3**：移动端进度页新增习惯卡（连续周数、最长纪录、累计训练、最新里程碑，并复述"缩短版同样算数"）；账户页新增训练承诺编辑（时间+地点），保存后本地提醒与服务端推送用的是同一个时间；复盘卡支持免费档锁定态展示。
+- **移动端 a11y**：组记录的三个输入框补上 `accessibilityLabel`（此前读屏对每一组都只念"kg"，完全无法区分）。
+- **S2 核实与清理**：
+  - `dist/` 与 `.openai/*.tar.gz` 经核实**本就未被 git 跟踪**（审计误报），`.gitignore` 覆盖正确。
+  - 删除上游演示页 `index.html`（14.2 MB）、`setup.html`、`DATASET_README.md`——它们是数据集的独立演示应用，与产品无关；新增 `data/README.md` 记录数据集来源、许可与动作池再生流程。`data/exercises.json`、`images/`、`videos/` 保留，它们是动作池的再生输入。
+  - 移动端标识出库：新增 `app.config.js` 从 `EXPO_PUBLIC_*` 注入，`app.json` 中的真实 client_id 清空；未配置时 App 显示"未配置"而不是静默指向生产。**旧 client id 仍需你在 IdP 侧轮换。**
+  - 根 LICENSE 重写为三段式：产品代码专有、数据集保留上游 MIT 全文与署名、媒体归 Gym visual 并指向 NOTICE.md。此前根 LICENSE 是上游作者的 MIT，与实际权属不符。
+  - README 补上 `REVENUECAT_API_KEY`（不配则不发权益）与 `EXPO_ACCESS_TOKEN`（不配则不发推送）的说明，并订正 `/api/health` 的字段描述。
+- **仍未处理**：git 历史仍含已删除的大文件与旧 client_id，公开主仓库前须 squash 重建；历史超长行的批量格式化待做。
+
 ### S1-6 教练安全门双层化 + F1/F2/F4/F5 功能补齐
 - **教练安全门第二层**：教练对话的结构化输出新增 `safety_flag`（high_risk / category / detail），由模型识别正则漏掉的改写表达（"my knee is a 7 out of 10"）。命中时**保留回答**（对正在描述疼痛的人静默丢弃回复没有帮助）并追加停止训练与就医指引，同时剥离所有会提升训练强度的动作提案；事件记入 `coach_evaluation_runs`（`safety_passed=0`）。策略函数 `actionsAllowedUnderRisk` 放在 `packages/domain`，与其他安全规则同处一地且可公开审计。
 - **测试**：新增 `tests/safety-rules.test.mjs`，其中一条测试**显式记录正则层的已知盲区**（改写表达不触发），把这个限制固化为可见事实而不是假设。

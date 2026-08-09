@@ -17,3 +17,7 @@ dist/
 
 tsconfig.tsbuildinfo
 .openai/*.tar.gz
+
+# Upstream dataset demo pages (removed; see data/README.md)
+index.html
+setup.html
