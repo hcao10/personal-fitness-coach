@@ -1,29 +1,24 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { decoratePlanSchedule, EXERCISES, generatePlan, isExerciseAllowed, type CoachPlan, type Profile, type WorkoutDay } from "../app/lib/coach";
+import { decoratePlanSchedule, describeSession, EXERCISES, generatePlan, isExerciseAllowed, type CoachPlan, type Profile, type WorkoutDay } from "../app/lib/coach";
 import { actionsAllowedUnderRisk, auditContentLocale } from "../packages/domain/src";
 import type { WorkerEnv } from "./platform";
 import type { ProductTier } from "./product";
 
 type AiExercise = { exercise_id: string; sets: number; reps: string; rest_seconds: number };
+// No title/focus: those are derived from the chosen movements by
+// describeSession, which is deterministic and stays multilingual.
 type AiDay = {
   day_index: number;
   rest_day: boolean;
-  title_zh: string;
-  title_en: string;
-  focus_zh: string;
-  focus_en: string;
   duration_minutes: number;
   exercises: AiExercise[];
 };
 type AiPlanOutput = {
-  summary_zh: string;
-  summary_en: string;
-  plan_rationale_zh: string[];
-  plan_rationale_en: string[];
-  coach_notes_zh: string[];
-  coach_notes_en: string[];
-  diet_guidance_zh: string[];
-  diet_guidance_en: string[];
+  content_locale?: string;
+  summary: string;
+  plan_rationale: string[];
+  coach_notes: string[];
+  diet_guidance: string[];
   days: AiDay[];
 };
 
@@ -98,30 +93,23 @@ export type CoachChatResult = {
 const responseSchema = (exerciseIds: string[]) => ({
   type: "object",
   additionalProperties: false,
-  required: [
-    "summary_zh", "summary_en", "plan_rationale_zh", "plan_rationale_en",
-    "coach_notes_zh", "coach_notes_en", "diet_guidance_zh", "diet_guidance_en", "days",
-  ],
+  required: ["summary", "content_locale", "plan_rationale", "coach_notes", "diet_guidance", "days"],
   properties: {
-    summary_zh: { type: "string", minLength: 8, maxLength: 180 },
-    summary_en: { type: "string", minLength: 8, maxLength: 240 },
-    plan_rationale_zh: { type: "array", minItems: 3, maxItems: 3, items: { type: "string", minLength: 8, maxLength: 120 } },
-    plan_rationale_en: { type: "array", minItems: 3, maxItems: 3, items: { type: "string", minLength: 8, maxLength: 180 } },
-    coach_notes_zh: { type: "array", minItems: 3, maxItems: 3, items: { type: "string", minLength: 4, maxLength: 100 } },
-    coach_notes_en: { type: "array", minItems: 3, maxItems: 3, items: { type: "string", minLength: 4, maxLength: 140 } },
-    diet_guidance_zh: { type: "array", minItems: 3, maxItems: 3, items: { type: "string", minLength: 4, maxLength: 100 } },
-    diet_guidance_en: { type: "array", minItems: 3, maxItems: 3, items: { type: "string", minLength: 4, maxLength: 140 } },
+    // One language per plan, named by the caller's locale and echoed back.
+    // The maxLengths are the old English ones: a limit tuned to Chinese
+    // character counts would truncate every other language mid-sentence.
+    content_locale: { type: "string", enum: [...SHIPPABLE_LOCALES] },
+    summary: { type: "string", minLength: 8, maxLength: 240 },
+    plan_rationale: { type: "array", minItems: 3, maxItems: 3, items: { type: "string", minLength: 8, maxLength: 180 } },
+    coach_notes: { type: "array", minItems: 3, maxItems: 3, items: { type: "string", minLength: 4, maxLength: 140 } },
+    diet_guidance: { type: "array", minItems: 3, maxItems: 3, items: { type: "string", minLength: 4, maxLength: 140 } },
     days: {
       type: "array", minItems: 7, maxItems: 7, items: {
         type: "object", additionalProperties: false,
-        required: ["day_index", "rest_day", "title_zh", "title_en", "focus_zh", "focus_en", "duration_minutes", "exercises"],
+        required: ["day_index", "rest_day", "duration_minutes", "exercises"],
         properties: {
           day_index: { type: "integer", minimum: 0, maximum: 6 },
           rest_day: { type: "boolean" },
-          title_zh: { type: "string", maxLength: 30 },
-          title_en: { type: "string", maxLength: 50 },
-          focus_zh: { type: "string", maxLength: 50 },
-          focus_en: { type: "string", maxLength: 80 },
           duration_minutes: { type: "integer", minimum: 20, maximum: 90 },
           exercises: {
             type: "array", maxItems: 6, items: {
@@ -494,8 +482,8 @@ function parseJson<T>(text: string): T {
   }
 }
 
-function applyAiPlan(profile: Profile, base: CoachPlan, output: AiPlanOutput): CoachPlan {
-  if (!Array.isArray(output.days) || !Array.isArray(output.plan_rationale_zh) || !Array.isArray(output.plan_rationale_en)) throw new Error("AI_SCHEMA_INVALID");
+function applyAiPlan(profile: Profile, base: CoachPlan, output: AiPlanOutput, locale: Locale): CoachPlan {
+  if (!Array.isArray(output.days) || !Array.isArray(output.plan_rationale)) throw new Error("AI_SCHEMA_INVALID");
   const sorted = [...output.days].sort((a, b) => a.day_index - b.day_index);
   if (sorted.length !== 7 || sorted.some((day, index) => day.day_index !== index)) throw new Error("AI_SCHEDULE_INVALID");
   if (sorted.filter((day) => !day.rest_day).length !== profile.days) throw new Error("AI_TRAINING_DAYS_INVALID");
@@ -505,8 +493,8 @@ function applyAiPlan(profile: Profile, base: CoachPlan, output: AiPlanOutput): C
   const schedule: WorkoutDay[] = sorted.map((day, index) => {
     if (day.rest_day) {
       return {
-        dayIndex: index, title: { zh: day.title_zh, en: day.title_en },
-        focus: { zh: day.focus_zh, en: day.focus_en }, duration: Math.max(20, Math.min(90, day.duration_minutes)),
+        dayIndex: index, title: { zh: "休息日", en: "Rest day" },
+        focus: { zh: "恢复 · 轻活动", en: "Recovery · Light activity" }, duration: Math.max(20, Math.min(90, day.duration_minutes)),
         exercises: [], restDay: true,
       };
     }
@@ -523,9 +511,11 @@ function applyAiPlan(profile: Profile, base: CoachPlan, output: AiPlanOutput): C
       }];
     });
     if (exercises.length < (profile.equipment === "bodyweight" ? 2 : 3)) throw new Error("AI_EXERCISES_INVALID");
+    // Named from the movements the model actually chose, not by the model.
+    const described = describeSession(exercises.map((exercise) => exercise.id));
     return {
-      dayIndex: index, title: { zh: day.title_zh, en: day.title_en },
-      focus: { zh: day.focus_zh, en: day.focus_en }, duration: Math.max(20, Math.min(maximumSessionMinutes, day.duration_minutes)), exercises,
+      dayIndex: index, title: described.title, focus: described.focus,
+      duration: Math.max(20, Math.min(maximumSessionMinutes, day.duration_minutes)), exercises,
     };
   });
   const staged = decoratePlanSchedule(profile, schedule);
@@ -534,10 +524,14 @@ function applyAiPlan(profile: Profile, base: CoachPlan, output: AiPlanOutput): C
     schedule: staged.schedule,
     phase: staged.phase,
     insights: {
-      summary: { zh: output.summary_zh, en: output.summary_en },
-      planRationale: { zh: output.plan_rationale_zh.slice(0, 3), en: output.plan_rationale_en.slice(0, 3) },
-      coachNotes: { zh: output.coach_notes_zh.slice(0, 3), en: output.coach_notes_en.slice(0, 3) },
-      dietGuidance: { zh: output.diet_guidance_zh.slice(0, 3), en: output.diet_guidance_en.slice(0, 3) },
+      // The measured language of what the model wrote, not the language it was
+      // asked for — those differ exactly when something went wrong.
+      contentLocale: auditContentLocale({ requested: locale, claimed: output.content_locale, text: output.summary, candidates: SHIPPABLE_LOCALES }).detected ?? locale,
+      summary: output.summary,
+      planRationale: output.plan_rationale.slice(0, 3),
+      coachNotes: (output.coach_notes || []).slice(0, 3),
+      dietGuidance: (output.diet_guidance || []).slice(0, 3),
+      // Reviewed copy, so it stays multilingual and follows the reader.
       stopConditions: {
         zh: ["疼痛达到 4/10 或持续加重时停止相关动作。", "出现胸痛、晕厥、呼吸困难或无法承重时停止训练并及时求助。"],
         en: ["Stop the movement if pain reaches 4/10 or keeps worsening.", "Stop training and seek timely help for chest pain, fainting, breathing difficulty, or inability to bear weight."],
@@ -576,7 +570,7 @@ export async function generateLlmPlan(env: WorkerEnv, profile: Profile, safetyId
       });
       const output = parseJson<AiPlanOutput>(result.text);
       return {
-        plan: applyAiPlan(profile, base, output),
+        plan: applyAiPlan(profile, base, output, locale),
         source: "llm",
         provider: route.provider,
         model: route.model,

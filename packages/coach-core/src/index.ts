@@ -1,5 +1,5 @@
 // Stateless by design: this package has no account, database, or network dependencies.
-import { EXERCISE_POOL, type MovementPattern } from "./exercise-pool";
+import { EXERCISE_POOL, type MovementPattern } from "./exercise-pool.ts";
 
 // Keeps the package standalone (no dependency on packages/i18n) while collapsing
 // what used to be a dozen separate { zh; en } literals into one alias: widening
@@ -7,7 +7,7 @@ import { EXERCISE_POOL, type MovementPattern } from "./exercise-pool";
 // locale registry, instead of a hunt through every type in the file.
 export type Localized<T = string> = { zh: T; en: T };
 
-export { EXERCISE_POOL, type MovementPattern, type PoolExercise } from "./exercise-pool";
+export { EXERCISE_POOL, type MovementPattern, type PoolExercise } from "./exercise-pool.ts";
 
 export type Goal = "fat_loss" | "muscle" | "recomp" | "arms" | "strength";
 export type Sex = "female" | "male";
@@ -81,20 +81,75 @@ export type PlanPhase = {
   currentWeek: number;
   weeklyFocus: Array<Localized>;
 };
+/**
+ * Everything the planner says about a plan in prose.
+ *
+ * The split down the middle is the point. `summary` through `dietGuidance` are
+ * written by a model, so they exist in exactly one language and that language is
+ * recorded — a second variant would be a translation nobody produced.
+ * `stopConditions` is reviewed copy this project wrote in every language, so it
+ * stays multilingual and is rendered in whatever language the reader wants.
+ */
+export type PlanInsights = {
+  contentLocale: keyof Localized;
+  summary: string;
+  planRationale: string[];
+  coachNotes: string[];
+  dietGuidance: string[];
+  stopConditions?: Localized<string[]>;
+};
+
+/**
+ * The shape stored before plans went single-locale. Still in the database for
+ * every plan generated up to then, so readers must handle it — and it is not
+ * migrated, because `users.locale` is mutable and the database therefore has no
+ * honest way to say which of the two variants was the authoritative one.
+ */
+export type LegacyPlanInsights = {
+  summary: Localized;
+  planRationale: Localized<string[]>;
+  coachNotes: Localized<string[]>;
+  dietGuidance: Localized<string[]>;
+  stopConditions?: Localized<string[]>;
+};
+
 export type CoachPlan = {
   bmr: number; tdee: number; calories: number; calorieDelta: number; bmi: number;
   weeks: number; protein: number; carbs: number; fat: number;
   track?: TrainingTrack;
   phase?: PlanPhase;
   schedule: WorkoutDay[]; confidence: "high" | "medium";
-  insights?: {
-    summary: Localized;
-    planRationale: Localized<string[]>;
-    coachNotes: Localized<string[]>;
-    dietGuidance: Localized<string[]>;
-    stopConditions?: Localized<string[]>;
-  };
+  insights?: PlanInsights | LegacyPlanInsights;
 };
+
+/**
+ * Reads insights from a plan of either vintage.
+ *
+ * Every reader goes through here, so "which shape is this" is answered once
+ * instead of at each render site. `contentLocale` tells the caller what it
+ * actually got: for a legacy plan it is the variant that was picked, which is
+ * not necessarily the language the reader asked for — and saying so lets the UI
+ * be honest rather than pretend the text was written for them.
+ */
+export function readPlanInsights(
+  insights: PlanInsights | LegacyPlanInsights | undefined | null,
+  locale: keyof Localized,
+): PlanInsights | null {
+  if (!insights) return null;
+  if (typeof insights.summary === "string") return insights as PlanInsights;
+  const legacy = insights as LegacyPlanInsights;
+  // A legacy plan holds both variants with no record of which was authoritative,
+  // so the reader's own language is the best available answer.
+  const available = legacy.summary[locale] ? locale : (Object.keys(legacy.summary) as Array<keyof Localized>)[0];
+  return {
+    contentLocale: available,
+    summary: legacy.summary[available],
+    planRationale: legacy.planRationale?.[available] || [],
+    coachNotes: legacy.coachNotes?.[available] || [],
+    dietGuidance: legacy.dietGuidance?.[available] || [],
+    stopConditions: legacy.stopConditions,
+  };
+}
 
 export function resolveTrainingTrack(profile: Profile): TrainingTrack {
   if (profile.trainingTrack) return profile.trainingTrack;
@@ -142,6 +197,62 @@ export const EXERCISES: Record<string, Exercise> = {
 
 export function exercisePattern(exerciseId: string): MovementPattern | null {
   return CORE_PATTERNS[exerciseId] || EXERCISE_POOL.find((exercise) => exercise.id === exerciseId)?.pattern || null;
+}
+
+// Reviewed labels for each movement pattern. Hand-written in both languages,
+// which is what lets a day title stay multilingual: it is dataset content, not
+// prose someone generated once in one language.
+const PATTERN_LABEL: Record<MovementPattern, Localized> = {
+  push_h: { zh: "水平推", en: "Horizontal push" },
+  push_v: { zh: "垂直推", en: "Vertical push" },
+  pull_h: { zh: "水平拉", en: "Horizontal pull" },
+  pull_v: { zh: "垂直拉", en: "Vertical pull" },
+  squat: { zh: "深蹲", en: "Squat" },
+  hinge: { zh: "髋铰链", en: "Hinge" },
+  lunge: { zh: "单腿", en: "Single leg" },
+  core: { zh: "核心", en: "Core" },
+  iso_biceps: { zh: "二头", en: "Biceps" },
+  iso_triceps: { zh: "三头", en: "Triceps" },
+  iso_shoulder: { zh: "肩部", en: "Shoulders" },
+  iso_legs: { zh: "腿部孤立", en: "Leg isolation" },
+};
+
+// Groupings that give a session its name. Order matters: the first matching
+// entry wins, so specific shapes are listed before general ones.
+const SESSION_SHAPES: Array<{ patterns: MovementPattern[]; title: Localized; focus: Localized }> = [
+  { patterns: ["push_h", "push_v", "iso_triceps"], title: { zh: "推力训练", en: "Push session" }, focus: { zh: "胸 · 肩 · 三头", en: "Chest · Delts · Triceps" } },
+  { patterns: ["pull_h", "pull_v", "iso_biceps"], title: { zh: "拉力训练", en: "Pull session" }, focus: { zh: "背 · 二头", en: "Back · Biceps" } },
+  { patterns: ["squat", "hinge", "lunge", "iso_legs"], title: { zh: "下肢训练", en: "Lower body" }, focus: { zh: "臀腿 · 后链", en: "Legs · Posterior chain" } },
+  { patterns: ["push_h", "push_v", "pull_h", "pull_v", "iso_shoulder", "iso_biceps", "iso_triceps"], title: { zh: "上肢训练", en: "Upper body" }, focus: { zh: "胸背肩臂", en: "Chest · Back · Delts · Arms" } },
+  { patterns: ["core"], title: { zh: "核心训练", en: "Core session" }, focus: { zh: "稳定性 · 控制", en: "Stability · Control" } },
+];
+
+/**
+ * Names a session from the movements it contains.
+ *
+ * Day titles used to be written by the LLM, one field per language. That made
+ * every plan carry seven model-authored titles whose two variants nobody could
+ * verify matched — for text that is entirely formulaic. Derived here instead:
+ * deterministic, testable, and multilingual because the labels above were
+ * written and reviewed rather than generated.
+ */
+export function describeSession(exerciseIds: string[]): { title: Localized; focus: Localized } {
+  const patterns = exerciseIds.map(exercisePattern).filter((pattern): pattern is MovementPattern => Boolean(pattern));
+  if (!patterns.length) return { title: { zh: "训练日", en: "Training day" }, focus: { zh: "综合训练", en: "General training" } };
+  const present = new Set(patterns);
+  const shape = SESSION_SHAPES.find((candidate) => patterns.every((pattern) => candidate.patterns.includes(pattern)));
+  if (shape) return { title: shape.title, focus: shape.focus };
+  // No clean grouping: name it after what it actually contains, most-used first.
+  const counts = new Map<MovementPattern, number>();
+  for (const pattern of patterns) counts.set(pattern, (counts.get(pattern) || 0) + 1);
+  const ranked = [...present].sort((a, b) => (counts.get(b) || 0) - (counts.get(a) || 0)).slice(0, 3);
+  return {
+    title: { zh: "全身训练", en: "Full body" },
+    focus: {
+      zh: ranked.map((pattern) => PATTERN_LABEL[pattern].zh).join(" · "),
+      en: ranked.map((pattern) => PATTERN_LABEL[pattern].en).join(" · "),
+    },
+  };
 }
 
 // Same-pattern substitutes the user can actually perform — the basis for

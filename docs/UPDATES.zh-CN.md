@@ -38,6 +38,21 @@ coach_chat 的 schema 增加 `content_locale`：模型回报自己用了什么�
 
 候选的语言检测在**所有展示名拼接后**做：单条菜名太短测不出来，拼在一起就是全部用户可见文本。`meal_analysis_runs.result_json` 是只写不读的审计记录，所以历史行保留旧结构不需要容错读取；`created_at` 本身就标注了它属于哪个时代。
 
+### F7 阶段 7（L7-5）：training_plan 单语言化——先分清哪些是「人写的」
+
+这一步的关键不是把双语字段改成单语言，而是先分清计划里**哪些文字是人审过的、哪些是模型现写的**：
+
+- **人审过的**：动作名/目标/要点（来自审核过的动作池）、`stopConditions`（我们自己写的双语安全提示）、以及**日程标题与重点**——现在也归入这一类。
+- **模型写的**：`summary` / `planRationale` / `coachNotes` / `dietGuidance`。这四项变成单语言 + `contentLocale`。
+
+**日程标题不再由模型写。** 原先每天要模型产出 `title_zh`/`title_en`/`focus_zh`/`focus_en` 四个字段，一份计划七天就是 28 个模型撰写的字段——而这些文字完全是公式化的，且两个语言版本是否对得上没人能验证。改为 `describeSession()`：按模型实际选中的动作模式派生，确定性、可单测，并且因为标签是**写好审过的**所以天然多语言。顺带省下一批 token，也少了一个语言漂移面。
+
+**旧计划不迁移**，`readPlanInsights()` 同时读两种结构。理由前面写过：`users.locale` 可变，数据库没有诚实的办法判断当初哪一份是权威版本。改成联合类型后编译器一次性指出了全部 6 个读取点——其中 `app/account/account-dashboard.tsx` 写死了 `.summary.zh`，英文用户的计划历史一直显示中文摘要。
+
+**缓存键**从 `sha256(profile)` 改为 `sha256({profile, locale, promptVersion})`，与写入方在同一次部署上线。不改的话，用户切到英文会拿到几分钟前缓存的中文计划，而提示词修复要等缓存过期才生效。
+
+**schema 的 maxLength 统一取原英文值**：按中文字数调的上限会把其他语言截在句子中间。
+
 ### F7 阶段 8：按语言的安全分诊（加任何新语言前的硬阻塞）
 
 原先的安全门是一条正则：中文关键词 + 三个**必须精确匹配**的英文短语（`sharp chest pain` / `faint` / `cannot bear weight`）。实际后果是——说 "I have chest pain" 不触发（缺 sharp），说 "I can't breathe" 不触发，任何非中英语言完全不可见。

@@ -16,6 +16,8 @@ const RECORDED = {
   // meal_vision went single-locale: name + search_term_en instead of a name
   // per language, so it takes the output directive rather than the bilingual one.
   "2026-08-09.3": "ab24cb3a",
+  // training_plan went single-locale and stopped naming its own sessions.
+  "2026-08-09.4": "18cefd89",
 };
 
 test("prompt text and PROMPT_VERSION cannot drift apart", () => {

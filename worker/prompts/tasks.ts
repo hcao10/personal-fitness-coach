@@ -35,7 +35,7 @@ export const TRAINING_PLAN_CONTRACT = [
   "Use only the allowed exercise IDs; an ID outside that list invalidates the whole response.",
   "Respect the stated experience, equipment, limitations and pain.",
   "Explain the user-facing rationale without exposing private reasoning.",
-  "Include clear stop conditions: what the user should see that means stop and reassess.",
+  "Do not name the sessions: day titles are derived from the movements you choose.",
 ].join(" ");
 
 export const MEAL_VISION_CONTRACT = [

@@ -2,7 +2,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { defaultProfile, generatePlan, type Activity, type CoachPlan, type Equipment, type Experience, type Goal, type Profile, type TrainingTrack } from "./lib/coach";
+import { defaultProfile, generatePlan, readPlanInsights, type Activity, type CoachPlan, type Equipment, type Experience, type Goal, type Profile, type TrainingTrack } from "./lib/coach";
 import { AUTH_PROVIDERS, beginCmineLogin, getCmineSession, type CmineUser } from "./lib/auth";
 import { languageOptions, type DisplayLanguage, type Locale } from "./lib/i18n";
 import { translator, DEFAULT_LOCALE } from "../packages/i18n/src";
@@ -202,9 +202,11 @@ export default function CoachApp({ initialLocale = DEFAULT_LOCALE }: { initialLo
   };
   const currentDay = plan.schedule[activeDay] || plan.schedule[0];
   const goalLabel = goalOptions.find((goal) => goal.value === profile.goal)?.[lang] || "";
-  const coachNotes = plan.insights?.coachNotes[lang] || [t("home.note1"), t("home.note2"), t("home.note3")];
-  const dietGuidance = plan.insights?.dietGuidance[lang] || [t("home.diet1"), t("home.diet2"), t("home.diet3")];
-  const planRationale = plan.insights?.planRationale[lang] || [];
+  // One tolerant read for both plan vintages; everything below is plain strings.
+  const insights = readPlanInsights(plan.insights, lang);
+  const coachNotes = insights?.coachNotes.length ? insights.coachNotes : [t("home.note1"), t("home.note2"), t("home.note3")];
+  const dietGuidance = insights?.dietGuidance.length ? insights.dietGuidance : [t("home.diet1"), t("home.diet2"), t("home.diet3")];
+  const planRationale = insights?.planRationale || [];
 
   return (
     <main>
@@ -330,7 +332,7 @@ export default function CoachApp({ initialLocale = DEFAULT_LOCALE }: { initialLo
               <div><span>{t("home.weekPlan")}<small>{profile.days} {t("home.trainingDays")}</small></span><b>{Math.round(plan.schedule.reduce((sum, day) => sum + day.duration, 0) / 60)}<em> h</em></b></div>
             </div>
             <div className="week-strip">{plan.schedule.map((day, index) => <div key={index} className={day.restDay ? "" : "training"}><span>{user ? scheduleDateLabel(startDate, index, lang) : dayNames[lang][index]}</span><b>{day.restDay ? "·" : "●"}</b></div>)}</div>
-            <div className="preview-note"><span>↗</span><p>{plan.insights?.summary[lang] || t("home.previewNote", { goal: goalLabel })}</p></div>
+            <div className="preview-note"><span>↗</span><p>{insights?.summary || t("home.previewNote", { goal: goalLabel })}</p></div>
             {anonymousPreview && !user && <div className="anonymous-plan-preview">
               <div className="preview-day-sample">
                 <span>{t("home.dayOnePartialPreview")}</span>

@@ -79,6 +79,8 @@ import { habitSummary, upsertHabitCommitment } from "./modules/habits";
 import { progressSeries } from "./modules/progress";
 import { enforceRateLimit, RATE_RULES } from "./modules/rate-limit";
 import { isShippableLocale, toLocale } from "../packages/i18n/src";
+import { PROMPT_VERSION } from "./prompts";
+import { readPlanInsights } from "../packages/coach-core/src";
 
 const json = (body: unknown, status = 200, headers?: HeadersInit) => Response.json(body, {
   status,
@@ -385,7 +387,12 @@ async function planRequest(request: Request, env: WorkerEnv): Promise<Response> 
     return errorJson("MAINTENANCE_MODE", "AI 教练正在进行短暂维护，请稍后再试。", 503);
   }
   const tier = await tierForUser(env, user.id);
-  const inputHash = await sha256(JSON.stringify(profile));
+  // The plan is now written in one language by one build of the prompt, so both
+  // belong in the key. Without them a user switching to English would be served
+  // the Chinese plan cached minutes earlier, and a prompt fix would go unseen
+  // for the life of the cache entry.
+  const planLocale = toLocale(user.locale);
+  const inputHash = await sha256(JSON.stringify({ profile, locale: planLocale, promptVersion: PROMPT_VERSION }));
   const cached = env.DB ? await env.DB.prepare(`SELECT result_json FROM ai_request_cache
     WHERE user_id = ? AND task = 'training_plan' AND input_hash = ? AND expires_at > ?`)
     .bind(user.id, inputHash, new Date().toISOString()).first<{ result_json: string }>() : null;
@@ -422,7 +429,7 @@ async function planRequest(request: Request, env: WorkerEnv): Promise<Response> 
     return errorJson("AI_NOT_CONFIGURED", "AI 教练尚未配置，计划没有生成，也不会消耗你的额度。", 503);
   }
   try {
-    const result = await generateLlmPlan(env, profile, user.id, tier, toLocale(user.locale));
+    const result = await generateLlmPlan(env, profile, user.id, tier, planLocale);
     const planId = env.DB ? await savePlan(env, user.id, profile, result.plan, result.source, result.model, { startDate: requestedStartDate, timezone: requestedTimezone,
       changeSummary: ["更新阶段目标与本周训练", "根据训练条件重新编排动作", "保留安全与恢复边界"] }) : null;
     const version = planId ? await planVersionStatus(env, user.id, planId) : null;
@@ -461,7 +468,8 @@ async function planRequest(request: Request, env: WorkerEnv): Promise<Response> 
       // content_locale stays null while the plan schema is bilingual: the output
       // contains both languages, so "which language is this" has no answer to
       // record. It gains one when training_plan goes single-locale.
-      locale: toLocale(user.locale),
+      locale: planLocale,
+      contentLocale: readPlanInsights(result.plan.insights, planLocale)?.contentLocale ?? null,
     }).catch(() => undefined);
     return json({ ...publicResult, quota, persisted: Boolean(planId) });
   } catch (error) {

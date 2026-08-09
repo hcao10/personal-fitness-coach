@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { beginCmineLogin, signOutCmine } from "../lib/auth";
-import { defaultProfile, type CoachPlan, type Profile } from "../lib/coach";
+import { defaultProfile, readPlanInsights, type CoachPlan, type Profile } from "../lib/coach";
 
 type StoredPlan = {
   id: string;
@@ -271,7 +271,7 @@ export default function AccountDashboard() {
           {data.plans.map((item, index) => <article key={item.id}>
             <div><span>{String(data.plans.length - index).padStart(2, "0")}</span><small>{dateText(item.createdAt)}</small></div>
             <h3>{item.plan?.schedule.find((day) => !day.restDay)?.title.zh || "专属训练计划"}</h3>
-            <p>{item.plan?.insights?.summary.zh || `${item.profile?.days || "—"} 个训练日 · ${item.plan?.calories || "—"} kcal`}</p>
+            <p>{readPlanInsights(item.plan?.insights, "zh")?.summary || `${item.profile?.days || "—"} 个训练日 · ${item.plan?.calories || "—"} kcal`}</p>
             <footer><span>{item.model}</span><b>{item.plan?.weeks || "—"} 周</b></footer>
           </article>)}
         </div> : <div className="account-empty"><p>还没有保存的计划。</p><Link href="/#coach">生成第一份计划 →</Link></div>}
