@@ -5,6 +5,18 @@
 import type { WorkerEnv } from "../platform";
 import { localDateInTimezone } from "../db";
 import { computeStreak, composeWeeklyLetter, inQuietHours, isoWeekStart, summarizeWeeks, trainingReminderMessage } from "../../services/habit-engine/src";
+import { habitSummary } from "./habits";
+
+async function settingNumber(env: WorkerEnv, key: string, fallback: number): Promise<number> {
+  if (!env.DB) return fallback;
+  const row = await env.DB.prepare("SELECT value_json FROM site_settings WHERE key = ?").bind(key).first<{ value_json: string }>();
+  try {
+    const value = Number(JSON.parse(row?.value_json || ""));
+    return Number.isFinite(value) && value >= 0 ? value : fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 
@@ -34,9 +46,9 @@ export async function sendExpoPush(env: WorkerEnv, messages: PushMessage[]): Pro
 }
 
 type NotifiableUser = {
-  user_id: string; timezone: string | null; locale: string | null; push_token: string;
-  training: number | null; reviews: number | null; quiet_start: string | null; quiet_end: string | null;
-  cue_time: string | null; cue_place: string | null;
+  user_id: string; timezone: string | null; locale: string | null; push_token: string; created_at: string;
+  training: number | null; reviews: number | null; billing: number | null; quiet_start: string | null; quiet_end: string | null;
+  cue_time: string | null; cue_place: string | null; has_subscription: number;
 };
 
 function localClock(timezone: string | null, date = new Date()): { time: string; weekday: number } {
@@ -71,8 +83,10 @@ async function streakFor(env: WorkerEnv, userId: string, timezone: string | null
 
 export async function runNotifications(env: WorkerEnv) {
   if (!env.DB) throw new Error("DATABASE_NOT_CONFIGURED");
-  const users = await env.DB.prepare(`SELECT d.user_id, u.timezone, u.locale, d.push_token,
-      p.training, p.reviews, p.quiet_start, p.quiet_end, h.cue_time, h.cue_place
+  const trialDays = Number(await settingNumber(env, "trial_days", 7));
+  const users = await env.DB.prepare(`SELECT d.user_id, u.timezone, u.locale, u.created_at, d.push_token,
+      p.training, p.reviews, p.billing, p.quiet_start, p.quiet_end, h.cue_time, h.cue_place,
+      (SELECT COUNT(*) FROM subscriptions s WHERE s.user_id=d.user_id AND s.status IN ('active','trialing','in_grace_period')) AS has_subscription
     FROM devices d
     JOIN users u ON u.id=d.user_id
     LEFT JOIN notification_preferences p ON p.user_id=d.user_id
@@ -114,19 +128,41 @@ export async function runNotifications(env: WorkerEnv) {
           .bind(user.user_id, weekStart).first<{ recommendation_json: string | null }>();
         let engine: { deloadRecommended?: boolean; adjustments?: Array<{ kind: string; reason: { zh: string; en: string } }> } = {};
         try { engine = JSON.parse(review?.recommendation_json || "{}").engine || {}; } catch { /* letter still sends without engine data */ }
-        const streak = await streakFor(env, user.user_id, user.timezone);
-        if (streak.sessionsThisWeek === 0 && !review) continue; // nothing to say — silence beats noise
+        // habitSummary also persists newly reached milestones, so an identity
+        // moment is recorded (and announced once) even for users who have not
+        // opened the app since earning it.
+        const habit = await habitSummary(env, user.user_id, user.timezone);
+        if (habit.streak.sessionsThisWeek === 0 && !review) continue; // nothing to say — silence beats noise
         const planned = await env.DB.prepare(`SELECT COUNT(*) AS value FROM workout_occurrences o JOIN plans p ON p.id=o.plan_id
           WHERE o.user_id=? AND o.scheduled_date>=? AND o.scheduled_date<? AND o.status<>'superseded'
           AND COALESCE(json_extract(p.plan_json,'$.schedule[' || o.day_index || '].restDay'),0)=0`)
           .bind(user.user_id, weekStart, localDate).first<{ value: number }>();
         const letter = composeWeeklyLetter({
-          streak, plannedSessions: Math.max(1, Number(planned?.value || 0)),
+          streak: habit.streak, plannedSessions: Math.max(1, Number(planned?.value || 0)),
           deloadRecommended: Boolean(engine.deloadRecommended),
-          adjustments: engine.adjustments || [], newMilestones: [],
+          adjustments: engine.adjustments || [],
+          newMilestones: habit.milestones.filter((milestone) => milestone.isNew || Date.parse(milestone.achievedAt) >= Date.parse(`${weekStart}T00:00:00Z`)),
         });
         messages.push({ userId: user.user_id, kind: "letter", dedupeKey, to: user.push_token,
           title: letter.title[locale], body: letter.lines[locale].join(" "), data: { url: "/progress#weekly-review" } });
+      }
+    }
+
+    // Trial expiry nudge, once, at 19:00 local on the day two days out. Sent
+    // only to users still on trial — the decision moment is while they still
+    // have the capabilities, not after they have silently lost them.
+    if (user.billing !== 0 && !Number(user.has_subscription) && trialDays > 0 && clock.time.slice(0, 2) === "19") {
+      const daysLeft = Math.ceil((Date.parse(user.created_at) + trialDays * 86_400_000 - Date.now()) / 86_400_000);
+      const dedupeKey = `trial_ending:${user.user_id}`;
+      if (daysLeft === 2 && !(await alreadySent(env, dedupeKey))) {
+        messages.push({
+          userId: user.user_id, kind: "trial_ending", dedupeKey, to: user.push_token,
+          title: locale === "zh" ? "试用还剩 2 天" : "2 days left in your trial",
+          body: locale === "zh"
+            ? "试用结束后，教练的完整调整方案与更高额度会回到免费版。想继续保留可以随时升级。"
+            : "When the trial ends, the coach's full adjustments and higher quotas return to the free tier. You can upgrade any time to keep them.",
+          data: { url: "/pricing" },
+        });
       }
     }
   }

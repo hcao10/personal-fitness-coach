@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { decoratePlanSchedule, EXERCISES, generatePlan, isExerciseAllowed, type CoachPlan, type Profile, type WorkoutDay } from "../app/lib/coach";
+import { actionsAllowedUnderRisk } from "../packages/domain/src";
 import type { WorkerEnv } from "./platform";
 import type { ProductTier } from "./product";
 
@@ -71,6 +72,7 @@ export type MealVisionResult = {
 export type CoachChatResult = {
   reply: string;
   intent: string;
+  safety: { highRisk: boolean; category: string; detail: string };
   basis: Array<{ label: string; value: string; observedAt?: string; source?: string }>;
   limitations: string[];
   sourceIds: string[];
@@ -630,10 +632,22 @@ export async function generateCoachChat(env: WorkerEnv, input: {
   const routes = (await routesFor(env, "coach_chat", tier)).slice(0, 2);
   if (!routes.length) throw new Error("AI_NOT_CONFIGURED");
   const schema = {
-    type: "object", additionalProperties: false, required: ["reply", "intent", "basis", "limitations", "source_ids", "actions"],
+    type: "object", additionalProperties: false, required: ["reply", "intent", "safety_flag", "basis", "limitations", "source_ids", "actions"],
     properties: {
       reply: { type: "string", minLength: 2, maxLength: 1800 },
       intent: { type: "string", enum: ["explain_plan", "adjust_today", "exercise_help", "nutrition", "progress", "general_knowledge", "safety"] },
+      // Second safety layer: the keyword screen upstream only catches literal
+      // phrasings ("疼痛 7"), so the model must classify paraphrases too
+      // ("my knee is a 7 out of 10"). The server, not the model, decides what
+      // happens when this fires.
+      safety_flag: {
+        type: "object", additionalProperties: false, required: ["high_risk", "category", "detail"],
+        properties: {
+          high_risk: { type: "boolean" },
+          category: { type: "string", enum: ["none", "pain", "cardio_symptom", "injury", "eating_disorder", "other_medical"] },
+          detail: { type: "string", maxLength: 160 },
+        },
+      },
       basis: { type: "array", maxItems: 5, items: { type: "object", additionalProperties: false, required: ["label", "value", "observed_at", "source"], properties: {
         label: { type: "string", maxLength: 50 }, value: { type: "string", maxLength: 100 }, observed_at: { type: ["string", "null"], maxLength: 40 }, source: { type: ["string", "null"], maxLength: 60 },
       } } },
@@ -654,7 +668,7 @@ export async function generateCoachChat(env: WorkerEnv, input: {
       } },
     },
   };
-  const system = `You are Cmine Fit Coach, a careful long-term fitness assistant. Answer in ${input.locale === "zh" ? "natural Simplified Chinese" : "natural English"}. Structure the reply as: direct conclusion, personal evidence, action today, and limitations when relevant. Use only supplied facts and source IDs. Do not invent completed workouts, health facts, citations, or precision. Never diagnose disease or expose private reasoning. Pain >=4/10 must never lead to greater intensity. High-risk symptoms require stopping training and timely professional help. Proposed actions are previews that require explicit user confirmation. Every action must describe before, after, reason, impact and reversibility. Use null for action fields that do not apply.`;
+  const system = `You are Cmine Fit Coach, a careful long-term fitness assistant. Answer in ${input.locale === "zh" ? "natural Simplified Chinese" : "natural English"}. Structure the reply as: direct conclusion, personal evidence, action today, and limitations when relevant. Use only supplied facts and source IDs. Do not invent completed workouts, health facts, citations, or precision. Never diagnose disease or expose private reasoning. Pain >=4/10 must never lead to greater intensity. High-risk symptoms require stopping training and timely professional help. Proposed actions are previews that require explicit user confirmation. Every action must describe before, after, reason, impact and reversibility. Use null for action fields that do not apply. Set safety_flag.high_risk to true whenever the user describes pain at or above 4 out of 10 in any phrasing, chest pain or pressure, fainting or dizziness, breathing difficulty, numbness, inability to bear weight, a suspected injury, or disordered eating; classify it with the matching category and state the detected signal in detail. When high_risk is true, propose no intensity increases.`;
   const user = JSON.stringify({ message: input.message, context: input.context, recent_messages: input.history.slice(-12), reviewed_knowledge: input.knowledge || [] });
   let lastError: unknown = null;
   for (const route of routes) {
@@ -662,12 +676,18 @@ export async function generateCoachChat(env: WorkerEnv, input: {
       const result = input.onDelta
         ? await runProviderStream(env, route, { system, user, schemaName: "cmine_fit_coach", schema, maxTokens: 2600, safetyIdentifier: input.safetyIdentifier }, input.onDelta)
         : await runProvider(env, route, { system, user, schemaName: "cmine_fit_coach", schema, maxTokens: 2600, safetyIdentifier: input.safetyIdentifier });
-      const output = parseJson<{ reply: string; intent: string; basis: Array<{ label: string; value: string; observed_at?: string | null; source?: string | null }>; limitations: string[]; source_ids: string[]; actions: CoachChatResult["actions"] }>(result.text);
+      const output = parseJson<{ reply: string; intent: string; safety_flag?: { high_risk?: boolean; category?: string; detail?: string }; basis: Array<{ label: string; value: string; observed_at?: string | null; source?: string | null }>; limitations: string[]; source_ids: string[]; actions: CoachChatResult["actions"] }>(result.text);
       if (typeof output.reply !== "string" || !Array.isArray(output.actions) || !Array.isArray(output.basis) || !Array.isArray(output.limitations)) throw new Error("AI_SCHEMA_INVALID");
       const allowedSources = new Set((input.knowledge || []).map((item) => item.id));
+      const highRisk = output.safety_flag?.high_risk === true;
       return {
-        reply: output.reply.slice(0, 1800), intent: output.intent, basis: output.basis.slice(0, 5).map((item) => ({ label: item.label, value: item.value, observedAt: item.observed_at || undefined, source: item.source || undefined })),
-        limitations: output.limitations.slice(0, 3), sourceIds: (output.source_ids || []).filter((id) => allowedSources.has(id)).slice(0, 3), actions: output.actions.slice(0, 3), provider: route.provider, model: route.model,
+        reply: output.reply.slice(0, 1800), intent: output.intent,
+        safety: { highRisk, category: highRisk ? String(output.safety_flag?.category || "other_medical") : "none", detail: String(output.safety_flag?.detail || "").slice(0, 160) },
+        basis: output.basis.slice(0, 5).map((item) => ({ label: item.label, value: item.value, observedAt: item.observed_at || undefined, source: item.source || undefined })),
+        // A model-detected risk must not be able to smuggle an intensity change through.
+        limitations: output.limitations.slice(0, 3), sourceIds: (output.source_ids || []).filter((id) => allowedSources.has(id)).slice(0, 3),
+        actions: actionsAllowedUnderRisk(output.actions, highRisk).slice(0, 3),
+        provider: route.provider, model: route.model,
         requestId: result.requestId, estimatedCostUsd: estimatedCost(route.model, result.inputTokens, result.outputTokens),
         usage: { inputTokens: result.inputTokens, outputTokens: result.outputTokens },
       };

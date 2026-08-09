@@ -76,6 +76,7 @@ import { processRevenueCatEvent, revenueCatConfigured, verifyRevenueCatWebhook }
 import { runMaintenance, verifyMaintenanceRequest } from "./modules/maintenance";
 import { runNotifications } from "./modules/notifications";
 import { habitSummary, upsertHabitCommitment } from "./modules/habits";
+import { progressSeries } from "./modules/progress";
 import { enforceRateLimit, RATE_RULES } from "./modules/rate-limit";
 
 const json = (body: unknown, status = 200, headers?: HeadersInit) => Response.json(body, {
@@ -760,6 +761,9 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
       habitSummary(env, user.id, user.timezone).catch(() => null),
     ]);
     return json({ ...home, habit });
+  }
+  if (url.pathname === "/api/v1/progress/series" && request.method === "GET") {
+    const user = await requireUser(request, env); return user instanceof Response ? user : json(await progressSeries(env, user.id));
   }
   if (url.pathname === "/api/v1/habits" && request.method === "GET") {
     const user = await requireUser(request, env); return user instanceof Response ? user : json(await habitSummary(env, user.id, user.timezone));

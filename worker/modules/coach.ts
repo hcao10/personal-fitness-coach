@@ -9,6 +9,11 @@ import { coachMemorySnapshot, knowledgeForQuestion, updateConversationSummary } 
 
 function parseJson<T>(value: string | null): T | null { try { return value ? JSON.parse(value) as T : null; } catch { return null; } }
 
+const SAFETY_GUIDANCE = {
+  zh: "请停止引发不适的动作。若出现胸痛、晕厥、呼吸困难、无法承重或持续加重的疼痛，请及时寻求医疗帮助。以上建议不是医疗诊断。",
+  en: "Stop any movement that causes discomfort. Seek timely medical help for chest pain, fainting, breathing difficulty, inability to bear weight, or pain that keeps worsening. This guidance is not a medical diagnosis.",
+} as const;
+
 export async function listConversations(env: WorkerEnv, userId: string) {
   if (!env.DB) throw new Error("DATABASE_NOT_CONFIGURED");
   const rows = await env.DB.prepare(`SELECT id, title, status, created_at, updated_at FROM coach_conversations
@@ -118,6 +123,19 @@ export async function sendCoachMessage(env: WorkerEnv, user: StoredUser, convers
       const history = (await conversationMessages(env, user.id, conversationId)).slice(-12).map((item) => ({ role: item.role, content: item.content }));
       result = await generateCoachChat(env, { message, locale: user.locale === "en" ? "en" : "zh", context: await buildContext(env, user, conversationId, quota.tier), history, knowledge, safetyIdentifier: user.id, onDelta: input.onDelta }, quota.tier);
       reply = result.reply;
+      // Second safety layer: the model catches paraphrased risk the keyword
+      // screen misses ("my knee is a 7 out of 10"). Unlike the keyword screen
+      // the answer is kept — silently discarding a reply to someone reporting
+      // pain helps nobody — but the stop-and-seek-help guidance is appended and
+      // intensity-raising actions were already stripped in the LLM layer.
+      if (result.safety.highRisk) {
+        reply = `${reply}\n\n${SAFETY_GUIDANCE[user.locale === "en" ? "en" : "zh"]}`;
+        if (input.onDelta) input.onDelta(`\n\n${SAFETY_GUIDANCE[user.locale === "en" ? "en" : "zh"]}`);
+        await env.DB.prepare(`INSERT INTO coach_evaluation_runs (id,task,provider,model,schema_valid,safety_passed,action_valid,latency_ms,detail_json,created_at)
+          VALUES (?,'coach_consult',?,?,1,0,1,?,?,?)`)
+          .bind(crypto.randomUUID(), result.provider, result.model, Date.now() - started,
+            JSON.stringify({ modelFlagged: true, category: result.safety.category, detail: result.safety.detail }), new Date().toISOString()).run();
+      }
     } catch (error) { await refundCapability(env, user.id, "coach.chat"); throw error; }
   }
   if (flags.highRisk && input.onDelta) input.onDelta(reply);

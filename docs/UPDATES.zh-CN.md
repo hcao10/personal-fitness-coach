@@ -4,6 +4,15 @@
 
 ## 2026-08-08
 
+### S1-6 教练安全门双层化 + F1/F2/F4/F5 功能补齐
+- **教练安全门第二层**：教练对话的结构化输出新增 `safety_flag`（high_risk / category / detail），由模型识别正则漏掉的改写表达（"my knee is a 7 out of 10"）。命中时**保留回答**（对正在描述疼痛的人静默丢弃回复没有帮助）并追加停止训练与就医指引，同时剥离所有会提升训练强度的动作提案；事件记入 `coach_evaluation_runs`（`safety_passed=0`）。策略函数 `actionsAllowedUnderRisk` 放在 `packages/domain`，与其他安全规则同处一地且可公开审计。
+- **测试**：新增 `tests/safety-rules.test.mjs`，其中一条测试**显式记录正则层的已知盲区**（改写表达不触发），把这个限制固化为可见事实而不是假设。
+- **F1 通知偏好 UI**：账户页新增通知偏好卡（五类推送开关 + 安静时段）。这套 API 与调度器早已生效，此前缺的只是入口。
+- **F4 里程碑推送**：周教练信改为调用 `habitSummary`，因此里程碑对**从未打开过 App 的用户**也会被记录并在信中宣布一次。
+- **F5 试用到期提醒**：试用结束前 2 天当地 19:00 推送一次（仅限仍在试用、未订阅、允许 billing 通知的用户）——决策发生在还拥有能力时，而非默默失去之后。
+- **F2 进步可视化**：新增 `GET /api/v1/progress/series`（周训练量/组数/训练次数、主要动作 Epley e1RM 时间序列与变化率、体重趋势、计划版本节点）；progress 页用内联 SVG 渲染，无图表库、无外部请求，所有图形都带等价文字描述供读屏使用。数据全部来自实际记录的组数，不做平滑。
+- 开源仓库 `cmine-fit-open` 同步 `actionsAllowedUnderRisk`/`INTENSITY_RAISING_ACTIONS` 及对应测试（6/6 通过）。
+
 ### S1 安全硬化全部完成（S1-1 至 S1-5）
 - **schema 漂移**：`food_portions`/`food_import_runs` 补进 `db/schema.ts`；`entitlements` 核实原已存在（审计误报），`drizzle-kit generate` 不再有破坏性 diff。
 - **全站限流**：新增 `worker/modules/rate-limit.ts`（D1 固定窗口，DB 不可用 fail-open，策略集中于 `RATE_RULES`）+ 迁移 0011；覆盖 auth start、AI 计划生成、Coach 消息、图片上传、食物/动作搜索、匿名 consents、三个 webhook、数据导出；每日维护任务自动清理过期计数。

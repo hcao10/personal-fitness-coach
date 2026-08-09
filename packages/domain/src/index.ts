@@ -68,6 +68,14 @@ export function recommendReview(metrics: ReviewMetrics): ReviewRecommendation {
   };
 }
 
+// Coach actions that would raise training stress. Blocked whenever either
+// safety layer (keyword screen or model classification) reports high risk.
+export const INTENSITY_RAISING_ACTIONS = new Set(["adjust_load", "plan_adjustment"]);
+
+export function actionsAllowedUnderRisk<T extends { type: string }>(actions: T[], highRisk: boolean): T[] {
+  return highRisk ? actions.filter((action) => !INTENSITY_RAISING_ACTIONS.has(action.type)) : actions;
+}
+
 export function coachSafetyFlags(text: string): { highRisk: boolean; pain: number | null; message?: string } {
   const painMatch = text.match(/(?:疼痛|痛|pain)\s*(?:为|是|[:：])?\s*(\d{1,2})/i);
   const pain = painMatch ? Math.min(10, Number(painMatch[1])) : null;

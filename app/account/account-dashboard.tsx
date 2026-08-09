@@ -356,6 +356,7 @@ export default function AccountDashboard() {
       </section>
 
       <HabitCommitmentCard />
+      <NotificationPreferencesCard />
 
       <section className="account-panel account-data-panel" id="account">
         <div className="account-section-title"><div><span>08 / ACCOUNT & DATA</span><h2>账号与数据</h2></div><p>Cmine Fit 数据与你的 Cmine ID 身份分开管理。</p></div>
@@ -369,6 +370,75 @@ export default function AccountDashboard() {
     </section>
     {notice && <div className="toast account-toast">{notice}</div>}
   </main>;
+}
+
+type NotificationPreferences = { training: boolean; coach: boolean; reviews: boolean; nutrition: boolean; billing: boolean; quietStart: string; quietEnd: string };
+
+const NOTIFICATION_ROWS: Array<{ key: keyof NotificationPreferences; label: string; hint: string }> = [
+  { key: "training", label: "训练日提醒", hint: "在你承诺的训练时间提醒当天的安排" },
+  { key: "reviews", label: "每周教练信", hint: "周日晚发送本周复盘与下周聚焦" },
+  { key: "coach", label: "Coach 主动跟进", hint: "教练发起的状态确认" },
+  { key: "nutrition", label: "饮食记录提醒", hint: "默认关闭" },
+  { key: "billing", label: "订阅与试用提醒", hint: "试用到期、扣款与退款通知" },
+];
+
+// The API and the scheduler have honored these settings since push shipped;
+// this card is the missing entry point.
+function NotificationPreferencesCard() {
+  const [preferences, setPreferences] = useState<NotificationPreferences | null>(null);
+  const [message, setMessage] = useState("");
+  useEffect(() => {
+    void fetch("/api/v1/notification-preferences", { cache: "no-store" }).then((response) => response.ok ? response.json() : null)
+      .then((body: { preferences?: Record<string, unknown> } | null) => {
+        const stored = body?.preferences;
+        if (!stored) return;
+        setPreferences({
+          training: stored.training !== 0 && stored.training !== false,
+          coach: stored.coach !== 0 && stored.coach !== false,
+          reviews: stored.reviews !== 0 && stored.reviews !== false,
+          nutrition: stored.nutrition === 1 || stored.nutrition === true,
+          billing: stored.billing !== 0 && stored.billing !== false,
+          quietStart: String(stored.quiet_start || "22:00"),
+          quietEnd: String(stored.quiet_end || "08:00"),
+        });
+      }).catch(() => undefined);
+  }, []);
+  const save = async (next: NotificationPreferences) => {
+    setPreferences(next);
+    const response = await fetch("/api/v1/notification-preferences", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(next) });
+    setMessage(response.ok ? "通知偏好已保存。" : "保存失败，请检查安静时段格式（HH:MM）。");
+  };
+  if (!preferences) return null;
+  return <section className="account-panel" id="notifications">
+    <div className="account-section-title"><div><span>07.6 / NOTIFICATIONS</span><h2>通知偏好</h2></div><p>推送只在你允许的类型与时段发送；安静时段内的提醒会被抑制。</p></div>
+    <div className="account-data-actions">
+      <article>
+        <div>
+          <h3>推送类型</h3>
+          {NOTIFICATION_ROWS.map((row) => <p key={row.key}>
+            <label>
+              <input type="checkbox" checked={Boolean(preferences[row.key])} onChange={(event) => void save({ ...preferences, [row.key]: event.target.checked })} />
+              {" "}{row.label}
+            </label>
+            <small> — {row.hint}</small>
+          </p>)}
+        </div>
+      </article>
+      <article>
+        <div>
+          <h3>安静时段</h3>
+          <p>
+            <label>从 <input type="time" value={preferences.quietStart} onChange={(event) => setPreferences({ ...preferences, quietStart: event.target.value })} /></label>
+            {" "}
+            <label>到 <input type="time" value={preferences.quietEnd} onChange={(event) => setPreferences({ ...preferences, quietEnd: event.target.value })} /></label>
+          </p>
+          <p>这段时间内不会收到任何推送（跨夜时段也支持）。</p>
+          {message && <p>{message}</p>}
+        </div>
+        <button onClick={() => void save(preferences)}>保存安静时段</button>
+      </article>
+    </div>
+  </section>;
 }
 
 type HabitData = {
