@@ -4,7 +4,10 @@ export const origin = (Constants.expoConfig?.extra as { apiOrigin?: string } | u
 
 export async function apiRequest(path: string, init: RequestInit = {}) {
   const token = await accessToken();
-  return fetch(`${origin}${path}`, { ...init, headers: { accept: "application/json", ...(init.body ? { "content-type": "application/json" } : {}), ...(token ? { authorization: `Bearer ${token}` } : {}), ...init.headers } });
+  // FormData must set its own content-type so the multipart boundary survives.
+  // Forcing application/json here silently broke every file upload.
+  const isMultipart = typeof FormData !== "undefined" && init.body instanceof FormData;
+  return fetch(`${origin}${path}`, { ...init, headers: { accept: "application/json", ...(init.body && !isMultipart ? { "content-type": "application/json" } : {}), ...(token ? { authorization: `Bearer ${token}` } : {}), ...init.headers } });
 }
 
 // Carries the HTTP status so callers can tell a server rejection (4xx — do not

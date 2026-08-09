@@ -18,6 +18,12 @@ const eslintConfig = defineConfig([
     files: ["apps/mobile/app.config.js"],
     rules: { "@typescript-eslint/no-require-imports": "off" },
   },
+  {
+    // React Native components are not DOM elements: jsx-a11y's HTML rules do
+    // not apply to them (RN uses accessibilityLabel, which these files set).
+    files: ["apps/mobile/**/*.tsx"],
+    rules: { "jsx-a11y/alt-text": "off" },
+  },
 ]);
 
 export default eslintConfig;
