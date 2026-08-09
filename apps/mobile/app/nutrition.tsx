@@ -227,17 +227,16 @@ export default function Nutrition() {
     <Modal visible={Boolean(candidates)} animationType="slide" onRequestClose={() => setCandidates(null)}>
       <Screen eyebrow="REVIEW / 确认识别结果" title="这些是候选，不是结论">
         {photoUri && <Image source={{ uri: photoUri }} style={{ width: "100%", height: 180, borderRadius: 16 }} accessibilityLabel="你拍摄的饭菜照片" />}
-        {candidates?.map((candidate, index) => <View key={`${candidate.nameEn}:${index}`} style={styles.card}>
+        {candidates?.map((candidate, index) => <View key={`${candidate.searchTermEn}:${index}`} style={styles.card}>
           <Text style={styles.label}>置信度 {Math.round(candidate.confidence * 100)}%{candidate.preparation ? ` · ${candidate.preparation}` : ""}</Text>
-          <Text style={styles.value}>{candidate.nameZh}</Text>
-          <Text style={{ color: theme.muted }}>{candidate.nameEn}</Text>
+          <Text style={styles.value}>{candidate.name}</Text>
           {candidate.uncertainty ? <Text style={{ marginTop: 6 }}>{candidate.uncertainty}</Text> : null}
           <Text style={{ marginTop: 8 }}>
             {candidate.suggestedFood
               ? `匹配到：${candidate.suggestedFood.name}（${sourceLabel(candidate.suggestedFood.source)}）`
               : "没有匹配到食物库条目——无法计算热量，请改用搜索或扫码记录这一项。"}
           </Text>
-          {candidate.suggestedFood && <TextInput accessibilityLabel={`${candidate.nameZh} 的食用克数`} keyboardType="decimal-pad"
+          {candidate.suggestedFood && <TextInput accessibilityLabel={`${candidate.name} 的食用克数`} keyboardType="decimal-pad"
             value={portions[index] ?? ""} onChangeText={(text) => setPortions((current) => ({ ...current, [index]: text }))}
             placeholder={`估算 ${candidate.estimatedMinG}–${candidate.estimatedMaxG} 克，请确认`}
             style={{ borderWidth: 1, borderColor: theme.line, borderRadius: 8, padding: 10, marginTop: 10 }} />}

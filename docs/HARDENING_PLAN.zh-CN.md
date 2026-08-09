@@ -83,7 +83,7 @@
 | L7-1 | `worker/prompts/` 模块化（契约/输出指令/语域/术语表）+ locale 贯通 + `PROMPT_VERSION` 指纹测试 | ☑ 2026-08-09 |
 | L7-2 | 脚本比例语言检测 + 迁移 0012（`locale`/`content_locale`/`prompt_version`）+ admin 漂移面板（仅观测） | ☑ 2026-08-09 |
 | L7-3 | `coach_chat` 单语言化：schema 回显 `content_locale`、`coach_messages.content_locale`（迁移 0013）、证据优先于自述 | ☑ 2026-08-09 |
-| L7-4 | `meal_vision` 单语言化：`nameZh`/`nameEn` → `name` + `contentLocale` | ☐ |
+| L7-4 | `meal_vision` 单语言化：`nameZh`/`nameEn` → `name` + `searchTermEn` + 响应级 `contentLocale` | ☑ 2026-08-09 |
 | L7-5 | `training_plan` 单语言化：先部署容错读取，同一次部署把缓存键改为 `sha256({profile, locale, promptVersion})` | ☐ |
 | L7-6 | 停止把中文写进确定性字符串（计划变更摘要等）；客户端 locale 贯通（含移动端） | ☐ |
 | L7-7 | 评测集：每个任务 × 每个 locale 的最小回归样本 | ☐ |

@@ -30,6 +30,14 @@ coach_chat 的 schema 增加 `content_locale`：模型回报自己用了什么�
 
 **原设计里的「流式先缓冲后嗅探」没有采纳**，理由见 HARDENING_PLAN 对应小节——用真实首字延迟换一个当前不会执行的策略，不划算。
 
+### F7 阶段 7（L7-4）：meal_vision 单语言化
+
+`name_zh`/`name_en` 换成 `name`（按输出语言）+ `search_term_en`，`content_locale` 放在**响应级**而非每个候选上——一次调用只产出一种语言，放在候选上等于暗示存在不可能发生的混排，还得每条填同一个值。
+
+`search_term_en` 需要解释一下它**不是**双语输出的化名：USDA 与 Open Food Facts 的索引是英文的，`searchFoods()` 用中文菜名去匹配会显著变差。它是**查库用的机器键，永不展示**，语言由被查的数据库决定而不是由读者决定——这跟「给读者两种语言让他自己挑」是两回事。提示词里也是这么讲的：优先给数据库常用名（"white rice, cooked"）而不是字面直译。
+
+候选的语言检测在**所有展示名拼接后**做：单条菜名太短测不出来，拼在一起就是全部用户可见文本。`meal_analysis_runs.result_json` 是只写不读的审计记录，所以历史行保留旧结构不需要容错读取；`created_at` 本身就标注了它属于哪个时代。
+
 ### F7 阶段 8：按语言的安全分诊（加任何新语言前的硬阻塞）
 
 原先的安全门是一条正则：中文关键词 + 三个**必须精确匹配**的英文短语（`sharp chest pain` / `faint` / `cannot bear weight`）。实际后果是——说 "I have chest pain" 不触发（缺 sharp），说 "I can't breathe" 不触发，任何非中英语言完全不可见。

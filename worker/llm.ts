@@ -56,6 +56,9 @@ export type PlanGenerationResult = {
 
 export type MealVisionResult = {
   candidates: MealCandidate[];
+  /** Language of every candidate `name`, measured rather than assumed. */
+  contentLocale: Locale;
+  localeClaimMismatch: boolean;
   needsReview: boolean;
   provider: string;
   model: string;
@@ -141,9 +144,11 @@ const responseSchema = (exerciseIds: string[]) => ({
 const mealSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["foods", "needs_review"],
+  required: ["foods", "needs_review", "content_locale"],
   properties: {
     needs_review: { type: "boolean" },
+    // One language for the whole response, cross-checked against the names.
+    content_locale: { type: "string", enum: [...SHIPPABLE_LOCALES] },
     foods: {
       type: "array",
       minItems: 1,
@@ -151,10 +156,16 @@ const mealSchema = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["name_zh", "name_en", "preparation", "estimated_min_g", "estimated_max_g", "confidence", "uncertainty"],
+        required: ["name", "search_term_en", "preparation", "estimated_min_g", "estimated_max_g", "confidence", "uncertainty"],
         properties: {
-          name_zh: { type: "string", minLength: 1, maxLength: 60 },
-          name_en: { type: "string", minLength: 1, maxLength: 90 },
+          // What the user reads, in the response's content_locale.
+          name: { type: "string", minLength: 1, maxLength: 90 },
+          // A lookup key, not a translation. The food databases behind
+          // searchFoods (USDA, Open Food Facts) are indexed in English, so
+          // matching needs an English term whatever language the user reads.
+          // This is never displayed, which is what keeps it from being the
+          // bilingual output this migration removes.
+          search_term_en: { type: "string", minLength: 1, maxLength: 90 },
           preparation: { type: "string", maxLength: 100 },
           estimated_min_g: { type: "number", minimum: 1, maximum: 3000 },
           estimated_max_g: { type: "number", minimum: 1, maximum: 3000 },
@@ -600,15 +611,16 @@ export async function generateMealVision(env: WorkerEnv, imageDataUrl: string, t
       });
       const output = parseJson<{
         needs_review: boolean;
+        content_locale?: string;
         foods: Array<{
-          name_zh: string; name_en: string; preparation: string;
+          name: string; search_term_en: string; preparation: string;
           estimated_min_g: number; estimated_max_g: number; confidence: number; uncertainty: string;
         }>;
       }>(result.text);
       if (!Array.isArray(output.foods) || !output.foods.length) throw new Error("AI_SCHEMA_INVALID");
       const candidates = output.foods.slice(0, 8).map((food) => ({
-        nameZh: String(food.name_zh).slice(0, 60),
-        nameEn: String(food.name_en).slice(0, 90),
+        name: String(food.name).slice(0, 90),
+        searchTermEn: String(food.search_term_en || food.name).slice(0, 90),
         preparation: String(food.preparation || "").slice(0, 100),
         estimatedMinG: Math.max(1, Math.min(3000, Number(food.estimated_min_g))),
         estimatedMaxG: Math.max(1, Math.min(3000, Number(food.estimated_max_g))),
@@ -617,8 +629,13 @@ export async function generateMealVision(env: WorkerEnv, imageDataUrl: string, t
       }));
       const average = candidates.reduce((sum, item) => sum + item.confidence, 0) / candidates.length;
       if (average < 0.45 && route !== routes[routes.length - 1]) continue;
+      // Detection runs on the display names joined together — individually they
+      // are too short to measure, together they are the whole user-facing text.
+      const audit = auditContentLocale({ requested: locale, claimed: output.content_locale, text: candidates.map((food) => food.name).join(" "), candidates: SHIPPABLE_LOCALES });
       return {
         candidates,
+        contentLocale: audit.detected ?? audit.claimed ?? locale,
+        localeClaimMismatch: Boolean(audit.detected && audit.claimed && audit.detected !== audit.claimed),
         needsReview: output.needs_review || average < 0.7,
         provider: route.provider,
         model: route.model,

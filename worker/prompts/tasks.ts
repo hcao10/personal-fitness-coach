@@ -43,6 +43,9 @@ export const MEAL_VISION_CONTRACT = [
   "A single photograph cannot support an exact mass or an exact calorie figure, so do not state one.",
   "Return conservative mass ranges, preparation clues, a calibrated confidence, and what you are unsure of.",
   "Mixed dishes, hidden oils, sauces and unclear scale must set needs_review=true.",
+  "Each food has two name fields with different jobs: `name` is what the user reads and follows the output",
+  "language; `search_term_en` is always a plain English term used to look the food up in a nutrition database",
+  "and is never shown, so prefer the common database name (\"white rice, cooked\") over a literal translation.",
 ].join(" ");
 
 export const COACH_CHAT_CONTRACT = [

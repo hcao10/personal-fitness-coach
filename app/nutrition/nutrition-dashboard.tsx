@@ -141,7 +141,7 @@ export default function NutritionDashboard() {
         mealType,
         eatenAt: new Date().toISOString(),
         items: candidates.map((item) => ({
-          name: item.nameZh || item.nameEn,
+          name: item.name,
           grams: item.grams,
           ...(item.suggestedFood ? { nutritionRef: item.suggestedFood.ref } : {
             manualPer100g: {
@@ -312,8 +312,8 @@ export default function NutritionDashboard() {
 
     {candidates.length > 0 && <section className="nutrition-card recognition-review">
       <header><div><span>REVIEW REQUIRED</span><h2>确认识别结果</h2></div><p>{needsReview ? "这张图片存在份量、油量或成分不确定项，请逐项确认。" : "识别置信度较高，但仍需由你确认份量。"}</p></header>
-      <div className="candidate-list">{candidates.map((item, index) => <article key={`${item.nameEn}-${index}`}>
-        <div><b>{item.nameZh}</b><span>{item.nameEn} · {Math.round(item.confidence * 100)}% 置信度</span><p>{item.preparation}{item.uncertainty && ` · ${item.uncertainty}`}</p></div>
+      <div className="candidate-list">{candidates.map((item, index) => <article key={`${item.searchTermEn}-${index}`}>
+        <div><b>{item.name}</b><span>{Math.round(item.confidence * 100)}% 置信度</span><p>{item.preparation}{item.uncertainty && ` · ${item.uncertainty}`}</p></div>
         <label>份量 g<input type="number" value={item.grams || 0} onChange={(event) => updateCandidate(index, { grams: Number(event.target.value) })} /></label>
         {item.suggestedFood ? <div className="candidate-source"><span>营养参考</span><b>{item.suggestedFood.name}</b><small>{item.suggestedFood.source === "usda" ? "USDA FoodData Central" : "Open Food Facts"}</small></div> : <div className="candidate-macros">
           <span>每 100g 手动营养</span>

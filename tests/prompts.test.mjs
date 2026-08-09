@@ -13,6 +13,9 @@ const RECORDED = {
   // coach_chat gained a content_locale echo, so the output directive now names
   // the value the model must report.
   "2026-08-09.2": "ba7a1dd9",
+  // meal_vision went single-locale: name + search_term_en instead of a name
+  // per language, so it takes the output directive rather than the bilingual one.
+  "2026-08-09.3": "ab24cb3a",
 };
 
 test("prompt text and PROMPT_VERSION cannot drift apart", () => {

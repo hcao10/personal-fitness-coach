@@ -6,6 +6,8 @@ export type { MealCandidateMatch as MealCandidate } from "../../../packages/api-
 
 export type AnalyzeResult = {
   candidates: MealCandidate[];
+  /** Language the candidate names are written in; one per response, not per candidate. */
+  contentLocale: string;
   needsReview: boolean;
   quota?: { remaining: number; limit: number };
 };

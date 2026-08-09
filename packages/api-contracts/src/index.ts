@@ -124,15 +124,20 @@ export type FoodReference = {
  * are deliberate: a photo cannot support a single gram figure, and pretending
  * otherwise is the kind of claim this product does not make.
  *
- * `nameZh`/`nameEn` encode a language in the field name, which the per-locale
- * LLM design forbids — they become `name` + `contentLocale` when meal_vision
- * goes single-locale. Defined here exactly once so that is one edit, not three:
- * the worker, the web dashboard and the Expo app each used to declare their own
- * copy of this shape, free to drift apart without the compiler noticing.
+ * Defined here exactly once: the worker, the web dashboard and the Expo app each
+ * used to declare their own copy, free to drift apart without the compiler
+ * noticing.
  */
 export type MealCandidate = {
-  nameZh: string;
-  nameEn: string;
+  /** Display name, in the response's `contentLocale`. */
+  name: string;
+  /**
+   * A lookup key, not a translation. USDA and Open Food Facts are indexed in
+   * English, so matching needs an English term whatever language the user
+   * reads. Never displayed — that is what separates it from the bilingual
+   * output this shape replaced.
+   */
+  searchTermEn: string;
   preparation: string;
   estimatedMinG: number;
   estimatedMaxG: number;
@@ -140,7 +145,13 @@ export type MealCandidate = {
   uncertainty: string;
 };
 
-/** What `POST /api/v1/meals/:id/analyze` returns: candidates after food matching. */
+/**
+ * What `POST /api/v1/meals/:id/analyze` returns.
+ *
+ * `contentLocale` sits on the response rather than on each candidate because
+ * one call produces one language — a per-candidate field would imply a mix that
+ * cannot occur, and would have to be filled with the same value every time.
+ */
 export type MealCandidateMatch = MealCandidate & { suggestedFood: FoodReference | null };
 
 export type SyncMutation = {

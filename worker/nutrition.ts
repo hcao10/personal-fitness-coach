@@ -318,20 +318,20 @@ export async function analyzeMeal(env: WorkerEnv, user: StoredUser, mealId: stri
       latencyMs: Date.now() - startedAt, requestId: result.requestId,
       inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens,
       estimatedCostUsd: result.estimatedCostUsd,
-      // As with training_plan: the candidate names are bilingual, so there is no
-      // single content language to record until this task goes single-locale.
-      locale: toLocale(user.locale),
+      locale: toLocale(user.locale), contentLocale: result.contentLocale,
     }).catch((error) => console.error("generation_run_write_failed", "meal_vision", error instanceof Error ? error.message : "UNKNOWN"));
     const suggestions: Array<NutritionReference | null> = [];
     for (const candidate of result.candidates.slice(0, 3)) {
-      const matches = await searchFoods(env, candidate.nameEn || candidate.nameZh);
+      // The English lookup term, not the display name: the food databases are
+      // indexed in English, so a Chinese display name would match far less.
+      const matches = await searchFoods(env, candidate.searchTermEn || candidate.name);
       suggestions.push(matches[0] || null);
     }
     const candidates = result.candidates.map((candidate, index) => ({ ...candidate, suggestedFood: suggestions[index] || null }));
     await env.DB.prepare(`INSERT INTO meal_analysis_runs
       (id, meal_id, user_id, provider, model, status, result_json, confidence, latency_ms, error_code, estimated_cost_usd, created_at)
       VALUES (?, ?, ?, ?, ?, 'succeeded', ?, ?, ?, NULL, ?, ?)`)
-      .bind(runId, mealId, user.id, result.provider, result.model, JSON.stringify({ candidates, needsReview: result.needsReview }),
+      .bind(runId, mealId, user.id, result.provider, result.model, JSON.stringify({ candidates, needsReview: result.needsReview, contentLocale: result.contentLocale }),
         result.candidates.reduce((sum, item) => sum + item.confidence, 0) / result.candidates.length,
         Date.now() - startedAt, result.estimatedCostUsd, new Date().toISOString()).run();
     return { ...result, candidates, quota };
