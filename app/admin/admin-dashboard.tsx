@@ -16,7 +16,7 @@ type AdminOverview = {
   };
   services: {
     database: boolean; storage: boolean; planner: boolean; vision: boolean; llm: boolean; cmine: boolean;
-    foodData: boolean; billing: boolean; mobileBilling: boolean; rewardAds: boolean; mobileAuth: boolean; maintenance: boolean; model: string; reasoningEffort: string;
+    foodData: boolean; billing: boolean; mobileBilling: boolean; rewardAds: boolean; mobileAuth: boolean; maintenance: boolean; push: boolean; imageTransform: boolean; model: string; reasoningEffort: string;
     providers: Record<string, boolean>;
   };
   recentUsers: AdminUser[];
@@ -122,6 +122,7 @@ export default function AdminDashboard() {
   const modules = [
     { name: "D1 产品数据", detail: "用户、训练、营养、支付、权益与审计", live: Boolean(services?.database) },
     { name: "R2 饭菜图片", detail: "压缩、清除 EXIF、私有存储与保留策略", live: Boolean(services?.storage) },
+    { name: "Images 转换", detail: "上传前降采样与重编码；缺失时拍照上传会被拒绝", live: Boolean(services?.imageTransform) },
     { name: "训练计划 AI", detail: services?.model || "可切换模型路由", live: Boolean(services?.planner) },
     { name: "饭菜视觉 AI", detail: "低成本初识别与低置信度升级", live: Boolean(services?.vision) },
     { name: "食品数据库", detail: "USDA FoodData Central + Open Food Facts", live: Boolean(services?.foodData) },
@@ -130,6 +131,7 @@ export default function AdminDashboard() {
     { name: "RevenueCat", detail: "Apple / Google 内购事件与统一 Pro 权益", live: Boolean(services?.mobileBilling) },
     { name: "移动端身份", detail: "Cmine PKCE、Bearer Token 与离线同步", live: Boolean(services?.mobileAuth) },
     { name: "定时维护", detail: "图片、缓存、会话清理与周度任务", live: Boolean(services?.maintenance) },
+    { name: "服务端推送", detail: "训练提醒、周教练信与试用到期提醒", live: Boolean(services?.push) },
     { name: "激励广告", detail: "只有签名回调成功才发积分", live: Boolean(services?.rewardAds) },
   ];
 

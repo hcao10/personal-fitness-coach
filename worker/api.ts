@@ -74,7 +74,7 @@ import { decideReview, generateReview, listReviews, reviewDetail, saveReviewChec
 import { deleteDevice, deleteHealthConnection, importHealthObservations, registerDevice, syncBatch, syncChanges, upsertHealthConnection } from "./modules/mobile";
 import { processRevenueCatEvent, revenueCatConfigured, verifyRevenueCatWebhook } from "./modules/revenuecat";
 import { runMaintenance, verifyMaintenanceRequest } from "./modules/maintenance";
-import { runNotifications } from "./modules/notifications";
+import { expoPushConfigured, runNotifications } from "./modules/notifications";
 import { habitSummary, upsertHabitCommitment } from "./modules/habits";
 import { progressSeries } from "./modules/progress";
 import { enforceRateLimit, RATE_RULES } from "./modules/rate-limit";
@@ -83,7 +83,14 @@ const json = (body: unknown, status = 200, headers?: HeadersInit) => Response.js
   status,
   headers: { "cache-control": "no-store", ...headers },
 });
-const errorJson = (error: string, message: string, status: number) => json({ error, message }, status);
+const errorJson = (error: string, message: string, status: number, headers?: HeadersInit) => json({ error, message }, status, headers);
+// AI spend windows are keyed on the UTC date (see assertAiBudget), so a budget
+// 429 clears at UTC midnight regardless of the user's own timezone.
+const secondsUntilUtcMidnight = () => {
+  const now = new Date();
+  const midnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
+  return Math.max(60, Math.ceil((midnight - now.getTime()) / 1000));
+};
 function coachStream(run: (emit: (event: string, data: unknown) => void) => Promise<{ assistantMessage: { id: string; content: string; actions?: unknown[]; intent?: string; basis?: unknown[]; limitations?: string[]; sources?: unknown[] }; duplicate?: boolean }>) {
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
@@ -99,7 +106,14 @@ function coachStream(run: (emit: (event: string, data: unknown) => void) => Prom
         emit("message.completed", { id: result.assistantMessage.id, duplicate: Boolean(result.duplicate) });
       } catch (error) {
         const code = error instanceof Error ? error.message.split(":")[0] : "COACH_FAILED";
-        emit("message.error", { error: code, message: code === "COACH_LIMIT_REACHED" ? "本周期的 Coach 体验额度已用完。" : "Coach 暂时无法完成回复，请稍后再试。" });
+        // Budget exhaustion is not transient: telling the user to "try again
+        // shortly" invites a retry loop against a cap that will not clear for
+        // hours, and each retry writes an orphan user message.
+        const message = code === "COACH_LIMIT_REACHED" ? "本周期的 Coach 体验额度已用完。"
+          : code === "AI_USER_BUDGET_EXHAUSTED" ? "你今天的 AI 用量已达上限，请明天再试。"
+            : code === "AI_BUDGET_EXHAUSTED" ? "今日 AI 成本保护已触发，请稍后再试。"
+              : "Coach 暂时无法完成回复，请稍后再试。";
+        emit("message.error", { error: code, retryable: code !== "COACH_LIMIT_REACHED" && !code.includes("BUDGET_EXHAUSTED"), message });
       } finally { controller.close(); }
     },
   });
@@ -453,11 +467,17 @@ async function planRequest(request: Request, env: WorkerEnv): Promise<Response> 
       task: "training_plan",
       provider: "router",
     }).catch(() => undefined);
-    const budgetLimited = errorCode === "AI_BUDGET_EXHAUSTED";
+    const userBudgetLimited = errorCode === "AI_USER_BUDGET_EXHAUSTED";
+    const budgetLimited = userBudgetLimited || errorCode === "AI_BUDGET_EXHAUSTED";
     return errorJson(
-      budgetLimited ? "AI_BUDGET_EXHAUSTED" : "AI_GENERATION_FAILED",
-      budgetLimited ? "今日 AI 成本保护已触发，请稍后再试。" : "这次计划没有通过完整校验，额度已退回，请稍后重新生成。",
+      budgetLimited ? errorCode : "AI_GENERATION_FAILED",
+      userBudgetLimited ? "你今天的 AI 用量已达上限，额度已退回。用量按 UTC 日切重置。"
+        : budgetLimited ? "今日 AI 成本保护已触发，请稍后再试。"
+          : "这次计划没有通过完整校验，额度已退回，请稍后重新生成。",
       budgetLimited ? 429 : 502,
+      // Distinguishes a budget 429 (clears at the UTC day boundary) from a
+      // rate-limit 429 (clears in minutes) — both use the same status code.
+      budgetLimited ? { "retry-after": String(secondsUntilUtcMidnight()) } : undefined,
     );
   }
 }
@@ -494,7 +514,11 @@ function services(env: WorkerEnv) {
     database: Boolean(env.DB),
     storage: Boolean(env.R2),
     planner: ai.planner,
-    vision: ai.vision && Boolean(env.R2),
+    // Meal photo analysis needs all three: a vision route, R2 to store the
+    // photo, and the Images binding to downscale it. Reporting true without
+    // every one of them advertises a flow that cannot complete.
+    vision: ai.vision && Boolean(env.R2) && Boolean(env.IMAGES),
+    imageTransform: Boolean(env.IMAGES),
     llm: ai.planner,
     cmine: Boolean(env.CMINE_CLIENT_ID && env.CMINE_CLIENT_SECRET && env.SESSION_SECRET && env.DB),
     foodData: foodDataConfigured(),
@@ -503,6 +527,7 @@ function services(env: WorkerEnv) {
     rewardAds: rewardAdsConfigured(env),
     mobileAuth: Boolean(env.CMINE_MOBILE_CLIENT_IDS),
     mobileLinks: Boolean(env.APPLE_APP_TEAM_ID && env.ANDROID_APP_SHA256_CERT_FINGERPRINT),
+    push: expoPushConfigured(env),
     maintenance: Boolean(env.MAINTENANCE_SECRET),
     providers: ai.providers,
     model: ai.providers.cloudflare ? "Cloudflare AI Router" : env.OPENAI_MODEL || env.AI_COMPAT_TEXT_MODEL || "not configured",
@@ -938,18 +963,28 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
   if (request.method === "POST" && url.pathname === "/api/v1/meals/analyze") {
     const user = await requireUser(request, env);
     if (user instanceof Response) return user;
+    // Rate limited like every other AI-invoking endpoint. Without this the
+    // quota refund on failure makes repeated analysis of a photo that reliably
+    // fails validation free and unbounded, while still billing the provider.
+    const limited = await enforceRateLimit(env, request, "meal_analyze", RATE_RULES.mealAnalyze, user.id);
+    if (limited) return limited;
     const body = await request.json().catch(() => null) as { mealId?: unknown } | null;
     if (typeof body?.mealId !== "string") return errorJson("INVALID_MEAL", "缺少餐食记录。", 400);
     try {
       return json(await analyzeMeal(env, user, body.mealId), 201);
     } catch (error) {
       const code = error instanceof Error ? error.message.split(":")[0] : "MEAL_ANALYSIS_FAILED";
-      const status = code === "MEAL_SCAN_LIMIT_REACHED" || code === "AI_BUDGET_EXHAUSTED" ? 429 :
+      // Budget exhaustion is a quota condition, not a server fault: mapping it
+      // to 502 made clients (and the mobile retry helper, which treats 5xx as
+      // retryable) hammer a request that cannot succeed until tomorrow.
+      const budgetExhausted = code === "AI_BUDGET_EXHAUSTED" || code === "AI_USER_BUDGET_EXHAUSTED";
+      const status = code === "MEAL_SCAN_LIMIT_REACHED" || budgetExhausted ? 429 :
         code.includes("NOT_FOUND") ? 404 : code.includes("NOT_CONFIGURED") ? 503 : 502;
       const message = code === "MEAL_SCAN_LIMIT_REACHED" ? "本周期的饭菜识别额度已用完，可使用积分兑换或升级专业版。" :
-        code === "AI_BUDGET_EXHAUSTED" ? "今日 AI 成本保护已触发，请稍后再试。" :
-          code.includes("NOT_CONFIGURED") ? "饭菜识别模型尚未配置。" : "这张图片暂时无法可靠识别，额度已退回。";
-      return errorJson(code, message, status);
+        code === "AI_USER_BUDGET_EXHAUSTED" ? "你今天的 AI 用量已达上限，额度已退回。用量按 UTC 日切重置。" :
+          code === "AI_BUDGET_EXHAUSTED" ? "今日 AI 成本保护已触发，请稍后再试。" :
+            code.includes("NOT_CONFIGURED") ? "饭菜识别模型尚未配置。" : "这张图片暂时无法可靠识别，额度已退回。";
+      return errorJson(code, message, status, budgetExhausted ? { "retry-after": String(secondsUntilUtcMidnight()) } : undefined);
     }
   }
   const mealConfirmMatch = url.pathname.match(/^\/api\/v1\/meals\/([^/]+)\/confirm$/);

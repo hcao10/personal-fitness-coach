@@ -22,7 +22,16 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 
 type PushMessage = { to: string; title: string; body: string; data?: Record<string, unknown> };
 
+// Same capability-gating contract as Stripe, RevenueCat and reward ads: an
+// unconfigured deployment does not reach out to users. Expo does accept
+// unauthenticated sends, but pushing from a half-configured environment is not
+// a default worth having — and the docs already promised this behavior.
+export function expoPushConfigured(env: WorkerEnv): boolean {
+  return Boolean(env.EXPO_ACCESS_TOKEN);
+}
+
 export async function sendExpoPush(env: WorkerEnv, messages: PushMessage[]): Promise<{ sent: number; invalidTokens: string[] }> {
+  if (!expoPushConfigured(env)) throw new Error("EXPO_PUSH_NOT_CONFIGURED");
   const invalidTokens: string[] = [];
   let sent = 0;
   for (let index = 0; index < messages.length; index += 100) {
@@ -31,7 +40,7 @@ export async function sendExpoPush(env: WorkerEnv, messages: PushMessage[]): Pro
       method: "POST",
       headers: {
         accept: "application/json", "content-type": "application/json",
-        ...(env.EXPO_ACCESS_TOKEN ? { authorization: `Bearer ${env.EXPO_ACCESS_TOKEN}` } : {}),
+        authorization: `Bearer ${env.EXPO_ACCESS_TOKEN}`,
       },
       body: JSON.stringify(chunk),
     });
@@ -83,6 +92,7 @@ async function streakFor(env: WorkerEnv, userId: string, timezone: string | null
 
 export async function runNotifications(env: WorkerEnv) {
   if (!env.DB) throw new Error("DATABASE_NOT_CONFIGURED");
+  const pushEnabled = expoPushConfigured(env);
   const trialDays = Number(await settingNumber(env, "trial_days", 7));
   const users = await env.DB.prepare(`SELECT d.user_id, u.timezone, u.locale, u.created_at, d.push_token,
       p.training, p.reviews, p.billing, p.quiet_start, p.quiet_end, h.cue_time, h.cue_place,
@@ -169,6 +179,14 @@ export async function runNotifications(env: WorkerEnv) {
 
   let sent = 0;
   let cleared = 0;
+  // The habit pass above still runs when push is unconfigured — milestone
+  // persistence must not be a side effect of delivery — but nothing is sent,
+  // and nothing is marked as sent, so messages are not lost: they will be
+  // delivered on the first run after a token is configured.
+  if (!pushEnabled) {
+    console.warn("notifications_skipped", "EXPO_PUSH_NOT_CONFIGURED", messages.length);
+    return { skipped: "EXPO_PUSH_NOT_CONFIGURED", candidates: (users.results || []).length, queued: messages.length, sent: 0, clearedTokens: 0 };
+  }
   if (messages.length) {
     const result = await sendExpoPush(env, messages.map(({ to, title, body, data }) => ({ to, title, body, data })));
     sent = result.sent;

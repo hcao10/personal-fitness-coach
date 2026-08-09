@@ -31,6 +31,10 @@ const localBindingConfig = {
         },
       ]
     : [],
+  // Meal photo upload downscales and re-encodes through Cloudflare Images
+  // before writing to R2 (worker/nutrition.ts). Without this binding declared,
+  // env.IMAGES is undefined and every upload is refused.
+  images: { binding: "IMAGES" },
 };
 
 export default defineConfig(async () => {

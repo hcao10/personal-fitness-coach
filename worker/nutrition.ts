@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { generateMealVision, type MealCandidate } from "./llm";
 import type { StoredUser } from "./db";
+import { recordGenerationRun } from "./telemetry";
 import type { WorkerEnv } from "./platform";
 import { consumeCapability, refundCapability, tierForUser } from "./product";
 import { sha256 } from "./security";
@@ -253,7 +254,10 @@ export async function foodByBarcode(env: WorkerEnv, barcode: string): Promise<Nu
 }
 
 export async function uploadMealImage(env: WorkerEnv, user: StoredUser, file: File, mealType: string, eatenAt: string) {
-  if (!env.DB || !env.R2) throw new Error("MEAL_STORAGE_NOT_CONFIGURED");
+  // IMAGES is checked here for the same reason DB and R2 are: without the guard
+  // the call below throws a TypeError that the route reports as "invalid image",
+  // blaming the user's photo for a missing binding.
+  if (!env.DB || !env.R2 || !env.IMAGES) throw new Error("MEAL_STORAGE_NOT_CONFIGURED");
   if (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size < 64 || file.size > 8 * 1024 * 1024) {
     throw new Error("INVALID_MEAL_IMAGE");
   }
@@ -305,6 +309,15 @@ export async function analyzeMeal(env: WorkerEnv, user: StoredUser, mealId: stri
     const bytes = await object.arrayBuffer();
     const tier = await tierForUser(env, user.id);
     const result = await generateMealVision(env, `data:image/jpeg;base64,${arrayBufferToBase64(bytes)}`, tier, user.id);
+    // Recorded immediately: assertAiBudget sums generation_runs, and the food
+    // lookups below can throw, which would otherwise lose an already-billed
+    // call from the spend total.
+    await recordGenerationRun(env, {
+      userId: user.id, status: "succeeded", model: result.model, provider: result.provider, task: "meal_vision",
+      latencyMs: Date.now() - startedAt, requestId: result.requestId,
+      inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens,
+      estimatedCostUsd: result.estimatedCostUsd,
+    }).catch((error) => console.error("generation_run_write_failed", "meal_vision", error instanceof Error ? error.message : "UNKNOWN"));
     const suggestions: Array<NutritionReference | null> = [];
     for (const candidate of result.candidates.slice(0, 3)) {
       const matches = await searchFoods(env, candidate.nameEn || candidate.nameZh);
@@ -320,6 +333,11 @@ export async function analyzeMeal(env: WorkerEnv, user: StoredUser, mealId: stri
     return { ...result, candidates, quota };
   } catch (error) {
     await refundCapability(env, user.id, "meal.scan");
+    // Meal failures are tracked in meal_analysis_runs (mealAnalysisSuccessRate).
+    // They are deliberately NOT written to generation_runs: a budget refusal or
+    // a missing route never reached a provider, and counting it as a failed
+    // generation would make the admin AI success rate drop every time the spend
+    // guard did its job.
     await env.DB.prepare(`INSERT INTO meal_analysis_runs
       (id, meal_id, user_id, provider, model, status, result_json, confidence, latency_ms, error_code, estimated_cost_usd, created_at)
       VALUES (?, ?, ?, 'none', 'none', 'failed', NULL, NULL, ?, ?, 0, ?)`)

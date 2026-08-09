@@ -668,31 +668,8 @@ export async function accountSnapshot(env: WorkerEnv, user: StoredUser) {
   };
 }
 
-export async function recordGenerationRun(env: WorkerEnv, input: {
-  userId: string | null;
-  status: "succeeded" | "failed";
-  model: string;
-  latencyMs: number;
-  requestId?: string | null;
-  errorCode?: string | null;
-  inputTokens?: number | null;
-  outputTokens?: number | null;
-  reasoningTokens?: number | null;
-  task?: string;
-  provider?: string;
-  estimatedCostUsd?: number;
-  cacheHit?: boolean;
-}): Promise<void> {
-  if (!env.DB) return;
-  await env.DB.prepare(`INSERT INTO generation_runs
-    (id, user_id, status, model, latency_ms, request_id, error_code, input_tokens, output_tokens, reasoning_tokens,
-      task, provider, estimated_cost_usd, cache_hit, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .bind(crypto.randomUUID(), input.userId, input.status, input.model, input.latencyMs, input.requestId || null,
-      input.errorCode || null, input.inputTokens ?? null, input.outputTokens ?? null, input.reasoningTokens ?? null,
-      input.task || "training_plan", input.provider || "unknown", input.estimatedCostUsd || 0, input.cacheHit ? 1 : 0,
-      new Date().toISOString()).run();
-}
+// Moved to worker/telemetry.ts (db.ts imports nutrition.ts, which now needs it).
+export { recordGenerationRun } from "./telemetry";
 
 export async function settingValue<T>(env: WorkerEnv, key: string, fallback: T): Promise<T> {
   if (!env.DB) return fallback;

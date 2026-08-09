@@ -42,6 +42,7 @@ export const RATE_RULES = {
   planGenerate: { limit: 6, windowSeconds: 600 },
   coachChat: { limit: 20, windowSeconds: 600 },
   mealUpload: { limit: 10, windowSeconds: 600 },
+  mealAnalyze: { limit: 12, windowSeconds: 600 },
   foodSearch: { limit: 30, windowSeconds: 300 },
   exerciseSearch: { limit: 60, windowSeconds: 300 },
   exportData: { limit: 3, windowSeconds: 86_400 },

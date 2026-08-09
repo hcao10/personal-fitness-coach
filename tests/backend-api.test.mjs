@@ -84,6 +84,22 @@ test("consent records require a configured database instead of silently succeedi
   assert.equal((await response.json()).error, "DATABASE_NOT_CONFIGURED");
 });
 
+test("health reports meal vision only for providers the vision router can actually use", async () => {
+  // An OpenAI-only deployment has no meal_vision route, so advertising vision
+  // would show a photo-scan entry that can never succeed.
+  const openAiOnly = { OPENAI_API_KEY: "sk-test", OPENAI_MODEL: "some-real-model", R2: {} };
+  const status = await (await worker.fetch(new Request("https://local.test/api/health"), openAiOnly, {})).json();
+  assert.equal(status.planner, true);
+  assert.equal(status.vision, false);
+});
+
+test("health reports server push as unconfigured until an Expo token exists", async () => {
+  const withoutToken = await (await worker.fetch(new Request("https://local.test/api/health"), {}, {})).json();
+  assert.equal(withoutToken.push, false);
+  const withToken = await (await worker.fetch(new Request("https://local.test/api/health"), { EXPO_ACCESS_TOKEN: "expo-test" }, {})).json();
+  assert.equal(withToken.push, true);
+});
+
 test("habit endpoints require a signed-in user", async () => {
   const summary = await worker.fetch(new Request("https://local.test/api/v1/habits"), {}, {});
   assert.equal(summary.status, 401);

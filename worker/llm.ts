@@ -180,7 +180,12 @@ export function aiServices(env: WorkerEnv) {
   const compatible = providerConfigured(env, "compatible");
   return {
     planner: cloudflare || openai || compatible,
-    vision: cloudflare || compatible || openai,
+    // Only the providers that actually appear in the meal_vision route table
+    // below — an OpenAI-only deployment resolves no vision route, so reporting
+    // vision:true told the admin console a capability was live when the very
+    // next request would fail. Note this cannot see admin-configured ai_routes
+    // rows, so it under-reports if an OpenAI vision route is added by hand.
+    vision: cloudflare || compatible,
     providers: { cloudflare, openai, compatible },
   };
 }
@@ -456,8 +461,14 @@ function estimatedCost(model: string, inputTokens: number | null, outputTokens: 
   ];
   // Unknown models are billed at a conservative high estimate so they consume
   // budget instead of silently bypassing assertAiBudget with a $0 cost.
-  const price = prices.find(([name]) => model.includes(name)) || ["unknown", 3, 12];
-  return Number((((inputTokens || 0) * price[1] + (outputTokens || 0) * price[2]) / 1_000_000).toFixed(6));
+  const known = prices.find(([name]) => model.includes(name));
+  const price = known || ["unknown", 3, 12];
+  const estimate = Number((((inputTokens || 0) * price[1] + (outputTokens || 0) * price[2]) / 1_000_000).toFixed(6));
+  // Providers that omit usage would otherwise report $0 for a call that was
+  // billed — exactly the blind spot the fallback price exists to prevent. Floor
+  // an unmeasured call at a nominal cost so repeated calls still accrue budget.
+  if (estimate > 0) return estimate;
+  return inputTokens === null && outputTokens === null ? (known ? 0.002 : 0.01) : 0;
 }
 
 function parseJson<T>(text: string): T {

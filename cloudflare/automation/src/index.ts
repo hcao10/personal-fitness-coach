@@ -16,8 +16,12 @@ async function notify(env: Env) {
   if (!env.MAINTENANCE_SECRET) throw new Error("MAINTENANCE_SECRET_MISSING"); const path = "/api/internal/notifications/run";
   const timestamp = String(Date.now()); const nonce = crypto.randomUUID();
   const response = await fetch(`${env.FIT_ORIGIN}${path}`, { method: "POST", headers: { "x-cmine-timestamp": timestamp, "x-cmine-nonce": nonce, "x-cmine-signature": await signature(env.MAINTENANCE_SECRET, `${timestamp}.${nonce}.${path}`) } });
-  const body = await response.json().catch(() => ({ ok: false })) as { ok?: boolean; error?: string };
+  const body = await response.json().catch(() => ({ ok: false })) as { ok?: boolean; error?: string; skipped?: string; queued?: number; sent?: number };
   if (!response.ok) throw new Error(body.error || `FIT_NOTIFICATIONS_${response.status}`);
+  // Logged so a permanently skipped cron is visible in wrangler tail rather
+  // than looking like a healthy hourly run that delivers nothing.
+  if (body.skipped) console.warn("fit_notifications_skipped", body.skipped, "queued", body.queued ?? 0);
+  else console.log("fit_notifications_sent", body.sent ?? 0, "queued", body.queued ?? 0);
   return body;
 }
 const worker = {

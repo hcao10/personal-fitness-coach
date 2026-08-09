@@ -26,8 +26,10 @@
 
 ## S3 真实环境验收清单
 
-1. ☐ 生产 D1 应用迁移 0008–0010
-2. ☐ 配置密钥（hosting 环境）：`EXPO_ACCESS_TOKEN`、`REVENUECAT_API_KEY`、`STRIPE_SECRET_KEY`/`STRIPE_WEBHOOK_SECRET`/`STRIPE_PRICE_*`
+1. ☐ 生产 D1 应用迁移 **0008 → 0009 → 0010 → 0011**（顺序不可乱；0008 未跑之前 DB 里的虚构模型路由会短路所有 AI 生成。注意 `drizzle/meta/` 为空，无迁移 runner，须手工按序执行并自行记录）
+2. ☐ 确认主 Worker 的四个绑定齐备：`DB`、`R2`、**`IMAGES`**（本轮才在 `vite.config.ts` 中声明，此前从未存在，拍照上传因此从未可用）、`ASSETS`
+3. ☐ 配置密钥（hosting 环境）：`SESSION_SECRET`、`CMINE_CLIENT_ID`/`CMINE_CLIENT_SECRET`、`PUBLIC_ORIGIN`、**`ADMIN_EMAILS`（不配则任何账号都永远无法成为管理员）**、`MAINTENANCE_SECRET`（须与 automation worker 逐字节一致）、`CLOUDFLARE_AI_GATEWAY_URL`/`_TOKEN`（token 须与 ai-gateway 的 `INTERNAL_API_TOKEN` 一致）、`EXPO_ACCESS_TOKEN`、`REVENUECAT_API_KEY`、`STRIPE_SECRET_KEY`/`STRIPE_WEBHOOK_SECRET`/`STRIPE_PRICE_*`
+4. ☐ 确认 `REVENUECAT_ALLOW_SANDBOX` **未设置**（设为 `"true"` 会让沙盒购买发放真实 Pro 权益）
 3. ☐ Stripe 测试模式全链路：触墙→Checkout→webhook→权益→Portal 取消→降级；确认价格缓存拉到真实 Price
 4. ☐ RevenueCat sandbox：购买→REST 回查→权益一致（无 API key 时 webhook 只记录不授权益，属预期）
 5. ☐ 真机推送四类验证：cue 时间提醒 / 周日教练信 / 安静时段抑制 / 失效 token 清理

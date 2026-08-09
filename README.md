@@ -57,7 +57,7 @@ Cmine Fit 是一套包含自主轻量版与专业增强版的 AI 健身教练产
 - `REVENUECAT_API_KEY`：**授予权益前必须配置**——RevenueCat webhook 不带签名，服务端会用 REST API 回查订阅状态；未配置时 webhook 只记录事件、不发放任何权益
 - `CMINE_MOBILE_CLIENT_IDS`：允许访问 Fit API 的 Cmine ID Public Client ID 列表
 - `MAINTENANCE_SECRET`：Sites 与每日清理 Worker 共用的 HMAC Secret；`cmine-fit-automation` Worker 用它调用每日维护与每小时通知任务
-- `EXPO_ACCESS_TOKEN`：服务端推送（训练提醒与周教练信）所需；未配置时不会发送任何服务端推送
+- `EXPO_ACCESS_TOKEN`：服务端推送（训练提醒、周教练信、试用到期提醒）所需；未配置时不发送任何服务端推送，`/api/health` 的 `push` 报 `false`，每小时任务会记录 `notifications_skipped` 并照常维护里程碑数据
 
 移动端标识由构建环境注入（`apps/mobile/app.config.js`），不写入仓库：
 `EXPO_PUBLIC_CMINE_CLIENT_ID`、`EXPO_PUBLIC_API_ORIGIN`、`EXPO_PUBLIC_CMINE_ISSUER`、
@@ -68,10 +68,16 @@ Cmine ID 需精确登记每个生产域名的回调：
 
     https://fit.chwjh.com/api/auth/cmine/callback
 
-生产健康检查为 `/api/health`，分别报告 `database`、`storage`、`cmine`、
-`planner`、`vision`、`foodData`、`billing` 和 `rewardAds`（仅布尔能力位；
-供应商、模型名与推理档位不对未登录者暴露，完整信息在管理后台）。广告尚未接入时
-`rewardAds` 保持 `false`，用户端也不会显示入口。
+生产健康检查为 `/api/health`，返回下列布尔能力位（供应商、模型名与推理档位
+不对未登录者暴露，完整信息在管理后台）：
+
+`database`、`storage`、`imageTransform`、`planner`、`vision`、`llm`、`cmine`、
+`foodData`、`billing`、`mobileBilling`、`mobileAuth`、`mobileLinks`、`push`、
+`rewardAds`、`maintenance`。
+
+其中 `vision`（饭菜识别）要求视觉路由、`R2` 与 `IMAGES` 三者同时具备才报 `true`；
+`push` 仅在配置了 `EXPO_ACCESS_TOKEN` 时为 `true`。未接入的能力保持 `false`，
+用户端也不会显示对应入口。
 
 ## 两种产品路径
 
