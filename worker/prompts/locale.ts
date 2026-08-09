@@ -20,6 +20,7 @@ export function outputDirective(locale: Locale): string {
     "This applies to every string field in the response, including titles, reasons and limitations.",
     "Do not mix languages, do not append a translation, and do not transliterate proper nouns that the",
     "target language normally keeps in their original script.",
+    `If the response schema has a content_locale field, set it to "${locale}" — the language you actually wrote in.`,
   ].join(" ");
 }
 

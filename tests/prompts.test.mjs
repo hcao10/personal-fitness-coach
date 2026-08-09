@@ -10,6 +10,9 @@ import { PAIN_THRESHOLD, INTENSITY_RAISING_ACTIONS } from "../packages/domain/sr
 // cache key, so a silent edit makes both of them lie.
 const RECORDED = {
   "2026-08-09.1": "67bbd1e6",
+  // coach_chat gained a content_locale echo, so the output directive now names
+  // the value the model must report.
+  "2026-08-09.2": "ba7a1dd9",
 };
 
 test("prompt text and PROMPT_VERSION cannot drift apart", () => {

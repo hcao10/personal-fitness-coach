@@ -1,4 +1,4 @@
-import { actionsAllowedUnderRisk, assessSafety, safetyGuidance } from "../../packages/domain/src";
+import { actionsAllowedUnderRisk, assessSafety, medicalDisclaimer, safetyGuidance } from "../../packages/domain/src";
 import { toLocale } from "../../packages/i18n/src";
 import { EXERCISES, isExerciseAllowed, type CoachPlan, type Profile } from "../../packages/coach-core/src";
 import type { WorkerEnv } from "../platform";
@@ -34,10 +34,10 @@ async function ownedConversation(env: WorkerEnv, userId: string, conversationId:
 
 export async function conversationMessages(env: WorkerEnv, userId: string, conversationId: string, before?: string | null) {
   if (!env.DB || !await ownedConversation(env, userId, conversationId)) throw new Error("CONVERSATION_NOT_FOUND");
-  const rows = await env.DB.prepare(`SELECT m.id,m.role,m.content,m.metadata_json,m.created_at FROM coach_messages m
+  const rows = await env.DB.prepare(`SELECT m.id,m.role,m.content,m.metadata_json,m.content_locale,m.created_at FROM coach_messages m
     WHERE m.conversation_id=? AND m.user_id=? ${before ? "AND m.created_at < ?" : ""}
     ORDER BY m.created_at DESC LIMIT 50`).bind(...(before ? [conversationId, userId, before] : [conversationId, userId]))
-    .all<{ id: string; role: "user" | "assistant"; content: string; metadata_json: string; created_at: string }>();
+    .all<{ id: string; role: "user" | "assistant"; content: string; metadata_json: string; content_locale: string | null; created_at: string }>();
   const messages = [...(rows.results || [])].reverse();
   const ids = messages.map((item) => item.id);
   let actions: Array<{ id: string; message_id: string; action_type: string; payload_json: string; status: string; base_version_id: string | null; expires_at: string | null }> = [];
@@ -48,7 +48,8 @@ export async function conversationMessages(env: WorkerEnv, userId: string, conve
     actions = result.results || [];
   }
   return messages.map((message) => { const metadata = parseJson<{ intent?: string; basis?: unknown[]; limitations?: string[]; sources?: unknown[] }>(message.metadata_json) || {};
-    return { id: message.id, role: message.role, content: message.content, createdAt: message.created_at, ...metadata,
+    // null means "written before the column existed" — not "same as yours".
+    return { id: message.id, role: message.role, content: message.content, contentLocale: message.content_locale, createdAt: message.created_at, ...metadata,
       actions: actions.filter((action) => action.message_id === message.id).map((action) => ({ id: action.id, type: action.action_type, status: action.status, payload: parseJson<Record<string, unknown>>(action.payload_json) || {}, baseVersionId: action.base_version_id, expiresAt: action.expires_at })) };
   });
 }
@@ -101,10 +102,13 @@ export async function sendCoachMessage(env: WorkerEnv, user: StoredUser, convers
       return { duplicate: true, userMessage: null, assistantMessage };
     }
   }
-  const now = new Date().toISOString(); const userMessageId = crypto.randomUUID();
-  await env.DB.prepare(`INSERT INTO coach_messages (id,conversation_id,user_id,role,content,client_mutation_id,created_at)
-    VALUES (?,?,?,'user',?,?,?)`).bind(userMessageId, conversationId, user.id, message, input.clientMutationId || null, now).run();
   const locale = toLocale(user.locale);
+  const now = new Date().toISOString(); const userMessageId = crypto.randomUUID();
+  // A user's own language is measured, not assumed from their interface
+  // setting: someone reading the app in English still asks questions in Chinese.
+  await env.DB.prepare(`INSERT INTO coach_messages (id,conversation_id,user_id,role,content,client_mutation_id,content_locale,created_at)
+    VALUES (?,?,?,'user',?,?,?,?)`).bind(userMessageId, conversationId, user.id, message, input.clientMutationId || null,
+      observedLocale(locale, message), now).run();
   const triage = assessSafety(message);
   // Severity decides whether the model is consulted at all:
   //  - emergency (chest pain, fainting, cannot bear weight): the only correct
@@ -146,10 +150,13 @@ export async function sendCoachMessage(env: WorkerEnv, user: StoredUser, convers
   const assistantId = crypto.randomUUID(); const completedAt = new Date().toISOString();
   const metadata = result ? { intent: result.intent, basis: result.basis, limitations: result.limitations,
     sources: knowledge.filter((source) => result!.sourceIds.includes(source.id)).map(({ id, title, publisher, url }) => ({ id, title, publisher, url })) }
-    : { intent: "safety", basis: [], limitations: ["这不是医疗诊断。"], sources: [] };
+    : { intent: "safety", basis: [], limitations: [medicalDisclaimer(locale)], sources: [] };
+  // The emergency reply is deterministic product copy rendered in `locale`;
+  // a model reply carries whatever language the server measured in it.
+  const replyLocale = result?.contentLocale ?? locale;
   const statements = [
-    env.DB.prepare(`INSERT INTO coach_messages (id,conversation_id,user_id,role,content,metadata_json,created_at) VALUES (?,?,?,'assistant',?,?,?)`)
-      .bind(assistantId, conversationId, user.id, reply, JSON.stringify(metadata), completedAt),
+    env.DB.prepare(`INSERT INTO coach_messages (id,conversation_id,user_id,role,content,metadata_json,content_locale,created_at) VALUES (?,?,?,'assistant',?,?,?,?)`)
+      .bind(assistantId, conversationId, user.id, reply, JSON.stringify(metadata), replyLocale, completedAt),
     env.DB.prepare("UPDATE coach_conversations SET updated_at=?, title=CASE WHEN title='新的对话' THEN ? ELSE title END WHERE id=?")
       .bind(completedAt, message.slice(0, 36), conversationId),
   ];
@@ -175,9 +182,12 @@ export async function sendCoachMessage(env: WorkerEnv, user: StoredUser, convers
   if (result) await recordGenerationRun(env, { userId: user.id, status: "succeeded", model: result.model, latencyMs: Date.now() - started,
     requestId: result.requestId, inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens,
     task: "coach_chat", provider: result.provider, estimatedCostUsd: result.estimatedCostUsd,
-    locale, contentLocale: observedLocale(locale, result.reply) });
+    locale, contentLocale: result.contentLocale });
   if (result) await env.DB.prepare(`INSERT INTO coach_evaluation_runs (id,task,provider,model,schema_valid,safety_passed,action_valid,latency_ms,detail_json,created_at)
-    VALUES (?,'coach_consult',?,?,1,1,1,?,'{}',?)`).bind(crypto.randomUUID(), result.provider, result.model, Date.now() - started, completedAt).run();
+    VALUES (?,'coach_consult',?,?,1,1,1,?,?,?)`).bind(crypto.randomUUID(), result.provider, result.model, Date.now() - started,
+      // localeClaimMismatch is the interesting one: a model whose self-report
+      // disagrees with what it actually wrote is unreliable on both counts.
+      JSON.stringify({ requestedLocale: locale, contentLocale: result.contentLocale, localeClaimMismatch: result.localeClaimMismatch }), completedAt).run();
   await updateConversationSummary(env, user.id, conversationId).catch(() => undefined);
   return { duplicate: false, userMessage: { id: userMessageId, role: "user", content: message, createdAt: now },
     assistantMessage: { id: assistantId, role: "assistant", content: reply, createdAt: completedAt, actions, ...metadata } };

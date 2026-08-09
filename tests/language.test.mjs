@@ -65,6 +65,26 @@ test("an audit reports drift only when the text itself proves it", () => {
   assert.equal(unknown.reason, "too_short");
 });
 
+// This is the whole reason detection exists alongside the echoed field. A model
+// that ignored the output directive will still echo the locale it was told to
+// use, so believing the echo means never noticing the failure it was added to
+// catch. coach_chat resolves contentLocale as detected ?? claimed ?? requested.
+test("a model's self-report loses to the script it actually wrote", () => {
+  const audit = auditContentLocale({
+    requested: "zh", claimed: "zh", candidates: ALL,
+    text: "Today you have four sets of the barbell squat at eight reps with two reps in reserve.",
+  });
+  const resolved = audit.detected ?? audit.claimed ?? "zh";
+  assert.equal(resolved, "en", "believed the model over the text");
+  assert.equal(audit.claimed, "zh");
+});
+
+test("a self-report is only used where there is nothing to measure", () => {
+  const audit = auditContentLocale({ requested: "zh", claimed: "en", candidates: ALL, text: "60 kg" });
+  assert.equal(audit.detected, null);
+  assert.equal(audit.detected ?? audit.claimed ?? "zh", "en");
+});
+
 test("a claimed locale outside the registry is discarded, not trusted", () => {
   const audit = auditContentLocale({
     requested: "zh", claimed: "zh-Hant-TW", candidates: ALL,

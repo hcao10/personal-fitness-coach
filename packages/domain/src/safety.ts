@@ -116,6 +116,20 @@ export const SAFETY_GUIDANCE: Record<string, string> = {
 
 export const safetyGuidance = (locale: string): string => SAFETY_GUIDANCE[locale] ?? SAFETY_GUIDANCE.zh;
 
+/**
+ * Attached to every emergency reply as its stated limitation. Deterministic
+ * product copy, so it is rendered in the reader's language rather than frozen
+ * in the language it happened to be authored in — the opposite rule from
+ * model-written text, and for the opposite reason: this string was reviewed by
+ * a human in each language.
+ */
+export const MEDICAL_DISCLAIMER: Record<string, string> = {
+  zh: "这不是医疗诊断。",
+  en: "This is not a medical diagnosis.",
+};
+
+export const medicalDisclaimer = (locale: string): string => MEDICAL_DISCLAIMER[locale] ?? MEDICAL_DISCLAIMER.zh;
+
 const WORD_NUMBERS: Record<string, number> = {
   one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
 };

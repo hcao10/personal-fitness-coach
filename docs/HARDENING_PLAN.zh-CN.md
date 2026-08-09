@@ -82,13 +82,15 @@
 | L7-0 | 类型地基：`Localized` 别名收敛、`toLocale()` 取代 6 处内联三元、`MealCandidate` 三份定义归一到 api-contracts | ☑ 2026-08-09 |
 | L7-1 | `worker/prompts/` 模块化（契约/输出指令/语域/术语表）+ locale 贯通 + `PROMPT_VERSION` 指纹测试 | ☑ 2026-08-09 |
 | L7-2 | 脚本比例语言检测 + 迁移 0012（`locale`/`content_locale`/`prompt_version`）+ admin 漂移面板（仅观测） | ☑ 2026-08-09 |
-| L7-3 | `coach_chat` 单语言化：schema 回显 `content_locale`、`coach_messages.content_locale`、流式先缓冲后嗅探 | ☐ |
+| L7-3 | `coach_chat` 单语言化：schema 回显 `content_locale`、`coach_messages.content_locale`（迁移 0013）、证据优先于自述 | ☑ 2026-08-09 |
 | L7-4 | `meal_vision` 单语言化：`nameZh`/`nameEn` → `name` + `contentLocale` | ☐ |
 | L7-5 | `training_plan` 单语言化：先部署容错读取，同一次部署把缓存键改为 `sha256({profile, locale, promptVersion})` | ☐ |
 | L7-6 | 停止把中文写进确定性字符串（计划变更摘要等）；客户端 locale 贯通（含移动端） | ☐ |
 | L7-7 | 评测集：每个任务 × 每个 locale 的最小回归样本 | ☐ |
 
 > L7-2 只观测不拦截是刻意的：在知道漂移率之前就重试，等于花钱重跑本来没问题的生成。admin 面板把「未检出」与「偏差」分列统计——文本太短无法判断是未知，不是出错。
+>
+> **原设计里的「流式先缓冲后嗅探」没有采纳。** 缓冲只有在「语言不对就不发」时才有价值，而现阶段语言处理是只观测不拦截的；那样做等于用真实的首字延迟，换一个根本不会执行的策略。回复完成后照样测量语言，遥测要的数据一条不少。理由写在 `worker/llm.ts` 流式分支的注释里。
 
 ## 待你决策的设计问题
 

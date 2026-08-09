@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { decoratePlanSchedule, EXERCISES, generatePlan, isExerciseAllowed, type CoachPlan, type Profile, type WorkoutDay } from "../app/lib/coach";
-import { actionsAllowedUnderRisk } from "../packages/domain/src";
+import { actionsAllowedUnderRisk, auditContentLocale } from "../packages/domain/src";
 import type { WorkerEnv } from "./platform";
 import type { ProductTier } from "./product";
 
@@ -28,7 +28,7 @@ type AiPlanOutput = {
 };
 
 import type { MealCandidate } from "../packages/api-contracts/src";
-import { DEFAULT_LOCALE, type Locale } from "../packages/i18n/src";
+import { DEFAULT_LOCALE, SHIPPABLE_LOCALES, type Locale } from "../packages/i18n/src";
 import { systemPrompt } from "./prompts";
 export type { MealCandidate };
 
@@ -66,6 +66,14 @@ export type MealVisionResult = {
 
 export type CoachChatResult = {
   reply: string;
+  /**
+   * Language of `reply`, decided by the server rather than taken on faith.
+   * Measured from the text; the model's own claim only breaks a tie when the
+   * text is too short to measure.
+   */
+  contentLocale: Locale;
+  /** True when the model's claim and the measured script disagree. */
+  localeClaimMismatch: boolean;
   intent: string;
   safety: { highRisk: boolean; category: string; detail: string };
   basis: Array<{ label: string; value: string; observedAt?: string; source?: string }>;
@@ -638,9 +646,14 @@ export async function generateCoachChat(env: WorkerEnv, input: {
   const routes = (await routesFor(env, "coach_chat", tier)).slice(0, 2);
   if (!routes.length) throw new Error("AI_NOT_CONFIGURED");
   const schema = {
-    type: "object", additionalProperties: false, required: ["reply", "intent", "safety_flag", "basis", "limitations", "source_ids", "actions"],
+    type: "object", additionalProperties: false, required: ["reply", "content_locale", "intent", "safety_flag", "basis", "limitations", "source_ids", "actions"],
     properties: {
       reply: { type: "string", minLength: 2, maxLength: 1800 },
+      // The language the model believes it wrote in. Treated as a claim to be
+      // cross-checked against the script actually measured in `reply`, never as
+      // the answer: a model that ignored the output directive echoes the locale
+      // it was told to use just as readily.
+      content_locale: { type: "string", enum: [...SHIPPABLE_LOCALES] },
       intent: { type: "string", enum: ["explain_plan", "adjust_today", "exercise_help", "nutrition", "progress", "general_knowledge", "safety"] },
       // Second safety layer: the keyword screen upstream only catches literal
       // phrasings ("疼痛 7"), so the model must classify paraphrases too
@@ -679,15 +692,28 @@ export async function generateCoachChat(env: WorkerEnv, input: {
   let lastError: unknown = null;
   for (const route of routes) {
     try {
+      // The streamed path emits tokens as they arrive rather than holding the
+      // first N back to sniff the language. Buffering would only pay off if a
+      // wrong-language reply were suppressed, and language handling is
+      // report-only until the drift rate is known — so it would be real
+      // time-to-first-token cost for a policy that does not act. The language
+      // is measured on the completed reply either way, which is what the
+      // telemetry needs.
       const result = input.onDelta
         ? await runProviderStream(env, route, { system, user, schemaName: "cmine_fit_coach", schema, maxTokens: 2600, safetyIdentifier: input.safetyIdentifier }, input.onDelta)
         : await runProvider(env, route, { system, user, schemaName: "cmine_fit_coach", schema, maxTokens: 2600, safetyIdentifier: input.safetyIdentifier });
-      const output = parseJson<{ reply: string; intent: string; safety_flag?: { high_risk?: boolean; category?: string; detail?: string }; basis: Array<{ label: string; value: string; observed_at?: string | null; source?: string | null }>; limitations: string[]; source_ids: string[]; actions: CoachChatResult["actions"] }>(result.text);
+      const output = parseJson<{ reply: string; content_locale?: string; intent: string; safety_flag?: { high_risk?: boolean; category?: string; detail?: string }; basis: Array<{ label: string; value: string; observed_at?: string | null; source?: string | null }>; limitations: string[]; source_ids: string[]; actions: CoachChatResult["actions"] }>(result.text);
       if (typeof output.reply !== "string" || !Array.isArray(output.actions) || !Array.isArray(output.basis) || !Array.isArray(output.limitations)) throw new Error("AI_SCHEMA_INVALID");
       const allowedSources = new Set((input.knowledge || []).map((item) => item.id));
       const highRisk = output.safety_flag?.high_risk === true;
+      // Evidence first, claim second. Detection wins whenever it succeeds; the
+      // model's echo is only consulted for text too short to measure, and the
+      // two disagreeing is itself worth recording.
+      const audit = auditContentLocale({ requested: input.locale, claimed: output.content_locale, text: output.reply, candidates: SHIPPABLE_LOCALES });
       return {
         reply: output.reply.slice(0, 1800), intent: output.intent,
+        contentLocale: audit.detected ?? audit.claimed ?? input.locale,
+        localeClaimMismatch: Boolean(audit.detected && audit.claimed && audit.detected !== audit.claimed),
         safety: { highRisk, category: highRisk ? String(output.safety_flag?.category || "other_medical") : "none", detail: String(output.safety_flag?.detail || "").slice(0, 160) },
         basis: output.basis.slice(0, 5).map((item) => ({ label: item.label, value: item.value, observedAt: item.observed_at || undefined, source: item.source || undefined })),
         // A model-detected risk must not be able to smuggle an intensity change through.

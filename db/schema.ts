@@ -436,6 +436,8 @@ export const coachMessages = sqliteTable("coach_messages", {
   content: text("content").notNull(),
   metadataJson: text("metadata_json").notNull().default("{}"),
   clientMutationId: text("client_mutation_id"),
+  /** Language this message is written in; NULL for messages predating the column. */
+  contentLocale: text("content_locale"),
   createdAt: text("created_at").notNull(),
 }, (table) => [
   index("coach_messages_conversation_time_idx").on(table.conversationId, table.createdAt),

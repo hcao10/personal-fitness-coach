@@ -73,6 +73,7 @@ export function recommendReview(metrics: ReviewMetrics): ReviewRecommendation {
 export {
   assessSafety, coachSafetyFlags, safetyGuidance, actionsAllowedUnderRisk,
   SAFETY_PATTERNS, SAFETY_GUIDANCE, PAIN_THRESHOLD, INTENSITY_RAISING_ACTIONS,
+  MEDICAL_DISCLAIMER, medicalDisclaimer,
   type SafetyAssessment, type SafetyLevel,
 } from "./safety.ts";
 
