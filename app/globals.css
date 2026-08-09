@@ -212,6 +212,9 @@ footer{padding:32px clamp(22px,6vw,96px);display:grid;grid-template-columns:auto
 .status-good{color:#637b0d;background:rgba(143,177,19,.12)}
 .status-bad{color:#b3422b;background:rgba(255,104,71,.12)}
 .admin-empty{padding:28px;text-align:center;font-size:0.5625rem;color:var(--muted)}
+.admin-subhead{margin:26px 0 6px;font-size:0.625rem;letter-spacing:.04em}
+.admin-note{margin:0 0 10px;font-size:0.5625rem;line-height:1.7;color:var(--muted);max-width:72ch}
+.admin-note b{color:var(--ink)}
 .admin-user-list{border-top:1px solid var(--line)}
 .admin-user-list article{display:grid;grid-template-columns:36px minmax(160px,1fr) 110px 70px 60px;gap:12px;align-items:center;padding:13px 4px;border-bottom:1px solid var(--line)}
 .admin-user-avatar{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;background:var(--acid);font-size:0.625rem;font-weight:800}

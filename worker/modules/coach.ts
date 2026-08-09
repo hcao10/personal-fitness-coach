@@ -4,6 +4,7 @@ import { EXERCISES, isExerciseAllowed, type CoachPlan, type Profile } from "../.
 import type { WorkerEnv } from "../platform";
 import type { StoredUser } from "../db";
 import { activeCycleForUser, localDateInTimezone, occurrenceForDate, profileForUser, recordGenerationRun, rescheduleOccurrence, savePlan, setOccurrenceMode } from "../db";
+import { observedLocale } from "../telemetry";
 import { generateCoachChat } from "../llm";
 import { consumeCapability, refundCapability } from "../product";
 import { coachMemorySnapshot, knowledgeForQuestion, updateConversationSummary } from "./coach-orchestrator";
@@ -173,7 +174,8 @@ export async function sendCoachMessage(env: WorkerEnv, user: StoredUser, convers
   }
   if (result) await recordGenerationRun(env, { userId: user.id, status: "succeeded", model: result.model, latencyMs: Date.now() - started,
     requestId: result.requestId, inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens,
-    task: "coach_chat", provider: result.provider, estimatedCostUsd: result.estimatedCostUsd });
+    task: "coach_chat", provider: result.provider, estimatedCostUsd: result.estimatedCostUsd,
+    locale, contentLocale: observedLocale(locale, result.reply) });
   if (result) await env.DB.prepare(`INSERT INTO coach_evaluation_runs (id,task,provider,model,schema_valid,safety_passed,action_valid,latency_ms,detail_json,created_at)
     VALUES (?,'coach_consult',?,?,1,1,1,?,'{}',?)`).bind(crypto.randomUUID(), result.provider, result.model, Date.now() - started, completedAt).run();
   await updateConversationSummary(env, user.id, conversationId).catch(() => undefined);

@@ -61,9 +61,34 @@
 | 4 | 服务端错误消息按 code 本地化（客户端翻译，避免 Worker isolate 竞态） | ☑ |
 | 5 | 其余产品页（today/coach/nutrition/progress/account/pricing/onboarding/exercises，约 1000 条） | ☐ |
 | 6 | 移动端接入同一词表 | ☐ |
-| 7 | LLM 提示与 `_zh`/`_en` 结构化 schema 泛化为按 locale | ☐ |
+| 7 | LLM 提示与 `_zh`/`_en` 结构化 schema 泛化为按 locale | ◐ 2026-08-09（见下方分步） |
 | 8 | 按语言的安全分诊 + 上线闸门测试 | ☑ 2026-08-09 |
 | 9 | 停止把中文写进数据库（计划变更摘要、复盘解释、knowledge_articles 无 locale 列）、按语言的法律文档 | ☐ |
+
+## 阶段 7：LLM 按 locale（分步）
+
+核心结论一句话：**人审过的内容可以多语言；模型写的内容单语言 + 记录创作语言。**
+
+由此推出的几条硬规则（都有对应的代码或测试保证）：
+
+- 字段名不得编码语言。`summary_zh`/`summary_en` → `summary` + `content_locale`。
+- 指令层一律英文，只有「输出语言指令 + 语域说明 + 术语表」按 locale 变化。翻译整份系统提示等于把每条安全规则复制 N 份，改一份就等于只改了一份。测试断言各 locale 的契约段逐字节相同。
+- 语言核验以脚本比例为准，模型自报的 `content_locale` 只作交叉验证——模型若无视输出指令，同样会照抄它被告知的 locale。
+- **切换语言时绝不机器翻译已存内容。** 对医疗相邻文本做无 schema、无安全复检的再生成，是这套设计里被否得最坚决的一条。
+- **不回填历史 `plan_json` 的双语内容。** `users.locale` 可变，数据库没有诚实的办法判断当初哪一份是权威版本。
+
+| 步骤 | 内容 | 状态 |
+|---|---|---|
+| L7-0 | 类型地基：`Localized` 别名收敛、`toLocale()` 取代 6 处内联三元、`MealCandidate` 三份定义归一到 api-contracts | ☑ 2026-08-09 |
+| L7-1 | `worker/prompts/` 模块化（契约/输出指令/语域/术语表）+ locale 贯通 + `PROMPT_VERSION` 指纹测试 | ☑ 2026-08-09 |
+| L7-2 | 脚本比例语言检测 + 迁移 0012（`locale`/`content_locale`/`prompt_version`）+ admin 漂移面板（仅观测） | ☑ 2026-08-09 |
+| L7-3 | `coach_chat` 单语言化：schema 回显 `content_locale`、`coach_messages.content_locale`、流式先缓冲后嗅探 | ☐ |
+| L7-4 | `meal_vision` 单语言化：`nameZh`/`nameEn` → `name` + `contentLocale` | ☐ |
+| L7-5 | `training_plan` 单语言化：先部署容错读取，同一次部署把缓存键改为 `sha256({profile, locale, promptVersion})` | ☐ |
+| L7-6 | 停止把中文写进确定性字符串（计划变更摘要等）；客户端 locale 贯通（含移动端） | ☐ |
+| L7-7 | 评测集：每个任务 × 每个 locale 的最小回归样本 | ☐ |
+
+> L7-2 只观测不拦截是刻意的：在知道漂移率之前就重试，等于花钱重跑本来没问题的生成。admin 面板把「未检出」与「偏差」分列统计——文本太短无法判断是未知，不是出错。
 
 ## 待你决策的设计问题
 

@@ -75,3 +75,8 @@ export {
   SAFETY_PATTERNS, SAFETY_GUIDANCE, PAIN_THRESHOLD, INTENSITY_RAISING_ACTIONS,
   type SafetyAssessment, type SafetyLevel,
 } from "./safety.ts";
+
+export {
+  detectContentLocale, auditContentLocale, countScripts,
+  type LanguageVerdict, type LocaleAudit, type ScriptCounts,
+} from "./language.ts";

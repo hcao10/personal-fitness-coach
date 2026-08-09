@@ -25,6 +25,7 @@ type AdminOverview = {
   recentAudits: Record<string, any>[];
   aiRoutes: AiRoute[];
   foodSources: Array<{ source: string; title: string; license_name: string; license_url: string; status: string; commercial_use: number; redistribution: number; last_verified_at: string | null }>;
+  localeDrift: Array<{ task: string; locale: string; prompt_version: string | null; total: number; undetected: number; drifted: number }>;
   settings: Record<string, { value: unknown; updatedBy: string | null; updatedAt: string }>;
 };
 
@@ -194,6 +195,19 @@ export default function AdminDashboard() {
           <span>{run.model}</span><span>{(run.latencyMs / 1000).toFixed(1)}s</span>
           <code>{run.errorCode || run.requestId || "—"}</code><time>{dateTime(run.createdAt)}</time>
         </article>) : <div className="admin-empty">还没有生成记录。</div>}
+      </div>
+      <h3 className="admin-subhead">输出语言核对（近 30 天）</h3>
+      <p className="admin-note">
+        按脚本比例检测模型实际写出的语言，与请求语言比对。<b>未检出</b>不等于出错——文本太短或语言无法区分时不做判断，
+        这一列只统计“无法判断”，不计入偏差。当前仅观测，不重试、不拦截。
+      </p>
+      <div className="admin-table">
+        <div className="admin-table-head"><span>任务</span><span>请求语言</span><span>提示词版本</span><span>总数</span><span>偏差 / 未检出</span></div>
+        {overview?.localeDrift?.length ? overview.localeDrift.map((row) => <article key={`${row.task}-${row.locale}-${row.prompt_version}`}>
+          <b className={Number(row.drifted) > 0 ? "status-warn" : "status-good"}>{row.task}</b>
+          <span>{row.locale}</span><span>{row.prompt_version || "—"}</span><span>{row.total}</span>
+          <code>{row.drifted} / {row.undetected}</code>
+        </article>) : <div className="admin-empty">还没有带语言标记的生成记录。迁移 0012 应用后才会开始累积。</div>}
       </div>
     </section>
 

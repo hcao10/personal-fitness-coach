@@ -686,6 +686,7 @@ export async function adminOverview(env: WorkerEnv) {
     failedMealAnalyses, lowConfidenceMeals, aiCost, recentBilling, recentAudits, routes, redemptions,
     onboardingCompleted, coachConversations, coachMessages, weeklyReviews, acceptedReviews, devices, maintenance,
     workoutSets, beginnerProfiles, hypertrophyProfiles, foodSearches, zeroFoodSearches, pendingFoodCorrections, customFoods, foodSources,
+    localeDrift,
   ] = await Promise.all([
     db.prepare("SELECT COUNT(*) AS value FROM users").first<{ value: number }>(),
     db.prepare("SELECT COUNT(*) AS value FROM users WHERE status = 'active'").first<{ value: number }>(),
@@ -734,6 +735,18 @@ export async function adminOverview(env: WorkerEnv) {
     db.prepare("SELECT COUNT(*) AS value FROM food_corrections WHERE status='pending'").first<{ value: number }>(),
     db.prepare("SELECT COUNT(*) AS value FROM canonical_foods WHERE source_kind='user' AND status='active'").first<{ value: number }>(),
     db.prepare("SELECT source,title,license_name,license_url,attribution_text,commercial_use,redistribution,status,last_verified_at,updated_at FROM food_source_licenses ORDER BY source").all<Record<string, unknown>>(),
+    // Language drift, per task and requested locale. `undetected` is counted
+    // separately from `drifted` on purpose: a run whose output was too short to
+    // measure is unknown, not wrong, and folding the two together would invent
+    // a failure rate out of missing data.
+    db.prepare(`SELECT task, locale, prompt_version,
+        COUNT(*) AS total,
+        SUM(CASE WHEN content_locale IS NULL THEN 1 ELSE 0 END) AS undetected,
+        SUM(CASE WHEN content_locale IS NOT NULL AND content_locale <> locale THEN 1 ELSE 0 END) AS drifted
+      FROM generation_runs
+      WHERE status='succeeded' AND locale IS NOT NULL AND created_at >= ?
+      GROUP BY task, locale, prompt_version ORDER BY drifted DESC, total DESC LIMIT 20`)
+      .bind(new Date(Date.now() - 30 * 86_400_000).toISOString()).all<Record<string, unknown>>(),
   ]);
   const now = Date.now();
   const daysAgo = (days: number) => new Date(now - days * 86_400_000).toISOString();
@@ -830,6 +843,7 @@ export async function adminOverview(env: WorkerEnv) {
     aiRoutes: (routes.results || []).map((row) => ({ ...row, enabled: Boolean(row.enabled) })),
     recentMaintenance: maintenance.results || [],
     foodSources: foodSources.results || [],
+    localeDrift: localeDrift.results || [],
   };
 }
 

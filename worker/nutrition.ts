@@ -318,6 +318,9 @@ export async function analyzeMeal(env: WorkerEnv, user: StoredUser, mealId: stri
       latencyMs: Date.now() - startedAt, requestId: result.requestId,
       inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens,
       estimatedCostUsd: result.estimatedCostUsd,
+      // As with training_plan: the candidate names are bilingual, so there is no
+      // single content language to record until this task goes single-locale.
+      locale: toLocale(user.locale),
     }).catch((error) => console.error("generation_run_write_failed", "meal_vision", error instanceof Error ? error.message : "UNKNOWN"));
     const suggestions: Array<NutritionReference | null> = [];
     for (const candidate of result.candidates.slice(0, 3)) {

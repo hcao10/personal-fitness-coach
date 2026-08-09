@@ -128,10 +128,17 @@ export const generationRuns = sqliteTable("generation_runs", {
   provider: text("provider").notNull().default("openai"),
   estimatedCostUsd: real("estimated_cost_usd").notNull().default(0),
   cacheHit: integer("cache_hit", { mode: "boolean" }).notNull().default(false),
+  /** Locale requested for this call. */
+  locale: text("locale"),
+  /** Locale detected in the output; NULL when detection refused, which is not a mismatch. */
+  contentLocale: text("content_locale"),
+  /** PROMPT_VERSION from worker/prompts. */
+  promptVersion: text("prompt_version"),
   createdAt: text("created_at").notNull(),
 }, (table) => [
   index("generation_runs_time_idx").on(table.createdAt),
   index("generation_runs_status_time_idx").on(table.status, table.createdAt),
+  index("generation_runs_locale_idx").on(table.task, table.locale, table.contentLocale, table.createdAt),
 ]);
 
 export const siteSettings = sqliteTable("site_settings", {

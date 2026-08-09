@@ -458,6 +458,10 @@ async function planRequest(request: Request, env: WorkerEnv): Promise<Response> 
       task: "training_plan",
       provider: result.provider,
       estimatedCostUsd: result.estimatedCostUsd,
+      // content_locale stays null while the plan schema is bilingual: the output
+      // contains both languages, so "which language is this" has no answer to
+      // record. It gains one when training_plan goes single-locale.
+      locale: toLocale(user.locale),
     }).catch(() => undefined);
     return json({ ...publicResult, quota, persisted: Boolean(planId) });
   } catch (error) {
