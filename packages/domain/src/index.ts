@@ -68,17 +68,10 @@ export function recommendReview(metrics: ReviewMetrics): ReviewRecommendation {
   };
 }
 
-// Coach actions that would raise training stress. Blocked whenever either
-// safety layer (keyword screen or model classification) reports high risk.
-export const INTENSITY_RAISING_ACTIONS = new Set(["adjust_load", "plan_adjustment"]);
-
-export function actionsAllowedUnderRisk<T extends { type: string }>(actions: T[], highRisk: boolean): T[] {
-  return highRisk ? actions.filter((action) => !INTENSITY_RAISING_ACTIONS.has(action.type)) : actions;
-}
-
-export function coachSafetyFlags(text: string): { highRisk: boolean; pain: number | null; message?: string } {
-  const painMatch = text.match(/(?:疼痛|痛|pain)\s*(?:为|是|[:：])?\s*(\d{1,2})/i);
-  const pain = painMatch ? Math.min(10, Number(painMatch[1])) : null;
-  const highRisk = Boolean(pain !== null && pain >= 4) || /(胸痛|晕厥|呼吸困难|无法承重|sharp chest pain|faint|cannot bear weight)/i.test(text);
-  return highRisk ? { highRisk, pain, message: "请停止相关训练。若出现胸痛、晕厥、呼吸困难、无法承重或持续加重的疼痛，请及时寻求医疗帮助。" } : { highRisk, pain };
-}
+// Safety policy lives in ./safety.ts, where it is per-language and severity-
+// graded. Re-exported here so existing importers keep working.
+export {
+  assessSafety, coachSafetyFlags, safetyGuidance, actionsAllowedUnderRisk,
+  SAFETY_PATTERNS, SAFETY_GUIDANCE, PAIN_THRESHOLD, INTENSITY_RAISING_ACTIONS,
+  type SafetyAssessment, type SafetyLevel,
+} from "./safety.ts";

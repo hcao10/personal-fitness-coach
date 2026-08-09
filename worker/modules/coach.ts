@@ -1,4 +1,4 @@
-import { coachSafetyFlags } from "../../packages/domain/src";
+import { actionsAllowedUnderRisk, assessSafety, safetyGuidance } from "../../packages/domain/src";
 import { EXERCISES, isExerciseAllowed, type CoachPlan, type Profile } from "../../packages/coach-core/src";
 import type { WorkerEnv } from "../platform";
 import type { StoredUser } from "../db";
@@ -8,11 +8,6 @@ import { consumeCapability, refundCapability } from "../product";
 import { coachMemorySnapshot, knowledgeForQuestion, updateConversationSummary } from "./coach-orchestrator";
 
 function parseJson<T>(value: string | null): T | null { try { return value ? JSON.parse(value) as T : null; } catch { return null; } }
-
-const SAFETY_GUIDANCE = {
-  zh: "请停止引发不适的动作。若出现胸痛、晕厥、呼吸困难、无法承重或持续加重的疼痛，请及时寻求医疗帮助。以上建议不是医疗诊断。",
-  en: "Stop any movement that causes discomfort. Seek timely medical help for chest pain, fainting, breathing difficulty, inability to bear weight, or pain that keeps worsening. This guidance is not a medical diagnosis.",
-} as const;
 
 export async function listConversations(env: WorkerEnv, userId: string) {
   if (!env.DB) throw new Error("DATABASE_NOT_CONFIGURED");
@@ -107,38 +102,45 @@ export async function sendCoachMessage(env: WorkerEnv, user: StoredUser, convers
   const now = new Date().toISOString(); const userMessageId = crypto.randomUUID();
   await env.DB.prepare(`INSERT INTO coach_messages (id,conversation_id,user_id,role,content,client_mutation_id,created_at)
     VALUES (?,?,?,'user',?,?,?)`).bind(userMessageId, conversationId, user.id, message, input.clientMutationId || null, now).run();
-  const flags = coachSafetyFlags(message);
+  const locale = user.locale === "en" ? "en" : "zh";
+  const triage = assessSafety(message);
+  // Severity decides whether the model is consulted at all:
+  //  - emergency (chest pain, fainting, cannot bear weight): the only correct
+  //    answer is stop and seek help, so the model is not involved;
+  //  - caution (pain at or above the threshold): the user gets a real answer —
+  //    refusing to help someone with a sore knee just sends them to guess alone
+  //    — with guidance appended and every intensity increase withheld.
+  const emergency = triage.level === "emergency";
   let result: Awaited<ReturnType<typeof generateCoachChat>> | null = null;
-  let reply = flags.highRisk ? flags.message! : "";
+  let reply = emergency ? safetyGuidance(locale) : "";
   const started = Date.now();
   const knowledge = await knowledgeForQuestion(env, message);
-  if (flags.highRisk) {
+  if (triage.highRisk) {
     await env.DB.prepare(`INSERT INTO coach_evaluation_runs (id,task,provider,model,schema_valid,safety_passed,action_valid,latency_ms,detail_json,created_at)
-      VALUES (?,'coach_consult','rules','safety-policy',1,0,1,0,?,?)`).bind(crypto.randomUUID(), JSON.stringify({ blocked: true, pain: flags.pain }), now).run();
+      VALUES (?,'coach_consult','rules','safety-policy',1,0,1,0,?,?)`)
+      .bind(crypto.randomUUID(), JSON.stringify({ level: triage.level, blocked: emergency, pain: triage.pain, matched: triage.matched }), now).run();
   }
-  if (!flags.highRisk) {
+  if (!emergency) {
     const quota = await consumeCapability(env, user.id, "coach.chat");
     if (!quota.ok) throw new Error("COACH_LIMIT_REACHED");
     try {
       const history = (await conversationMessages(env, user.id, conversationId)).slice(-12).map((item) => ({ role: item.role, content: item.content }));
-      result = await generateCoachChat(env, { message, locale: user.locale === "en" ? "en" : "zh", context: await buildContext(env, user, conversationId, quota.tier), history, knowledge, safetyIdentifier: user.id, onDelta: input.onDelta }, quota.tier);
+      result = await generateCoachChat(env, { message, locale, context: await buildContext(env, user, conversationId, quota.tier), history, knowledge, safetyIdentifier: user.id, onDelta: input.onDelta }, quota.tier);
       reply = result.reply;
-      // Second safety layer: the model catches paraphrased risk the keyword
-      // screen misses ("my knee is a 7 out of 10"). Unlike the keyword screen
-      // the answer is kept — silently discarding a reply to someone reporting
-      // pain helps nobody — but the stop-and-seek-help guidance is appended and
-      // intensity-raising actions were already stripped in the LLM layer.
-      if (result.safety.highRisk) {
-        reply = `${reply}\n\n${SAFETY_GUIDANCE[user.locale === "en" ? "en" : "zh"]}`;
-        if (input.onDelta) input.onDelta(`\n\n${SAFETY_GUIDANCE[user.locale === "en" ? "en" : "zh"]}`);
+      // Guidance is appended when either layer sees risk: the keyword screen for
+      // an explicit score, the model for paraphrase it cannot match.
+      if (result.safety.highRisk || triage.highRisk) {
+        const guidance = safetyGuidance(locale);
+        reply = `${reply}\n\n${guidance}`;
+        if (input.onDelta) input.onDelta(`\n\n${guidance}`);
         await env.DB.prepare(`INSERT INTO coach_evaluation_runs (id,task,provider,model,schema_valid,safety_passed,action_valid,latency_ms,detail_json,created_at)
           VALUES (?,'coach_consult',?,?,1,0,1,?,?,?)`)
           .bind(crypto.randomUUID(), result.provider, result.model, Date.now() - started,
-            JSON.stringify({ modelFlagged: true, category: result.safety.category, detail: result.safety.detail }), new Date().toISOString()).run();
+            JSON.stringify({ modelFlagged: result.safety.highRisk, keywordLevel: triage.level, category: result.safety.category, detail: result.safety.detail }), new Date().toISOString()).run();
       }
     } catch (error) { await refundCapability(env, user.id, "coach.chat"); throw error; }
   }
-  if (flags.highRisk && input.onDelta) input.onDelta(reply);
+  if (emergency && input.onDelta) input.onDelta(reply);
   const assistantId = crypto.randomUUID(); const completedAt = new Date().toISOString();
   const metadata = result ? { intent: result.intent, basis: result.basis, limitations: result.limitations,
     sources: knowledge.filter((source) => result!.sourceIds.includes(source.id)).map(({ id, title, publisher, url }) => ({ id, title, publisher, url })) }
@@ -152,7 +154,10 @@ export async function sendCoachMessage(env: WorkerEnv, user: StoredUser, convers
   await env.DB.batch(statements);
   const actions = [];
   const activeCycle = await activeCycleForUser(env, user.id);
-  for (const action of result?.actions || []) {
+  // The LLM layer already filtered on its own safety flag; this applies the
+  // keyword screen's verdict too, so a stated pain score withholds intensity
+  // increases even when the model did not flag the message itself.
+  for (const action of actionsAllowedUnderRisk(result?.actions || [], triage.highRisk)) {
     const id = crypto.randomUUID(); const payload = { title: action.title, description: action.description, before: action.before, after: action.after,
       reason: action.reason, impact: action.impact, reversible: action.reversible, exerciseId: action.exercise_id || null,
       replacementExerciseId: action.replacement_exercise_id || null, durationMinutes: action.duration_minutes || null,

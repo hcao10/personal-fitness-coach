@@ -62,7 +62,7 @@
 | 5 | 其余产品页（today/coach/nutrition/progress/account/pricing/onboarding/exercises，约 1000 条） | ☐ |
 | 6 | 移动端接入同一词表 | ☐ |
 | 7 | LLM 提示与 `_zh`/`_en` 结构化 schema 泛化为按 locale | ☐ |
-| 8 | 按语言的安全分诊（当前正则只认中英，西语用户报胸痛不触发——**这是加语言前的硬阻塞**） | ☐ |
+| 8 | 按语言的安全分诊 + 上线闸门测试 | ☑ 2026-08-09 |
 | 9 | 停止把中文写进数据库（计划变更摘要、复盘解释、knowledge_articles 无 locale 列）、按语言的法律文档 | ☐ |
 
 ## 待你决策的设计问题
