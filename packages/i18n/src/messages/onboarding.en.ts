@@ -133,7 +133,7 @@ export const onboardingEn = {
   consentText: "I understand that Cmine Fit gives general training and nutrition information and does not replace medical diagnosis; I will stop the exercise involved if I feel abnormal pain.",
 
   // Footer navigation shared by every step.
-  back: "← Back",
+  back: "Back",
   saving: "Saving…",
   confirmAndGenerate: "Confirm and generate my plan",
   saveAndContinue: "Save and continue",

@@ -85,7 +85,7 @@ export default function PlanClient() {
   const onAskCoach = useCallback((context: CoachContext) => { setViewerIndex(null); setCoachRequest(context); }, []);
 
   return (
-    <ProductShell active="" eyebrow={t("product.plan.eyebrow")} title={t("product.plan.title")}
+    <ProductShell active="/today" eyebrow={t("product.plan.eyebrow")} title={t("product.plan.title")}
       action={<Link className="header-chip" href="/onboarding">{t("product.plan.adjust")}</Link>}>
       <EntryGate
         entry={forcedGuest ? { status: "guest", reason: "accounts_not_configured" } : probe.entry}
@@ -100,7 +100,7 @@ export default function PlanClient() {
               <section className="plan-empty">
                 <h2>{t("product.plan.emptyTitle")}</h2>
                 <p>{t("product.plan.emptyBody")}</p>
-                <Link className="primary-cta" href="/onboarding">{t("product.plan.emptyCta")} <b aria-hidden="true"></b></Link>
+                <Link className="primary-cta" href="/onboarding">{t("product.plan.emptyCta")}</Link>
               </section>
             );
           }
@@ -135,9 +135,9 @@ export default function PlanClient() {
                 </dl>
                 <div className="plan-actions">
                   {accepted
-                    ? <Link className="primary-cta" href="/today">{t("product.plan.start")} <b aria-hidden="true"></b></Link>
+                    ? <Link className="primary-cta" href="/today">{t("product.plan.start")}</Link>
                     : <button type="button" className="primary-cta" disabled={busy} onClick={() => void accept()}>
-                        {busy ? t("product.plan.generating") : t("product.plan.accept")} <b aria-hidden="true"></b>
+                        {busy ? t("product.plan.generating") : t("product.plan.accept")}
                       </button>}
                   <Link className="secondary-cta" href="/onboarding">{t("product.plan.adjust")}</Link>
                 </div>

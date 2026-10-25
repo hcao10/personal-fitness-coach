@@ -1,3 +1,4 @@
+import { refreshZh, refreshEn } from "./refresh.ts";
 import type { Locale } from "../locales.ts";
 import type { Widen } from "./widen.ts";
 import { homeZh } from "./home.zh.ts";
@@ -30,8 +31,8 @@ import { productEn } from "./product.en.ts";
 // them. Adding a locale therefore cannot be done halfway.
 export const zh = {
   nav: {
-    today: "今日",
-    coach: "Coach",
+    today: "今日训练",
+    coach: "教练",
     nutrition: "饮食",
     progress: "进度",
     account: "我的",
@@ -163,6 +164,7 @@ export const zh = {
   // The core loop: entry states, exercise viewer, plan overview, coach dock and
   // the session player.
   product: productZh,
+  refresh: refreshZh,
 } as const;
 
 export type Messages = Widen<typeof zh>;
@@ -289,6 +291,7 @@ export const en = {
   exercises: exercisesEn,
   auth: authEn,
   product: productEn,
+  refresh: refreshEn,
 } as const satisfies Messages;
 
 export const MESSAGES: Record<Locale, Messages> = { zh, en };

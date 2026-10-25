@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ProductShell from "../../components/product-shell";
 import { useLocale } from "../../lib/i18n-provider";
@@ -222,6 +223,7 @@ export default function TodayClient() {
             <>
               {!playing && !finishing && !advice && (
                 <section className="today-hero">
+                  <div className="today-overview"><div className="today-overview-copy">
                   <p className="today-date">{new Date(`${scheduledDate}T12:00:00`).toLocaleDateString(locale === "zh" ? "zh-CN" : "en-US", { month: "long", day: "numeric", weekday: "long" })}</p>
                   <h2>{pick(day.title, locale)}</h2>
                   <p className="today-focus">{pick(day.focus, locale)}</p>
@@ -235,6 +237,7 @@ export default function TodayClient() {
                     <Icon name="play" />{completedSets > 0 ? t("product.workout.resumeSession") : t("product.workout.startSession")}
                   </button>
                   <Link className="today-adjust" href={`/coach?${encodeCoachContext({ intent: "free_text", planId: record.id, dayIndex, occurrenceId: occurrence?.occurrenceId ?? undefined, baseVersionId: occurrence?.versionId })}`}><Icon name="coach" />{t("product.design.changeToday")}</Link></div>
+                  </div><div className="today-overview-art"><Image src="/images/brand/calm-strength-hero.webp" alt={t("refresh.today.equipmentAlt")} width={1200} height={800} priority unoptimized /></div></div>
 
                   {day.variants && <div className="today-variants" role="radiogroup" aria-label={t("today.versionsAria")}>
                     {(["standard", "short", "recovery"] as const).map((variant) => (
@@ -246,6 +249,7 @@ export default function TodayClient() {
                     ))}
                   </div>}
 
+                  <h3 className="today-movements-heading">{t("refresh.today.movementList")}</h3>
                   <ul className="today-preview">
                     {exercises.map((view, index) => (
                       <li key={view.id}>
@@ -259,6 +263,7 @@ export default function TodayClient() {
                       </li>
                     ))}
                   </ul>
+                  <div className="today-guidance"><Icon name="plan" /><div><h3>{t("refresh.today.guideTitle")}</h3><p>{t("refresh.today.guideBody")}</p><Link className="fit-text-link" href="/exercises">{t("refresh.today.guideLink")}</Link></div></div>
                 </section>
               )}
 

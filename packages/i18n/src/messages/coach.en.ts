@@ -127,7 +127,7 @@ export const coachEn = {
   // Coach memory page
   memoryEyebrow: "COACH MEMORY / YOUR CONTROLS",
   memoryTitle: "You decide what Coach gets to know",
-  backToCoach: "← Back to Coach",
+  backToCoach: "Back to Coach",
   memoryLoading: "Loading your personalization settings…",
 
   personalizationSection: "01 / How personalization works",

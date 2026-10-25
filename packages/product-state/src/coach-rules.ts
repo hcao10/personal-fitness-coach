@@ -102,7 +102,7 @@ export function planReasonLine(reason: PlanReason, locale: Locale): string {
         : `About ${reason.minutes} minutes and ${reason.exercises} movements per session — derived from the duration you chose, not a fixed template.`;
     case "weekly_sets":
       return zh
-        ? `每个主要肌群每周 ${reason.min}–${reason.max} 组 —— 对应「${reason.experience}」经验水平的剂量区间。`
+        ? `每个主要肌群每周 ${reason.min}–${reason.max} 组 —— 对应「${({ beginner: "新手", intermediate: "进阶", advanced: "高级" })[reason.experience]}」经验水平的剂量区间。`
         : `${reason.min}–${reason.max} weekly sets per major muscle — the dose range for "${reason.experience}" experience.`;
     case "calorie_delta":
       return zh
@@ -110,7 +110,7 @@ export function planReasonLine(reason: PlanReason, locale: Locale): string {
         : `A daily calorie offset of ${reason.delta > 0 ? "+" : ""}${reason.delta} kcal, never below the ${reason.floor} kcal floor.`;
     case "equipment":
       return zh
-        ? `动作只从「${reason.equipment}」可用范围里选，训练地点按「${reason.location}」安排。`
+        ? `动作只从「${({ bodyweight: "徒手", dumbbell: "哑铃", gym: "健身房器械" })[reason.equipment]}」可用范围里选，训练地点按「${({ home: "居家", gym: "健身房", outdoors: "户外", mixed: "多个地点" })[reason.location]}」安排。`
         : `Movements are drawn only from what "${reason.equipment}" allows, scheduled for "${reason.location}".`;
     case "limitations":
       return zh

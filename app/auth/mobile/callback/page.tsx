@@ -1,3 +1,4 @@
+import { BrandMark } from "../../../shared/ui/brand-mark";
 import type { Metadata } from "next";
 import { resolveLocale } from "../../../lib/locale-server";
 import { translator } from "../../../lib/i18n";
@@ -14,7 +15,7 @@ export async function generateMetadata(): Promise<Metadata> {
 export default async function MobileCallbackFallback() {
   const t = translator(await resolveLocale());
   return <main className="mobile-callback-page">
-    <section>
+    <section><BrandMark size={44} />
       <span>{t("auth.secureSignInBadge")}</span>
       <h1>{t("auth.returnToAppHeading")}</h1>
       <p>{t("auth.returnToAppBody")}</p>

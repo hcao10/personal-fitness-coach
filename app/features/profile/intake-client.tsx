@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Icon } from "../../shared/ui/icon";
 import ProductShell from "../../components/product-shell";
 import { useLocale } from "../../lib/i18n-provider";
 import { beginCmineLogin } from "../../lib/auth";
@@ -143,7 +144,7 @@ export default function IntakeClient() {
   };
 
   return (
-    <ProductShell active="" eyebrow={t("onboarding.eyebrow")} title={t("onboarding.title")}>
+    <ProductShell active="/today" eyebrow={t("onboarding.eyebrow")} title={t("onboarding.title")}>
       <EntryGate
         entry={forcedGuest ? { status: "guest", reason: "accounts_not_configured" } : probe.entry}
         missingTables={probe.missingTables}
@@ -164,7 +165,7 @@ export default function IntakeClient() {
                     disabled={index > stepIndex}
                     onClick={() => { setStep(candidate); setShowIssues(false); }}
                   >
-                    <b aria-hidden="true">{index < stepIndex ? "✓" : index + 1}</b>
+                    <b aria-hidden="true">{index < stepIndex ? <Icon name="check" /> : index + 1}</b>
                     <span>{t(STEP_LABELS[candidate])}</span>
                   </button>
                 </li>
@@ -260,7 +261,6 @@ export default function IntakeClient() {
                   onClick={() => { setStep(INTAKE_STEPS[Math.max(0, stepIndex - 1)]); setShowIssues(false); }}>{t("onboarding.back")}</button>
                 <button type="button" className="primary-cta" disabled={busy} onClick={() => void advance()}>
                   {busy ? t("onboarding.saving") : stepIndex === INTAKE_STEPS.length - 1 ? t("onboarding.finish") : t("onboarding.saveAndContinue")}
-                  <b aria-hidden="true"></b>
                 </button>
               </div>
               {message && <p className="form-message" role="alert">{message}</p>}
@@ -306,7 +306,7 @@ function NumberField({ label, value, onChange, issue, hint }: {
   label: string; value: number | null; onChange: (value: number | null) => void; issue: string | null; hint?: string;
 }) {
   return (
-    <label className={issue ? "invalid" : ""}>
+    <label className={`intake-field${issue ? " invalid" : ""}`}>
       <span>{label}</span>
       <input
         type="number" inputMode="decimal" value={value ?? ""} aria-invalid={issue ? true : undefined}

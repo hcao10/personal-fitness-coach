@@ -125,7 +125,7 @@ export const coachZh = {
   // Coach memory page
   memoryEyebrow: "COACH MEMORY / 个性化控制",
   memoryTitle: "你决定 Coach 可以了解什么",
-  backToCoach: "← 返回 Coach",
+  backToCoach: "返回教练",
   memoryLoading: "正在读取个性化设置…",
 
   personalizationSection: "01 / 个性化方式",

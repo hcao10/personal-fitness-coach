@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useMemo } from "react";
+import { EQUIPMENT_LABELS } from "../../shared/ui/equipment-label";
 import { Dialog } from "../../shared/ui/dialog";
 import { useLocale } from "../../lib/i18n-provider";
 import { emitProductEvent } from "../../shared/analytics/product-events";
@@ -98,7 +99,7 @@ export function ExerciseViewer({ exercises, index, onIndexChange, onClose, equip
       <div className="exercise-viewer-body">
         <dl className="exercise-viewer-facts">
           <div><dt>{t("product.viewer.target")}</dt><dd>{pick(enriched.target, locale) || "—"}</dd></div>
-          <div><dt>{t("product.viewer.equipment")}</dt><dd>{({ gym: locale === 'zh' ? '健身房器械' : 'Gym', dumbbell: locale === 'zh' ? '哑铃' : 'Dumbbells', bodyweight: locale === 'zh' ? '自重' : 'Bodyweight' } as Record<string, string>)[enriched.equipment] || enriched.equipment}</dd></div>
+          <div><dt>{t("product.viewer.equipment")}</dt><dd>{EQUIPMENT_LABELS[enriched.equipment] ? t(EQUIPMENT_LABELS[enriched.equipment]) : enriched.equipment}</dd></div>
           {enriched.prescription && (
             <div>
               <dt>{t("product.viewer.prescriptionLabel")}</dt>

@@ -211,14 +211,13 @@ export default function AccountDashboard() {
   };
 
   if (loading) {
-    return <main className="account-shell"><div className="account-loading"><span>C</span><p>{t("account.loading")}</p></div></main>;
+    return <ProductShell active="/account" title={t("account.title")} eyebrow="CMINE FIT"><div className="account-loading" role="status"><BrandMark /><p>{t("account.loading")}</p></div></ProductShell>;
   }
 
   if (signedOut || !data) {
-    return <main className="account-shell">
-      <header className="account-public-header"><Link className="brand" href="/"><BrandMark /><span>CMINE <b>FIT</b></span></Link></header>
+    return <ProductShell active="/account" title={t("account.title")} eyebrow="CMINE FIT">
       <section className="account-signin">
-        <span>YOUR TRAINING, CONNECTED</span>
+        <BrandMark size={44} /><span>{t("refresh.home.accountLabel")}</span>
         <h1>{t("account.signinTitleA")}<br />{t("account.signinTitleB")}</h1>
         <p>{t("account.signinText")}</p>
         {/* Only offered when signing in can actually happen. On a deployment
@@ -226,11 +225,11 @@ export default function AccountDashboard() {
             error toast; the core training path needs no account, so the honest
             answer is to say so and point at it. */}
         {accountsConfigured
-          ? <button onClick={() => void beginCmineLogin("/account", localeRef.current)}><b>C</b> {t("account.signinButton")} <em></em></button>
+          ? <button onClick={() => void beginCmineLogin("/account", localeRef.current)}><b>C</b> {t("account.signinButton")} </button>
           : <p className="account-signin-unavailable">{t("product.entry.accountOnlyUnavailable")}</p>}
         <Link href={accountsConfigured ? "/" : "/plan"}>{accountsConfigured ? t("account.signinBackHome") : t("product.entry.backToPlan")}</Link>
       </section>
-    </main>;
+    </ProductShell>;
   }
 
   return <ProductShell active="/account" title={t("account.title")} eyebrow={data.user.email || "CMINE FIT"}
@@ -238,6 +237,8 @@ export default function AccountDashboard() {
     <section className="account-content">
       <nav className="account-section-nav" aria-label={t("account.title")}>
         <a href="#plans">{t("account.planHistory")}</a><a href="#profile">{t("account.trainingProfile")}</a>
+        <a href="#progress">{t("account.bodyProgress")}</a><Link href="/coach/memory">{t("product.design.preferences")}</Link>
+        <a href="#notifications">{t("account.notificationsTitle")}</a><a href="#habit">{t("account.habitTitle")}</a>
         <a href="#membership">{t("account.membership")}</a><a href="#account">{t("account.accountAndData")}</a>
       </nav>
 
@@ -253,7 +254,7 @@ export default function AccountDashboard() {
           {/* A plan that exists but carries no focus must not fall back to the
               no-plan line, which would be untrue for someone who has one. */}
           <p>{todayPlan ? (pick(todayPlan.focus, locale) || t("account.heroFocusFallback")) : t("account.heroNoPlanFocus")}</p>
-          {data.latestPlan ? <Link href="/today">{t("account.heroViewToday")} <b></b></Link> : <Link href="/onboarding">{t("account.createFirstPlan")} <b></b></Link>}
+          {data.latestPlan ? <Link href="/today">{t("account.heroViewToday")}</Link> : <Link href="/onboarding">{t("account.createFirstPlan")}</Link>}
         </div>
         <article>
           <small>TODAY</small>
@@ -270,7 +271,7 @@ export default function AccountDashboard() {
       </div>
 
       <section className="account-panel workout-feedback-panel" id="feedback">
-        <div className="account-section-title"><div><span>03 / TRAINING FEEDBACK</span><h2>{t("account.feedbackTitle")}</h2></div><p>{t("account.feedbackIntro")}</p></div>
+        <div className="account-section-title"><div><h2>{t("account.feedbackTitle")}</h2></div><p>{t("account.feedbackIntro")}</p></div>
         <div className="feedback-grid">
           <label><span>{t("account.feedbackDuration")}</span><div><input type="number" min="1" max="240" value={feedback.durationMinutes} onChange={(event) => setFeedback({ ...feedback, durationMinutes: Number(event.target.value) })} /><em>min</em></div></label>
           <label><span>{t("account.feedbackRpe")}</span><input type="range" min="1" max="10" value={feedback.rpe} onChange={(event) => setFeedback({ ...feedback, rpe: Number(event.target.value) })} /><b>{feedback.rpe}/10</b></label>
@@ -281,7 +282,7 @@ export default function AccountDashboard() {
       </section>
 
       <section className="account-panel" id="plans">
-        <div className="account-section-title"><div><span>04 / PLAN HISTORY</span><h2>{t("account.planHistory")}</h2></div><p>{t("account.planHistoryIntro")}</p></div>
+        <div className="account-section-title"><div><h2>{t("account.planHistory")}</h2></div><p>{t("account.planHistoryIntro")}</p></div>
         {data.plans.length ? <div className="plan-history">
           {data.plans.map((item, index) => {
             const insights = readPlanInsights(item.plan?.insights, locale);
@@ -296,7 +297,7 @@ export default function AccountDashboard() {
       </section>
 
       <section className="account-panel" id="progress">
-        <div className="account-section-title"><div><span>05 / PROGRESS</span><h2>{t("account.bodyProgress")}</h2></div><p>{t("account.progressIntro")}</p></div>
+        <div className="account-section-title"><div><h2>{t("account.bodyProgress")}</h2></div><p>{t("account.progressIntro")}</p></div>
         <div className="progress-layout">
           <div className="measurement-form">
             <h3>{t("account.measurementFormTitle")}</h3>
@@ -321,7 +322,7 @@ export default function AccountDashboard() {
       </section>
 
       <section className="account-panel" id="profile">
-        <div className="account-section-title"><div><span>06 / TRAINING PROFILE</span><h2>{t("account.trainingProfile")}</h2></div><p>{t("account.profileIntro")}</p></div>
+        <div className="account-section-title"><div><h2>{t("account.trainingProfile")}</h2></div><p>{t("account.profileIntro")}</p></div>
         <div className="profile-editor">
           <label><span>{t("account.profileSex")}</span><select value={profile.sex} onChange={(event) => setProfile({ ...profile, sex: event.target.value as Profile["sex"] })}><option value="female">{t("account.sexFemale")}</option><option value="male">{t("account.sexMale")}</option></select></label>
           <label><span>{t("account.profileAge")}</span><input type="number" value={profile.age} onChange={(event) => setProfile({ ...profile, age: Number(event.target.value) })} /></label>
@@ -343,7 +344,7 @@ export default function AccountDashboard() {
       </section>
 
       <section className="account-panel membership-panel" id="membership">
-        <div className="account-section-title"><div><span>07 / MEMBERSHIP</span><h2>{t("account.membership")}</h2></div><p>{t("account.membershipIntro")}</p></div>
+        <div className="account-section-title"><div><h2>{t("account.membership")}</h2></div><p>{t("account.membershipIntro")}</p></div>
         <div className="membership-current">
           <div><span>{t("account.currentPlan")}</span><h3>{data.product.membership.name}</h3><p>
             {/* Two independent counts cannot share one plural form, so each is
@@ -383,7 +384,7 @@ export default function AccountDashboard() {
           service, so a toggle here would be a control that cannot do anything —
           see docs/adr/0002. The adapter reports `unsupported`; this renders it. */}
       <section className="account-panel account-integrations-panel" id="integrations">
-        <div className="account-section-title"><div><span>07.8 / INTEGRATIONS</span><h2>{t("product.integrations.title")}</h2></div><p>{t("product.integrations.intro")}</p></div>
+        <div className="account-section-title"><div><h2>{t("product.integrations.title")}</h2></div><p>{t("product.integrations.intro")}</p></div>
         <article className="integration-row">
           <div><h3>{t("product.integrations.anybiteName")}</h3><p>{t("product.integrations.anybiteBody")}</p></div>
           <span className="integration-status">{t("product.integrations.statusUnsupported")}</span>
@@ -391,7 +392,7 @@ export default function AccountDashboard() {
       </section>
 
       <section className="account-panel account-data-panel" id="account">
-        <div className="account-section-title"><div><span>08 / ACCOUNT & DATA</span><h2>{t("account.accountAndData")}</h2></div><p>{t("account.accountDataIntro")}</p></div>
+        <div className="account-section-title"><div><h2>{t("account.accountAndData")}</h2></div><p>{t("account.accountDataIntro")}</p></div>
         <div className="account-data-actions">
           <article><div><h3>{t("account.exportTitle")}</h3><p>{t("account.exportBody")}</p></div><a href="/api/v1/export">{t("account.exportStart")} </a></article>
           <article className="danger"><div><h3>{t("account.deleteTitle")}</h3><p>{t("account.deleteBody")}</p></div><button onClick={() => void removeAccount()}>{t("account.deleteAction")}</button></article>
@@ -443,7 +444,7 @@ function NotificationPreferencesCard() {
   };
   if (!preferences) return null;
   return <section className="account-panel" id="notifications">
-    <div className="account-section-title"><div><span>07.6 / NOTIFICATIONS</span><h2>{t("account.notificationsTitle")}</h2></div><p>{t("account.notificationsIntro")}</p></div>
+    <div className="account-section-title"><div><h2>{t("account.notificationsTitle")}</h2></div><p>{t("account.notificationsIntro")}</p></div>
     <div className="account-data-actions">
       <article>
         <div>
@@ -505,7 +506,7 @@ function HabitCommitmentCard() {
     setMessage(response.ok ? t("account.habitSaved") : localizeApiError(body as ApiErrorBody | null, locale, t("account.habitSaveFailed")));
   };
   return <section className="account-panel" id="habit">
-    <div className="account-section-title"><div><span>07.5 / HABIT</span><h2>{t("account.habitTitle")}</h2></div><p>{t("account.habitIntro")}</p></div>
+    <div className="account-section-title"><div><h2>{t("account.habitTitle")}</h2></div><p>{t("account.habitIntro")}</p></div>
     <div className="account-data-actions">
       <article>
         <div>

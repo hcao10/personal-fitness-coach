@@ -1,3 +1,4 @@
+import { DocumentHeader } from "../components/document-header";
 import type { Metadata } from "next";
 import { resolveLocale } from "../lib/locale-server";
 
@@ -20,7 +21,8 @@ const sectionStyle = { maxWidth: 760, margin: "0 auto", padding: "48px 20px", li
 
 export default async function PrivacyPage() {
   const locale = await resolveLocale();
-  if (locale === "en") return <main style={sectionStyle}>
+  if (locale === "en") return <main className="legal-page" style={sectionStyle}>
+    <DocumentHeader locale={locale} />
     <p style={{ opacity: 0.7 }}>Privacy v2 · Updated August 20, 2026 · Alpha</p>
     <h1>Cmine Fit Privacy Notice</h1>
     <p><strong>Cmine Fit is currently an Alpha service. Features, data handling practices and this notice may change as testing continues.</strong></p>
@@ -53,7 +55,8 @@ export default async function PrivacyPage() {
     <p><a href="/disclaimer">Read the health disclaimer </a></p>
   </main>;
 
-  return <main style={sectionStyle}>
+  return <main className="legal-page" style={sectionStyle}>
+    <DocumentHeader locale={locale} />
     <p style={{ opacity: 0.7 }}>版本 privacy-v2 · 更新于 2026-08-20 · Alpha 测试</p>
     <h1>Cmine Fit 隐私说明</h1>
     <p><strong>Cmine Fit 目前处于 Alpha 测试阶段。随着测试推进，功能、数据处理方式和本说明可能调整。</strong></p>

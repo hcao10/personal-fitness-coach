@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import ProductShell from "../components/product-shell";
+import Link from "next/link";
+import { Icon } from "../shared/ui/icon";
 import { beginCmineLogin } from "../lib/auth";
 import { useLocale, useLocaleRef } from "../lib/i18n-provider";
 import { localizeApiError, type ApiErrorBody } from "../lib/api-error";
@@ -33,6 +35,8 @@ const isReviewKind = (value: unknown): value is ReviewKind =>
 export default function ProgressClient() {
   const { locale, t } = useLocale();
   const localeRef = useLocaleRef();
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [reviews, setReviews] = useState<Review[]>([]); const [recovery, setRecovery] = useState(3); const [sleep, setSleep] = useState(3); const [pain, setPain] = useState(0); const [busy, setBusy] = useState(false); const [message, setMessage] = useState("");
   const [drafts, setDrafts] = useState<MeasurementDraft[]>([]);
   const [measurement, setMeasurement] = useState({ weightKg: "", bodyFatPct: "", waistCm: "", note: "" });
@@ -59,7 +63,8 @@ export default function ProgressClient() {
     void fetch("/api/v1/reviews", { cache: "no-store" }).then(async (response) => {
       if (response.status === 401) { await beginCmineLogin("/progress", localeRef.current); return; }
       if (response.ok) setReviews((await response.json() as { reviews: Review[] }).reviews);
-    });
+      else setLoadError(true);
+    }).catch(() => setLoadError(true)).finally(() => setLoading(false));
   }, [localeRef]); const current = reviews[0];
   useEffect(() => { void fetch("/api/v1/record-drafts?type=measurement", { cache: "no-store" })
     .then((response) => response.ok ? response.json() : null)
@@ -80,12 +85,13 @@ export default function ProgressClient() {
     setBusy(false);
   };
   return <ProductShell active="/progress" eyebrow={t("progress.eyebrow")} title={t("progress.title")}>
-    <div className="progress-grid"><section className="review-card"><span>{t("progress.reviewEyebrow")}</span><h2>{current?.recommendation ? reviewTitle(current, t("progress.reviewPrompt")) : t("progress.reviewPrompt")}</h2>{current?.recommendation ? <><p>{reviewExplanation(current)}</p><div className="review-metrics"><article><b>{current.metrics?.adherencePct || 0}%</b><span>{t("progress.metricAdherence")}</span></article><article><b>{current.metrics?.completedSessions || 0}</b><span>{t("progress.metricSessions")}</span></article><article><b>{current.metrics?.averageRpe ?? "—"}</b><span>{t("progress.metricAverageRpe")}</span></article><article><b>{current.metrics?.maxPain || 0}/10</b><span>{t("progress.metricPeakPain")}</span></article></div>{current.recommendation.locked ? <>
+    <section className="fit-surface-intro"><Icon name="progress" /><div><h2>{t("refresh.progress.title")}</h2><p>{t("refresh.progress.body")}</p></div></section>
+    {loading ? <div className="entry-state" role="status">{t("refresh.progress.loading")}</div> : loadError ? <section className="entry-state" role="alert"><p>{t("refresh.progress.unavailable")}</p><button className="secondary-cta" onClick={() => window.location.reload()}>{t("common.retry")}</button></section> : !current ? <section className="review-card"><span>{t("progress.reviewEyebrow")}</span><h2>{t("refresh.progress.emptyTitle")}</h2><p>{t("refresh.progress.emptyBody")}</p><div className="review-empty-actions"><Link className="primary-cta" href="/today">{t("refresh.progress.train")}</Link><Link className="secondary-cta" href="/account#progress">{t("refresh.progress.measurements")}</Link></div></section> : <div className="progress-grid"><section className="review-card"><span>{t("progress.reviewEyebrow")}</span><h2>{current?.recommendation ? reviewTitle(current, t("progress.reviewPrompt")) : t("progress.reviewPrompt")}</h2>{current?.recommendation ? <><p>{reviewExplanation(current)}</p><div className="review-metrics"><article><b>{current.metrics?.adherencePct || 0}%</b><span>{t("progress.metricAdherence")}</span></article><article><b>{current.metrics?.completedSessions || 0}</b><span>{t("progress.metricSessions")}</span></article><article><b>{current.metrics?.averageRpe ?? "—"}</b><span>{t("progress.metricAverageRpe")}</span></article><article><b>{current.metrics?.maxPain || 0}/10</b><span>{t("progress.metricPeakPain")}</span></article></div>{current.recommendation.locked ? <>
         {current.recommendation.engine?.deloadRecommended && current.recommendation.engine.deloadReason && <p>{pick(current.recommendation.engine.deloadReason, locale)}</p>}
         <p>{t("progress.engineSummary", { count: current.recommendation.engine?.adjustmentCount || 0, stalled: (current.recommendation.engine?.stagnationCount || 0) > 0 ? t("progress.engineStagnation", { count: current.recommendation.engine!.stagnationCount! }) : "", teaser: pick(current.recommendation.engine?.teaser, locale) || "" })}</p>
         <div className="review-actions"><a className="review-generate" href="/pricing">{t("progress.unlockAdjustments")}</a></div>
       </> : <><ul>{reviewChanges(current).map((change) => <li key={change}>{change}</li>)}</ul>{current.status === "generated" && <div className="review-actions"><button onClick={() => void decide("reject")}>{t("progress.keepCurrentPlan")}</button><button onClick={() => void decide("accept")}>{t("progress.acceptAdjustments")}</button></div>}</>}</> : <><div className="review-sliders"><label>{t("progress.recoveryLabel")} <b aria-hidden="true">{recovery}/5</b><input type="range" aria-label={t("progress.recoveryLabel")} aria-valuetext={`${recovery} / 5`} min="1" max="5" value={recovery} onChange={(event) => setRecovery(Number(event.target.value))} /></label><label>{t("progress.sleepLabel")} <b aria-hidden="true">{sleep}/5</b><input type="range" aria-label={t("progress.sleepLabel")} aria-valuetext={`${sleep} / 5`} min="1" max="5" value={sleep} onChange={(event) => setSleep(Number(event.target.value))} /></label><label>{t("progress.painLabel")} <b aria-hidden="true">{pain}/10</b><input type="range" aria-label={t("progress.painLabel")} aria-valuetext={`${pain} / 10`} min="0" max="10" value={pain} onChange={(event) => setPain(Number(event.target.value))} /></label></div><button className="review-generate" disabled={busy} onClick={() => void generate()}>{busy ? t("progress.generating") : t("progress.generateReview")}</button></>}{message && <p className="form-message">{message}</p>}</section>
-      <aside className="review-history"><span>{t("progress.historyEyebrow")}</span>{reviews.slice(1).map((review) => <article key={review.id}><small>{review.weekStart}</small><b>{reviewTitle(review, t("progress.historyPlaceholderTitle"))}</b><em>{review.status}</em></article>)}{reviews.length <= 1 && <p>{t("progress.historyEmpty")}</p>}</aside></div>
+      <aside className="review-history"><span>{t("progress.historyEyebrow")}</span>{reviews.slice(1).map((review) => <article key={review.id}><small>{review.weekStart}</small><b>{reviewTitle(review, t("progress.historyPlaceholderTitle"))}</b><em>{review.status}</em></article>)}{reviews.length <= 1 && <p>{t("progress.historyEmpty")}</p>}</aside></div>}
     {drafts[0] && <section className="review-card" id="measurements">
       <span>{t("progress.measurementDraftEyebrow")}</span><h2>{drafts[0].payload.title || t("progress.measurementDraftTitle")}</h2>
       <p>{t("progress.measurementDraftBody")}</p>
@@ -98,7 +104,7 @@ export default function ProgressClient() {
       <div className="review-actions"><button disabled={busy} onClick={() => void decideMeasurement(drafts[0].id, "reject")}>{t("progress.rejectMeasurement")}</button><button disabled={busy || !measurement.weightKg} onClick={() => void decideMeasurement(drafts[0].id, "confirm")}>{t("progress.confirmMeasurement")}</button></div>
     </section>}
     {message && !current && <p className="form-message">{message}</p>}
-    <ProgressCharts />
+    {!loading && !loadError && <ProgressCharts />}
   </ProductShell>;
 }
 

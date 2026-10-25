@@ -85,7 +85,7 @@ test("translator resolves keys and interpolates", () => {
   const t = translator("en");
   assert.equal(t("nav.today"), "Today");
   assert.match(t("home.previewNote", { goal: "fat loss" }), /fat loss/);
-  assert.equal(translator("zh")("nav.today"), "今日");
+  assert.equal(translator("zh")("nav.today"), "今日训练");
 });
 
 // Grouping used to be a trap: MessageKey stopped at two levels, so a nested

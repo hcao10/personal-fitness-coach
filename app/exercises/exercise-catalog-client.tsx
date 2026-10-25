@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { EQUIPMENT_LABELS } from "../shared/ui/equipment-label";
 import ProductShell from "../components/product-shell";
 import { useLocale } from "../lib/i18n-provider";
 import { useEntry } from "../shared/api/capability-provider";
@@ -103,7 +104,7 @@ export default function ExerciseCatalogClient() {
     : [["bodyweight", "exercises.equipmentBodyweight"], ["dumbbell", "exercises.equipmentDumbbell"], ["barbell", "exercises.equipmentBarbell"], ["cable", "exercises.equipmentCable"], ["gym", "exercises.equipmentMachine"]] as const;
 
   return (
-    <ProductShell active="" eyebrow={t("exercises.eyebrow")} title={t("exercises.title")}
+    <ProductShell active="/today" eyebrow={t("exercises.eyebrow")} title={t("exercises.title")}
       action={<Link className="header-chip" href="/today">{t("exercises.backToToday")}</Link>}>
       <EntryGate entry={probe.entry} missingTables={probe.missingTables} onRetry={probe.refresh} onContinueLocal={() => submit()}>
         {() => (
@@ -133,7 +134,7 @@ export default function ExerciseCatalogClient() {
                   {/* The same stage as everywhere else, so the 150 movements
                       whose asset the catalog forgot now show their media too. */}
                   <ExerciseStage key={view.id} view={view} size="thumb" animate={false} />
-                  <small>{view.equipment}</small>
+                  <small>{EQUIPMENT_LABELS[view.equipment] ? t(EQUIPMENT_LABELS[view.equipment]) : view.equipment}</small>
                   <b>{pick(view.name, locale) || view.id}</b>
                   <p>{pick(view.target, locale)}</p>
                 </button>

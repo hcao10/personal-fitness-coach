@@ -107,7 +107,7 @@ export default function PricingClient() {
         <div className="plan-price"><strong>{t("pricing.freePrice")}</strong><small>{t("pricing.freePriceNote")}</small></div>
         <p>{t("pricing.freeSummary")}</p>
         <ul>{basicFeatures.map((feature) => <li key={feature}>{feature}</li>)}</ul>
-        <Link href="/#coach">{t("pricing.freeCta")}</Link>
+        <Link href="/onboarding">{t("pricing.freeCta")}</Link>
       </article>
 
       <article className="pro-plan">

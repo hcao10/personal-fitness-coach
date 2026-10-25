@@ -37,6 +37,11 @@ const labels: Record<string, MessageKey> = {
   food_preference: "coach.memoryKeyFoodPreference",
 };
 
+const profileValues: Record<string, Record<string, MessageKey>> = {
+  goal: { fat_loss: "onboarding.goalFatLoss", muscle_gain: "onboarding.goalMuscle", recomp: "onboarding.goalRecomp", arms: "onboarding.goalArms", strength: "onboarding.goalStrength" },
+  equipment: { bodyweight: "onboarding.equipmentBodyweight", dumbbell: "onboarding.equipmentDumbbell", gym: "onboarding.equipmentGym" },
+};
+
 export default function MemoryClient() {
   const { locale, t } = useLocale();
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
@@ -106,21 +111,21 @@ export default function MemoryClient() {
         <div className="section-heading"><span>{t("coach.personalizationSection")}</span><h2>{t("coach.personalizationHeading")}</h2><p>{t("coach.personalizationHint")}</p></div>
         <label className="setting-switch"><span><b>{t("coach.memoryToggle")}</b><small>{t("coach.memoryToggleHint")}</small></span><input type="checkbox" checked={snapshot.preferences.memoryEnabled} onChange={(event) => void savePreference({ memoryEnabled: event.target.checked })} /></label>
         <label className="setting-switch"><span><b>{t("coach.proactiveToggle")}</b><small>{t("coach.proactiveToggleHint")}</small></span><input type="checkbox" checked={snapshot.preferences.proactiveEnabled} onChange={(event) => void savePreference({ proactiveEnabled: event.target.checked })} /></label>
-        <div className="preference-options"><span>{t("coach.answerStyleLabel")}</span><button className={snapshot.preferences.coachingMode === "personalized" ? "active" : ""} onClick={() => void savePreference({ coachingMode: "personalized" })}>{t("coach.modePersonalized")}</button><button className={snapshot.preferences.coachingMode === "education" ? "active" : ""} onClick={() => void savePreference({ coachingMode: "education" })}>{t("coach.modeEducation")}</button></div>
-        <div className="preference-options"><span>{t("coach.toneLabel")}</span>{(["supportive", "direct", "concise"] as const).map((tone) => <button key={tone} className={snapshot.preferences.tone === tone ? "active" : ""} onClick={() => void savePreference({ tone })}>{tone === "supportive" ? t("coach.toneSupportive") : tone === "direct" ? t("coach.toneDirect") : t("coach.toneConcise")}</button>)}</div>
+        <div className="preference-options"><span>{t("coach.answerStyleLabel")}</span><button aria-pressed={snapshot.preferences.coachingMode === "personalized"} className={snapshot.preferences.coachingMode === "personalized" ? "active" : ""} onClick={() => void savePreference({ coachingMode: "personalized" })}>{t("coach.modePersonalized")}</button><button aria-pressed={snapshot.preferences.coachingMode === "education"} className={snapshot.preferences.coachingMode === "education" ? "active" : ""} onClick={() => void savePreference({ coachingMode: "education" })}>{t("coach.modeEducation")}</button></div>
+        <div className="preference-options"><span>{t("coach.toneLabel")}</span>{(["supportive", "direct", "concise"] as const).map((tone) => <button key={tone} aria-pressed={snapshot.preferences.tone === tone} className={snapshot.preferences.tone === tone ? "active" : ""} onClick={() => void savePreference({ tone })}>{tone === "supportive" ? t("coach.toneSupportive") : tone === "direct" ? t("coach.toneDirect") : t("coach.toneConcise")}</button>)}</div>
       </section>
 
       <section className="memory-panel">
         <div className="section-heading"><span>{t("coach.knowledgeSection")}</span><h2>{t("coach.knowledgeHeading")}</h2><p>{t("coach.knowledgeHint")}</p></div>
         <div className="memory-groups">
-          {snapshot.memories.length ? snapshot.memories.map((memory) => <article key={memory.id} className="memory-card"><div><span>{memory.type === "profile" ? t("coach.sourceProfile") : memory.type === "observed" ? t("coach.sourceObserved") : t("coach.sourceDeclared")}</span><small>{dateFormatter(locale).format(new Date(memory.updatedAt))}</small></div><b>{labels[memory.key] ? t(labels[memory.key]) : memory.key}</b><p>{memory.value}</p>{memory.type === "profile" ? <Link href="/account#profile">{t("coach.editInProfile")}</Link> : <button onClick={() => void remove(memory)}>{t("coach.deleteMemory")}</button>}</article>) : <div className="memory-empty">{t("coach.memoryEmpty")}</div>}
+          {snapshot.memories.length ? snapshot.memories.map((memory) => <article key={memory.id} className="memory-card"><div><span>{memory.type === "profile" ? t("coach.sourceProfile") : memory.type === "observed" ? t("coach.sourceObserved") : t("coach.sourceDeclared")}</span><small>{dateFormatter(locale).format(new Date(memory.updatedAt))}</small></div><b>{labels[memory.key] ? t(labels[memory.key]) : memory.key}</b><p>{memory.type === "profile" && profileValues[memory.key]?.[memory.value] ? t(profileValues[memory.key][memory.value]) : memory.value}</p>{memory.type === "profile" ? <Link href="/account#profile">{t("coach.editInProfile")}</Link> : <button onClick={() => void remove(memory)}>{t("coach.deleteMemory")}</button>}</article>) : <div className="memory-empty">{t("coach.memoryEmpty")}</div>}
         </div>
       </section>
 
       <section className={`memory-panel memory-add ${snapshot.pro ? "" : "locked"}`}>
         <div className="section-heading"><span>{t("coach.addSection")}</span><h2>{t("coach.addHeading")}</h2></div>
-        <select value={key} onChange={(event) => setKey(event.target.value)}><option value="schedule">{t("coach.memoryKeySchedule")}</option><option value="training_preference">{t("coach.memoryKeyTrainingPreference")}</option><option value="food_preference">{t("coach.memoryKeyFoodPreference")}</option><option value="travel">{t("coach.memoryKeyTravel")}</option><option value="other">{t("coach.memoryKeyOther")}</option></select>
-        <textarea value={value} onChange={(event) => setValue(event.target.value)} maxLength={500} placeholder={t("coach.addPlaceholder")} />
+        <select aria-label={t("coach.addHeading")} value={key} onChange={(event) => setKey(event.target.value)}><option value="schedule">{t("coach.memoryKeySchedule")}</option><option value="training_preference">{t("coach.memoryKeyTrainingPreference")}</option><option value="food_preference">{t("coach.memoryKeyFoodPreference")}</option><option value="travel">{t("coach.memoryKeyTravel")}</option><option value="other">{t("coach.memoryKeyOther")}</option></select>
+        <textarea aria-label={t("coach.addPlaceholder")} value={value} onChange={(event) => setValue(event.target.value)} maxLength={500} placeholder={t("coach.addPlaceholder")} />
         <button disabled={saving || !value.trim()} onClick={() => void addMemory()}>{saving ? t("coach.saving") : snapshot.pro ? t("coach.remember") : t("coach.proLocked")}</button>
         <small>{snapshot.pro ? t("coach.sensitiveHint") : t("coach.freeTierHint")}</small>
       </section>

@@ -124,7 +124,7 @@ export const onboardingZh = {
   consentText: "我理解 Cmine Fit 提供一般训练与营养信息，不替代医疗诊断；出现异常疼痛时会停止相关训练。",
 
   // Footer navigation shared by every step.
-  back: "← 返回",
+  back: "返回",
   saving: "正在保存…",
   confirmAndGenerate: "确认并生成完整计划",
   saveAndContinue: "保存并继续",

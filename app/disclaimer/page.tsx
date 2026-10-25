@@ -1,3 +1,4 @@
+import { DocumentHeader } from "../components/document-header";
 import type { Metadata } from "next";
 import { resolveLocale } from "../lib/locale-server";
 
@@ -14,7 +15,8 @@ const sectionStyle = { maxWidth: 760, margin: "0 auto", padding: "48px 20px", li
 
 export default async function DisclaimerPage() {
   const locale = await resolveLocale();
-  if (locale === "en") return <main style={sectionStyle}>
+  if (locale === "en") return <main className="legal-page" style={sectionStyle}>
+    <DocumentHeader locale={locale} />
     <p style={{ opacity: 0.7 }}>Health v3 · Updated August 20, 2026 · Alpha</p>
     <h1>Cmine Fit Health Disclaimer</h1>
     <p><strong>Cmine Fit is an Alpha fitness product. Features and recommendations may change, and generated information may be incomplete or inaccurate.</strong></p>
@@ -44,7 +46,8 @@ export default async function DisclaimerPage() {
     <p><a href="/privacy">Read the privacy notice </a></p>
   </main>;
 
-  return <main style={sectionStyle}>
+  return <main className="legal-page" style={sectionStyle}>
+    <DocumentHeader locale={locale} />
     <p style={{ opacity: 0.7 }}>版本 health-v3 · 更新于 2026-08-20 · Alpha 测试</p>
     <h1>Cmine Fit 健康免责声明</h1>
     <p><strong>Cmine Fit 是 Alpha 测试阶段的健身产品。功能与建议可能调整，生成的信息也可能不完整或不准确。</strong></p>
