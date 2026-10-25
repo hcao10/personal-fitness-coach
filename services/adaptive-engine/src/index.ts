@@ -9,8 +9,8 @@
 //
 // v1 rule set:
 //  1. Double progression with RIR autoregulation (per exercise).
-//  2. Fatigue index: acute 7-day load vs chronic 28-day weekly average
-//     (ACWR-style) plus pain signals → deload recommendation.
+//  2. Recovery screen: pain, repeated very-high RPE, recovery check-in and an
+//     acute:chronic workload signal. Workload ratio never acts alone.
 //  3. e1RM trend stagnation detection (Epley estimate over rolling windows).
 //  4. Pain-driven same-pattern exercise substitution (candidates supplied by
 //     the caller from coach-core's alternativesFor).
@@ -44,6 +44,7 @@ export type EngineInput = {
   sets: EngineSet[]; // completed sets in the last 28 days
   exercises: ExerciseMeta[]; // exercises in the active plan
   painfulExerciseIds?: string[];
+  recovery?: { recovery?: number | null; sleep?: number | null; soreness?: number | null; pain?: number | null };
 };
 
 export type EngineAdjustment = {
@@ -126,18 +127,20 @@ function exerciseDays(sets: EngineSet[], exerciseId: string): ExerciseDay[] {
   }).sort((a, b) => a.date.localeCompare(b.date));
 }
 
-export function detectStagnation(sets: EngineSet[], exerciseId: string, today: string): StagnationEntry | null {
+export function detectStagnation(sets: EngineSet[], exerciseId: string): StagnationEntry | null {
   const days = exerciseDays(sets, exerciseId).filter((day) => day.bestE1rm > 0);
   if (days.length < 4) return null;
   const span = daysBetween(days[0].date, days[days.length - 1].date);
   if (span < 21) return null;
-  const recent = days.filter((day) => daysBetween(day.date, today) < 14).map((day) => day.bestE1rm);
-  const prior = days.filter((day) => { const age = daysBetween(day.date, today); return age >= 14 && age < 28; }).map((day) => day.bestE1rm);
-  if (!recent.length || !prior.length) return null;
-  const recentBest = Math.max(...recent);
-  const priorBest = Math.max(...prior);
-  if (priorBest <= 0) return null;
-  const changePct = Number((((recentBest - priorBest) / priorBest) * 100).toFixed(1));
+  const origin = Date.parse(`${days[0].date}T00:00:00Z`);
+  const points = days.map((day) => [(Date.parse(`${day.date}T00:00:00Z`) - origin) / dayMs, day.bestE1rm] as [number, number]);
+  const n = points.length;
+  const meanX = points.reduce((sum, point) => sum + point[0], 0) / n;
+  const meanY = points.reduce((sum, point) => sum + point[1], 0) / n;
+  const denominator = points.reduce((sum, point) => sum + (point[0] - meanX) ** 2, 0);
+  if (meanY <= 0 || denominator <= 0) return null;
+  const slope = points.reduce((sum, point) => sum + (point[0] - meanX) * (point[1] - meanY), 0) / denominator;
+  const changePct = Number((slope * 28 / meanY * 100).toFixed(1));
   return changePct < 1 ? { exerciseId, e1rmChangePct: changePct, sessionsAnalyzed: days.length } : null;
 }
 
@@ -214,26 +217,31 @@ export function runEngine(input: EngineInput): EngineReport {
   const painful = new Set(input.painfulExerciseIds || []);
   const ratio = fatigueRatio(input.sets, input.today);
   const recentPainSessions = input.sessions.filter((session) => daysBetween(session.date, input.today) < 7 && session.pain >= 4).length;
+  const recentRpes = input.sessions.filter((session) => daysBetween(session.date, input.today) < 7 && session.rpe !== null).map((session) => Number(session.rpe));
+  const averageRecentRpe = recentRpes.length ? recentRpes.reduce((sum, value) => sum + value, 0) / recentRpes.length : null;
+  const recoveryRisk = Number(input.recovery?.pain || 0) >= 4 || Number(input.recovery?.soreness || 0) >= 8 ||
+    (input.recovery?.recovery != null && Number(input.recovery.recovery) <= 1) || (input.recovery?.sleep != null && Number(input.recovery.sleep) <= 1);
   let deloadRecommended = false;
   let deloadReason: EngineReport["deloadReason"];
-  if (ratio !== null && ratio > 1.35) {
+  if (recentPainSessions >= 2 || Number(input.recovery?.pain || 0) >= 4) {
     deloadRecommended = true;
     deloadReason = {
-      zh: `近 7 天训练负荷是近 4 周平均的 ${ratio} 倍，超出 1.35 的安全比例。本周安排一次减量（组数与负重各降约 30–40%）。`,
-      en: `The last 7 days carried ${ratio}× your 4-week average load, above the 1.35 safety ratio. Schedule a deload this week (roughly 30–40% less volume and load).`,
+      zh: `近期有 ${Math.max(recentPainSessions, 1)} 次疼痛信号达到 4/10 及以上。先减量并避开引发疼痛的动作；疼痛持续请咨询专业人员。`,
+      en: `Recent pain reached 4/10 or higher. Deload and avoid aggravating movements; see a professional if pain persists.`,
     };
-  } else if (recentPainSessions >= 2) {
+  } else if (recoveryRisk || (averageRecentRpe !== null && recentRpes.length >= 2 && averageRecentRpe >= 9) ||
+    (ratio !== null && ratio > 1.5 && averageRecentRpe !== null && averageRecentRpe >= 8.5)) {
     deloadRecommended = true;
     deloadReason = {
-      zh: `近 7 天有 ${recentPainSessions} 次训练疼痛达到 4/10 及以上。先减量并避开引发疼痛的动作；疼痛持续请咨询专业人员。`,
-      en: `${recentPainSessions} sessions in the last 7 days reported pain at 4/10 or higher. Deload and avoid the aggravating movements; see a professional if pain persists.`,
+      zh: "恢复反馈与近期训练强度同时显示疲劳偏高。本周先减少约 20–30% 训练量，保留动作练习，不追求加重。",
+      en: "Recovery feedback and recent training intensity both indicate elevated fatigue. Reduce weekly volume by about 20–30%, keep technique practice, and avoid load increases.",
     };
   }
   const adjustments: EngineAdjustment[] = [];
   const stagnation: StagnationEntry[] = [];
   for (const meta of input.exercises) {
     const adjustment = analyzeExercise(meta, input.sets, painful.has(meta.exerciseId), input.experience);
-    const stall = detectStagnation(input.sets, meta.exerciseId, input.today);
+    const stall = detectStagnation(input.sets, meta.exerciseId);
     if (stall) {
       stagnation.push(stall);
       // A stalled lift that is not already being fixed gets a variation nudge.

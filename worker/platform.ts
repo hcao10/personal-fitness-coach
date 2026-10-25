@@ -48,9 +48,13 @@ export interface WorkerEnv {
   DB?: D1Database;
   R2?: R2Bucket;
   OPENAI_API_KEY?: string;
+  MODEL_HUB_API_KEY?: string;
+  MODEL_HUB_COACH_MODEL?: string;
+  COACH_RUNTIME_PAUSED?: string;
   OPENAI_MODEL?: string;
   OPENAI_BASE_URL?: string;
   OPENAI_REASONING_EFFORT?: string;
+  OPENAI_EMBEDDING_MODEL?: string;
   CLOUDFLARE_AI_ACCOUNT_ID?: string;
   CLOUDFLARE_AI_TOKEN?: string;
   CLOUDFLARE_AI_GATEWAY_URL?: string;

@@ -3,6 +3,7 @@ import type { D1Database, WorkerEnv } from "./platform";
 import { decryptSecret, encryptSecret, parseCookies, sha256 } from "./security";
 import { entitlementSnapshot } from "./product";
 import { dailyNutrition, mealsForUser } from "./nutrition";
+import { hubRequest } from './ai/model-hub-client.ts';
 
 export type StoredUser = {
   id: string;
@@ -384,17 +385,17 @@ export async function ensureActiveOccurrences(env: WorkerEnv, userId: string) {
 }
 
 export async function occurrenceForDate(env: WorkerEnv, userId: string, localDate: string) {
-  return requireDb(env).prepare(`SELECT id,cycle_id,version_id,plan_id,day_index,scheduled_date,status,mode
+  return requireDb(env).prepare(`SELECT id,cycle_id,version_id,plan_id,day_index,scheduled_date,status,mode,revision,workout_override_json
     FROM workout_occurrences WHERE user_id=? AND scheduled_date=? AND status<>'superseded'
     ORDER BY CASE WHEN status='scheduled' THEN 0 ELSE 1 END LIMIT 1`).bind(userId, localDate).first<{
-      id: string; cycle_id: string; version_id: string; plan_id: string; day_index: number; scheduled_date: string; status: string; mode: string;
+      id: string; cycle_id: string; version_id: string; plan_id: string; day_index: number; scheduled_date: string; status: string; mode: string; revision: number; workout_override_json: string | null;
     }>();
 }
 
 export async function occurrenceForUser(env: WorkerEnv, userId: string, occurrenceId: string) {
-  return requireDb(env).prepare(`SELECT id,cycle_id,version_id,plan_id,day_index,scheduled_date,status,mode
+  return requireDb(env).prepare(`SELECT id,cycle_id,version_id,plan_id,day_index,scheduled_date,status,mode,revision,workout_override_json
     FROM workout_occurrences WHERE id=? AND user_id=?`).bind(occurrenceId, userId).first<{
-      id: string; cycle_id: string; version_id: string; plan_id: string; day_index: number; scheduled_date: string; status: string; mode: string;
+      id: string; cycle_id: string; version_id: string; plan_id: string; day_index: number; scheduled_date: string; status: string; mode: string; revision: number; workout_override_json: string | null;
     }>();
 }
 
@@ -446,8 +447,8 @@ export async function recordConsent(request: Request, env: WorkerEnv, userId: st
   const db = requireDb(env);
   const ip = request.headers.get("cf-connecting-ip");
   const ipHash = ip && env.SESSION_SECRET ? await sha256(`${env.SESSION_SECRET}:${ip}`) : null;
-  const version = await settingValue<string>(env, "disclaimer_version", "health-v2");
-  const privacyVersion = await settingValue<string>(env, "privacy_version", "privacy-v1");
+  const version = await settingValue<string>(env, "disclaimer_version", "health-v3");
+  const privacyVersion = await settingValue<string>(env, "privacy_version", "privacy-v2");
   await db.prepare(`INSERT INTO consents (id, user_id, disclaimer_version, locale, ip_hash, consented_at, timezone, product_version, privacy_version)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .bind(crypto.randomUUID(), userId, version, locale, ipHash, new Date().toISOString(),
@@ -564,7 +565,10 @@ export async function upsertWorkoutSet(env: WorkerEnv, userId: string, planId: s
   const db = requireDb(env);
   const row = await db.prepare("SELECT plan_json FROM plans WHERE id=? AND user_id=?").bind(planId, userId).first<{ plan_json: string }>();
   const plan = parseJson<CoachPlan>(row?.plan_json);
-  const exercise = plan?.schedule.find((day) => day.dayIndex === input.dayIndex)?.exercises.find((item) => item.id === input.exerciseId);
+  const occurrenceForSet = input.occurrenceId ? await occurrenceForUser(env, userId, input.occurrenceId) : null;
+  if (input.occurrenceId && (!occurrenceForSet || occurrenceForSet.plan_id !== planId || occurrenceForSet.day_index !== input.dayIndex)) throw new Error("OCCURRENCE_NOT_FOUND");
+  const override = occurrenceForSet?.workout_override_json ? parseJson<CoachPlan["schedule"][number]>(occurrenceForSet.workout_override_json) : null;
+  const exercise = (override || plan?.schedule.find((day) => day.dayIndex === input.dayIndex))?.exercises.find((item) => item.id === input.exerciseId);
   if (!row || !exercise) throw new Error("PLAN_EXERCISE_NOT_FOUND");
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
@@ -672,10 +676,58 @@ export async function accountSnapshot(env: WorkerEnv, user: StoredUser) {
 // Moved to worker/telemetry.ts (db.ts imports nutrition.ts, which now needs it).
 export { recordGenerationRun } from "./telemetry";
 
+/**
+ * Reads one site setting, degrading to the fallback when the table is missing.
+ *
+ * `/api/v1/site` used to return 500 on a database whose migrations had not been
+ * applied, which took the homepage's consent gate and announcement with it —
+ * even though every value it asks for has a shipped default. A binding is not a
+ * schema, and the honest answer to "what is the current disclaimer version" on
+ * an un-migrated database is the default, not an error page. Whether the schema
+ * is actually there is reported separately, by `schemaReadiness`.
+ */
 export async function settingValue<T>(env: WorkerEnv, key: string, fallback: T): Promise<T> {
   if (!env.DB) return fallback;
-  const row = await env.DB.prepare("SELECT value_json FROM site_settings WHERE key = ?").bind(key).first<{ value_json: string }>();
-  return parseJson<T>(row?.value_json) ?? fallback;
+  try {
+    const row = await env.DB.prepare("SELECT value_json FROM site_settings WHERE key = ?").bind(key).first<{ value_json: string }>();
+    return parseJson<T>(row?.value_json) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * Tables the core product cannot work without. Not the full list: a deployment
+ * missing `food_nutrients` has a broken nutrition page, not a broken product,
+ * and health checks that fail on optional features get ignored.
+ */
+export const REQUIRED_TABLES = [
+  "users", "sessions", "profiles", "plans", "site_settings", "consents",
+  "onboarding_drafts", "workout_completions", "coach_conversations", "coach_turns", "coach_model_attempts", "coach_session_changes", "coach_hub_requests",
+] as const;
+
+export type SchemaReadiness = { ready: boolean; missing: string[]; error: string | null };
+
+/**
+ * Whether the product schema is present, as distinct from whether a database is
+ * bound. `/api/health` reported `database: true` for a D1 binding with no
+ * migrations applied, so the first request to touch a real table was the first
+ * sign anything was wrong — and it arrived as a 500 in the browser.
+ */
+export async function schemaReadiness(env: WorkerEnv): Promise<SchemaReadiness> {
+  if (!env.DB) return { ready: false, missing: [...REQUIRED_TABLES], error: "DATABASE_NOT_CONFIGURED" };
+  try {
+    const placeholders = REQUIRED_TABLES.map(() => "?").join(",");
+    const result = await env.DB
+      .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (${placeholders})`)
+      .bind(...REQUIRED_TABLES)
+      .all<{ name: string }>();
+    const present = new Set((result.results || []).map((row) => row.name));
+    const missing = REQUIRED_TABLES.filter((table) => !present.has(table));
+    return { ready: missing.length === 0, missing, error: null };
+  } catch (error) {
+    return { ready: false, missing: [], error: error instanceof Error ? error.message.slice(0, 200) : "SCHEMA_PROBE_FAILED" };
+  }
 }
 
 export async function adminOverview(env: WorkerEnv) {
@@ -937,6 +989,8 @@ export async function exportUserData(env: WorkerEnv, user: StoredUser) {
 }
 
 export async function deleteUserData(env: WorkerEnv, userId: string): Promise<void> {
+  // Fail closed before local deletion if shared-provider lifecycle cleanup cannot be confirmed.
+  if (env.MODEL_HUB_API_KEY) await hubRequest(env, userId, '/v1/privacy/user', { method: 'DELETE' });
   if (env.DB && env.R2) {
     const images = await env.DB.prepare("SELECT object_key FROM meal_images WHERE user_id = ?").bind(userId).all<{ object_key: string }>();
     await Promise.all((images.results || []).map((image) => env.R2!.delete(image.object_key).catch(() => undefined)));

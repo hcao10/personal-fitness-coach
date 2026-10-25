@@ -17,6 +17,7 @@ type ReviewEngine = { deloadRecommended?: boolean; deloadReason?: LocalizedParti
 // for a Chinese reader, so everything below renders from `kind`.
 type ReviewKind = "collect_more_data" | "deload" | "progress" | "hold";
 type Review = { id: string; weekStart: string; status: string; plateau: boolean; metrics?: { completedSessions: number; adherencePct: number; averageRpe: number | null; maxPain: number; weightTrendKgPerWeek: number | null }; recommendation?: { kind?: ReviewKind; title: string; explanation: string; changes: string[]; locked?: boolean; engine?: ReviewEngine } };
+type MeasurementDraft = { id: string; payload: { title?: string; description?: string; after?: string }; createdAt: string };
 
 // Listed explicitly rather than derived, because each kind has a different
 // number of bullets and the compiler checks each key against the catalog.
@@ -33,6 +34,8 @@ export default function ProgressClient() {
   const { locale, t } = useLocale();
   const localeRef = useLocaleRef();
   const [reviews, setReviews] = useState<Review[]>([]); const [recovery, setRecovery] = useState(3); const [sleep, setSleep] = useState(3); const [pain, setPain] = useState(0); const [busy, setBusy] = useState(false); const [message, setMessage] = useState("");
+  const [drafts, setDrafts] = useState<MeasurementDraft[]>([]);
+  const [measurement, setMeasurement] = useState({ weightKg: "", bodyFatPct: "", waistCm: "", note: "" });
   const load = async () => { const response = await fetch("/api/v1/reviews", { cache: "no-store" }); if (response.status === 401) { await beginCmineLogin("/progress", locale); return; } if (response.ok) setReviews((await response.json() as { reviews: Review[] }).reviews); };
   // Reviews stored before the engine recorded a `kind` keep their Chinese prose;
   // showing it to a Chinese reader is right, and to anyone else it would not be,
@@ -58,8 +61,24 @@ export default function ProgressClient() {
       if (response.ok) setReviews((await response.json() as { reviews: Review[] }).reviews);
     });
   }, [localeRef]); const current = reviews[0];
+  useEffect(() => { void fetch("/api/v1/record-drafts?type=measurement", { cache: "no-store" })
+    .then((response) => response.ok ? response.json() : null)
+    .then((body: { drafts?: MeasurementDraft[] } | null) => setDrafts(body?.drafts || [])).catch(() => undefined); }, []);
   const generate = async () => { if (!current) return; setBusy(true); setMessage(""); const checked = await fetch(`/api/v1/reviews/${current.id}/check-in`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ recovery, sleep, pain }) }); if (checked.ok) { const generated = await fetch(`/api/v1/reviews/${current.id}/generate`, { method: "POST" }); if (!generated.ok) setMessage(localizeApiError(await generated.json().catch(() => null) as ApiErrorBody | null, locale, t("progress.generateFailed"))); } await load(); setBusy(false); };
   const decide = async (decision: "accept" | "reject") => { if (!current) return; setBusy(true); const response = await fetch(`/api/v1/reviews/${current.id}/${decision}`, { method: "POST" }); setMessage(response.ok ? decision === "accept" ? t("progress.planActivated") : t("progress.planKept") : t("progress.actionFailed")); await load(); setBusy(false); };
+  const decideMeasurement = async (draftId: string, decision: "confirm" | "reject") => {
+    setBusy(true); setMessage("");
+    const response = await fetch(`/api/v1/record-drafts/${encodeURIComponent(draftId)}/${decision}`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: decision === "confirm" ? JSON.stringify({ ...measurement, measuredAt: new Date().toISOString() }) : undefined,
+    });
+    if (response.ok) {
+      setDrafts((currentDrafts) => currentDrafts.filter((draft) => draft.id !== draftId));
+      setMeasurement({ weightKg: "", bodyFatPct: "", waistCm: "", note: "" });
+      setMessage(decision === "confirm" ? t("progress.measurementSaved") : t("progress.measurementRejected"));
+    } else setMessage(t("progress.measurementFailed"));
+    setBusy(false);
+  };
   return <ProductShell active="/progress" eyebrow={t("progress.eyebrow")} title={t("progress.title")}>
     <div className="progress-grid"><section className="review-card"><span>{t("progress.reviewEyebrow")}</span><h2>{current?.recommendation ? reviewTitle(current, t("progress.reviewPrompt")) : t("progress.reviewPrompt")}</h2>{current?.recommendation ? <><p>{reviewExplanation(current)}</p><div className="review-metrics"><article><b>{current.metrics?.adherencePct || 0}%</b><span>{t("progress.metricAdherence")}</span></article><article><b>{current.metrics?.completedSessions || 0}</b><span>{t("progress.metricSessions")}</span></article><article><b>{current.metrics?.averageRpe ?? "—"}</b><span>{t("progress.metricAverageRpe")}</span></article><article><b>{current.metrics?.maxPain || 0}/10</b><span>{t("progress.metricPeakPain")}</span></article></div>{current.recommendation.locked ? <>
         {current.recommendation.engine?.deloadRecommended && current.recommendation.engine.deloadReason && <p>{pick(current.recommendation.engine.deloadReason, locale)}</p>}
@@ -67,6 +86,18 @@ export default function ProgressClient() {
         <div className="review-actions"><a className="review-generate" href="/pricing">{t("progress.unlockAdjustments")}</a></div>
       </> : <><ul>{reviewChanges(current).map((change) => <li key={change}>{change}</li>)}</ul>{current.status === "generated" && <div className="review-actions"><button onClick={() => void decide("reject")}>{t("progress.keepCurrentPlan")}</button><button onClick={() => void decide("accept")}>{t("progress.acceptAdjustments")}</button></div>}</>}</> : <><div className="review-sliders"><label>{t("progress.recoveryLabel")} <b aria-hidden="true">{recovery}/5</b><input type="range" aria-label={t("progress.recoveryLabel")} aria-valuetext={`${recovery} / 5`} min="1" max="5" value={recovery} onChange={(event) => setRecovery(Number(event.target.value))} /></label><label>{t("progress.sleepLabel")} <b aria-hidden="true">{sleep}/5</b><input type="range" aria-label={t("progress.sleepLabel")} aria-valuetext={`${sleep} / 5`} min="1" max="5" value={sleep} onChange={(event) => setSleep(Number(event.target.value))} /></label><label>{t("progress.painLabel")} <b aria-hidden="true">{pain}/10</b><input type="range" aria-label={t("progress.painLabel")} aria-valuetext={`${pain} / 10`} min="0" max="10" value={pain} onChange={(event) => setPain(Number(event.target.value))} /></label></div><button className="review-generate" disabled={busy} onClick={() => void generate()}>{busy ? t("progress.generating") : t("progress.generateReview")}</button></>}{message && <p className="form-message">{message}</p>}</section>
       <aside className="review-history"><span>{t("progress.historyEyebrow")}</span>{reviews.slice(1).map((review) => <article key={review.id}><small>{review.weekStart}</small><b>{reviewTitle(review, t("progress.historyPlaceholderTitle"))}</b><em>{review.status}</em></article>)}{reviews.length <= 1 && <p>{t("progress.historyEmpty")}</p>}</aside></div>
+    {drafts[0] && <section className="review-card" id="measurements">
+      <span>{t("progress.measurementDraftEyebrow")}</span><h2>{drafts[0].payload.title || t("progress.measurementDraftTitle")}</h2>
+      <p>{t("progress.measurementDraftBody")}</p>
+      <div className="measurement-draft-form">
+        <label>{t("progress.weightKg")}<input type="number" min="35" max="250" step="0.1" value={measurement.weightKg} onChange={(event) => setMeasurement({ ...measurement, weightKg: event.target.value })} /></label>
+        <label>{t("progress.bodyFatPct")}<input type="number" min="2" max="70" step="0.1" value={measurement.bodyFatPct} onChange={(event) => setMeasurement({ ...measurement, bodyFatPct: event.target.value })} /></label>
+        <label>{t("progress.waistCm")}<input type="number" min="40" max="220" step="0.1" value={measurement.waistCm} onChange={(event) => setMeasurement({ ...measurement, waistCm: event.target.value })} /></label>
+        <label>{t("progress.measurementNote")}<input maxLength={300} value={measurement.note} onChange={(event) => setMeasurement({ ...measurement, note: event.target.value })} /></label>
+      </div>
+      <div className="review-actions"><button disabled={busy} onClick={() => void decideMeasurement(drafts[0].id, "reject")}>{t("progress.rejectMeasurement")}</button><button disabled={busy || !measurement.weightKg} onClick={() => void decideMeasurement(drafts[0].id, "confirm")}>{t("progress.confirmMeasurement")}</button></div>
+    </section>}
+    {message && !current && <p className="form-message">{message}</p>}
     <ProgressCharts />
   </ProductShell>;
 }
@@ -74,7 +105,7 @@ export default function ProgressClient() {
 type Series = {
   weeks: Array<{ weekStart: string; tonnageKg: number; sets: number; sessions: number }>;
   exercises: Array<{ exerciseId: string; name: { zh: string; en: string }; points: Array<{ date: string; e1rm: number }>; changePct: number | null }>;
-  weight: Array<{ date: string; weightKg: number }>;
+  weight: Array<{ date: string; weightKg: number; bmi: number | null }>;
   planVersions: Array<{ date: string; versionNumber: number }>;
 };
 
@@ -108,7 +139,7 @@ function ProgressCharts() {
   // Grouping follows the chosen language, not whatever locale the browser
   // happens to run in — bare toLocaleString() ignored the picker entirely.
   const formatNumber = numberFormatter(locale);
-  const hasAnything = series.weeks.length > 0 || series.exercises.length > 0 || series.weight.length > 1;
+  const hasAnything = series.weeks.length > 0 || series.exercises.length > 0 || series.weight.length > 0;
   if (!hasAnything) {
     return <section className="review-card"><span>{t("progress.chartsEyebrow")}</span><h2>{t("progress.chartsEmptyTitle")}</h2><p>{t("progress.chartsEmptyBody")}</p></section>;
   }
@@ -147,11 +178,12 @@ function ProgressCharts() {
       <p><small>{t("progress.e1rmNote")}</small></p>
     </>}
 
-    {series.weight.length > 1 && <>
+    {series.weight.length > 0 && <>
       <h3>{t("progress.weightHeading")}</h3>
       <Sparkline values={series.weight.map((point) => point.weightKg)}
         label={t("progress.weightChartLabel", { from: series.weight[0].weightKg, to: series.weight[series.weight.length - 1].weightKg })} />
-      <p><small>{shortDate(series.weight[0].date)} {series.weight[0].weightKg} kg → {shortDate(series.weight[series.weight.length - 1].date)} {series.weight[series.weight.length - 1].weightKg} kg
+      <p><small>{shortDate(series.weight[0].date)} {series.weight[0].weightKg} kg  {shortDate(series.weight[series.weight.length - 1].date)} {series.weight[series.weight.length - 1].weightKg} kg
+        {series.weight[series.weight.length - 1].bmi ? `　·　${t("progress.bmiLatest", { bmi: series.weight[series.weight.length - 1].bmi! })}` : ""}
         {series.planVersions.length > 0 ? t("progress.planAdjustments", { count: series.planVersions.length, date: shortDate(series.planVersions[series.planVersions.length - 1].date) }) : ""}</small></p>
     </>}
   </section>;

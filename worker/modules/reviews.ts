@@ -1,7 +1,7 @@
 import { calculateWeeklyReview, recommendReview } from "../../packages/domain/src";
 import { toLocale } from "../../packages/i18n/src";
-import { alternativesFor, exercisePattern, type CoachPlan, type Profile } from "../../packages/coach-core/src";
-import { runEngine, type EngineSet, type ExerciseMeta } from "../../services/adaptive-engine/src";
+import { alternativesFor, exercisePattern, EXERCISES, isExerciseAllowed, type CoachPlan, type Profile } from "../../packages/coach-core/src";
+import { runEngine, type EngineAdjustment, type EngineReport, type EngineSet, type ExerciseMeta } from "../../services/adaptive-engine/src";
 import type { WorkerEnv } from "../platform";
 import type { StoredUser } from "../db";
 import { activatePlan, activeCycleForUser, activePlanForUser, addLocalDays, localDateInTimezone, savePlan } from "../db";
@@ -137,6 +137,7 @@ export async function generateReview(env: WorkerEnv, user: StoredUser, id: strin
     sessions: (sessions.results || []).map((row) => ({ date: String(row.completed_at || "").slice(0, 10), rpe: row.rpe, pain: row.pain })),
     sets: engineSets,
     exercises: Array.from(metaById.values()),
+    recovery: parseJson(review.checkin_json) || undefined,
   });
   let stored: Record<string, unknown>;
   if (fullAccess) {
@@ -170,11 +171,25 @@ export async function generateReview(env: WorkerEnv, user: StoredUser, id: strin
   return { id, metrics, recommendation: stored, status: "generated", quota };
 }
 
-function adjustedPlan(plan: CoachPlan, multiplier: number, loadMultiplier: number): CoachPlan {
-  return { ...plan, schedule: plan.schedule.map((day) => ({ ...day, exercises: day.exercises.map((exercise) => ({
-    ...exercise, sets: Math.max(2, Math.min(5, Math.round(exercise.sets * Math.max(.9, Math.min(1.1, multiplier))))),
-    suggestedLoadMultiplier: Math.max(.95, Math.min(1.05, loadMultiplier)),
-  })) })) };
+function adjustedPlan(plan: CoachPlan, profile: Profile, multiplier: number, loadMultiplier: number, engine?: Pick<EngineReport, "deloadRecommended" | "adjustments">): CoachPlan {
+  const adjustments = new Map<string, EngineAdjustment>((engine?.adjustments || []).map((item) => [item.exerciseId, item]));
+  const volume = engine?.deloadRecommended ? Math.min(.8, multiplier) : Math.max(.9, Math.min(1.1, multiplier));
+  const globalLoad = engine?.deloadRecommended ? Math.min(.9, loadMultiplier) : Math.max(.95, Math.min(1.05, loadMultiplier));
+  return { ...plan, schedule: plan.schedule.map((day) => ({ ...day, exercises: day.exercises.map((exercise) => {
+    const adjustment = adjustments.get(exercise.id);
+    const specificLoad = adjustment?.kind === "increase_load" || adjustment?.kind === "reduce_load"
+      ? 1 + Number(adjustment.magnitudePct || 0) / 100 : globalLoad;
+    const replacementId = adjustment?.kind === "swap_exercise" ? adjustment.replacementCandidates?.[0] : null;
+    const replacement = replacementId ? EXERCISES[replacementId] : null;
+    const base = replacement && isExerciseAllowed(replacement, profile.equipment) ? replacement : exercise;
+    return {
+      ...base,
+      sets: Math.max(2, Math.min(5, Math.round(exercise.sets * volume))),
+      reps: exercise.reps, rest: exercise.rest, restSeconds: exercise.restSeconds, targetRir: exercise.targetRir,
+      progression: adjustment?.reason || exercise.progression,
+      suggestedLoadMultiplier: Math.max(.8, Math.min(1.05, specificLoad)),
+    };
+  }) })) };
 }
 
 export async function decideReview(env: WorkerEnv, userId: string, id: string, decision: "accepted" | "rejected") {
@@ -185,14 +200,14 @@ export async function decideReview(env: WorkerEnv, userId: string, id: string, d
   if (row.status === "accepted" || row.status === "rejected") return { id, status: row.status, duplicate: true };
   let planId: string | null = null;
   if (decision === "accepted") {
-    const recommendation = parseJson<{ volumeMultiplier?: number; loadMultiplier?: number; locked?: boolean }>(row.recommendation_json);
+    const recommendation = parseJson<{ volumeMultiplier?: number; loadMultiplier?: number; locked?: boolean; engine?: EngineReport }>(row.recommendation_json);
     // Locked previews carry no adjustment details — accepting them is the Pro
     // value moment, and requires the full review to have been generated.
     if (recommendation?.locked || (await tierInfoForUser(env, userId)).tier !== "pro") throw new Error("REVIEW_UPGRADE_REQUIRED");
     const [active, cycle] = await Promise.all([activePlanForUser(env, userId), activeCycleForUser(env, userId)]);
     if (active?.plan && active.profile) {
       const effectiveDate = cycle ? addLocalDays(cycle.startDate, Math.max(7, (Math.floor(Math.max(0, dateDifference(cycle.startDate, localDateInTimezone(cycle.timezone))) / 7) + 1) * 7)) : undefined;
-      planId = await savePlan(env, userId, active.profile as Profile, adjustedPlan(active.plan as CoachPlan, Number(recommendation?.volumeMultiplier || 1), Number(recommendation?.loadMultiplier || 1)), "adaptive_review", "rules+coach", { changeSummary: ["根据周度完成率与恢复状态调整训练量", "单周组数变化保持在 10% 安全边界内"] });
+      planId = await savePlan(env, userId, active.profile as Profile, adjustedPlan(active.plan as CoachPlan, active.profile as Profile, Number(recommendation?.volumeMultiplier || 1), Number(recommendation?.loadMultiplier || 1), recommendation?.engine), "adaptive_review", "evidence-v2+coach", { changeSummary: ["根据完成率、恢复、RIR 与逐动作表现调整下一周", recommendation?.engine?.deloadRecommended ? "恢复风险较高，训练量降低 20% 且暂停加重" : "常规单周训练量变化控制在 10% 内"] });
       await activatePlan(env, userId, planId, `weekly_review:${id}`, { startDate: effectiveDate, timezone: cycle?.timezone, preserveCycleStart: true });
     }
   }

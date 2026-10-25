@@ -1,9 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import ProductShell from "../components/product-shell";
+import { BrandMark } from "../shared/ui/brand-mark";
 import { useEffect, useRef, useState } from "react";
 import { localizeApiError } from "../lib/api-error";
 import { beginCmineLogin } from "../lib/auth";
+import { useCapabilities } from "../shared/api/capability-provider";
 import { useLocale, useT } from "../lib/i18n-provider";
 import { dateFormatter, plural } from "../../packages/i18n/src";
 import type { FoodReference, MealCandidateMatch } from "../../packages/api-contracts/src";
@@ -31,13 +34,16 @@ type Meal = {
   fatG: number;
   items: { id: string; name: string; grams: number }[];
 };
-type Daily = { date: string; meals: number; calories: number; proteinG: number; carbsG: number; fatG: number };
+type Daily = { date: string; meals: number; calories: number; proteinG: number; carbsG: number; fatG: number; targets: { calories: number; proteinG: number; carbsG: number; fatG: number } | null };
+type CoachMealDraft = { id: string; payload: { title?: string; description?: string; after?: string }; createdAt: string };
 
 const today = () => new Date().toISOString().slice(0, 10);
 
 export default function NutritionDashboard() {
   const t = useT();
   const { locale } = useLocale();
+  // A sign-in button is only honest when signing in is configured.
+  const accountsConfigured = Boolean(useCapabilities().capabilities?.accounts);
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
   const [daily, setDaily] = useState<Daily | null>(null);
   const [meals, setMeals] = useState<Meal[]>([]);
@@ -62,6 +68,8 @@ export default function NutritionDashboard() {
   const [customName, setCustomName] = useState("");
   const [customMacros, setCustomMacros] = useState({ calories: 0, proteinG: 0, carbsG: 0, fatG: 0 });
   const [scanning, setScanning] = useState(false);
+  const [coachDrafts, setCoachDrafts] = useState<CoachMealDraft[]>([]);
+  const [activeCoachDraft, setActiveCoachDraft] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const scannerControls = useRef<{ stop(): void } | null>(null);
 
@@ -70,16 +78,24 @@ export default function NutritionDashboard() {
     const active = Boolean(me?.user);
     setSignedIn(active);
     if (!active) return;
-    const [dailyResponse, mealsResponse, recipesResponse, templatesResponse] = await Promise.all([
+    const [dailyResponse, mealsResponse, recipesResponse, templatesResponse, draftsResponse] = await Promise.all([
       fetch(`/api/v1/nutrition/daily?date=${today()}`, { cache: "no-store" }),
       fetch("/api/v1/meals?limit=12", { cache: "no-store" }),
       fetch("/api/v1/recipes", { cache: "no-store" }),
       fetch("/api/v1/meal-templates", { cache: "no-store" }),
+      fetch("/api/v1/record-drafts?type=meal", { cache: "no-store" }),
     ]);
     if (dailyResponse.ok) setDaily(await dailyResponse.json());
     if (mealsResponse.ok) setMeals((await mealsResponse.json()).meals || []);
     if (recipesResponse.ok) setRecipes((await recipesResponse.json()).recipes || []);
     if (templatesResponse.ok) setTemplates((await templatesResponse.json()).templates || []);
+    if (draftsResponse.ok) setCoachDrafts((await draftsResponse.json()).drafts || []);
+  };
+
+  const finishCoachDraft = async (decision: "complete" | "reject", draftId = activeCoachDraft) => {
+    if (!draftId) return;
+    const response = await fetch(`/api/v1/record-drafts/${encodeURIComponent(draftId)}/${decision}`, { method: "POST" });
+    if (response.ok) { setCoachDrafts((current) => current.filter((draft) => draft.id !== draftId)); setActiveCoachDraft(null); }
   };
 
   useEffect(() => {
@@ -233,6 +249,7 @@ export default function NutritionDashboard() {
     if (!response.ok) return setNotice(localizeApiError(body, locale, t("nutrition.noticeFoodLogFailed")));
     setManualFood(null);
     setNotice(t("nutrition.noticeFoodLogged"));
+    if (activeCoachDraft) { await finishCoachDraft("complete"); setNotice(t("nutrition.coachDraftCompleted")); }
     await load();
   };
 
@@ -282,24 +299,27 @@ export default function NutritionDashboard() {
 
   if (signedIn === null) return <main className="nutrition-page"><div className="nutrition-loading">{t("nutrition.loading")}</div></main>;
   if (!signedIn) return <main className="nutrition-page">
-    <header className="nutrition-header"><Link className="brand" href="/"><span className="brand-mark">C</span><span>CMINE <b>FIT</b></span></Link></header>
-    <section className="nutrition-signin"><span>NUTRITION, CONFIRMED BY YOU</span><h1>{t("nutrition.signedOutTitleLine1")}<br />{t("nutrition.signedOutTitleLine2")}</h1><p>{t("nutrition.signedOutBody")}</p><button onClick={() => void beginCmineLogin("/nutrition", locale)}>{t("nutrition.signedOutAction")}</button></section>
+    <header className="nutrition-header"><Link className="brand" href="/"><BrandMark /><span>CMINE <b>FIT</b></span></Link></header>
+    <section className="nutrition-signin"><span>NUTRITION, CONFIRMED BY YOU</span><h1>{t("nutrition.signedOutTitleLine1")}<br />{t("nutrition.signedOutTitleLine2")}</h1><p>{t("nutrition.signedOutBody")}</p>{accountsConfigured
+      ? <button onClick={() => void beginCmineLogin("/nutrition", locale)}>{t("nutrition.signedOutAction")}</button>
+      : <p className="account-signin-unavailable">{t("product.entry.accountOnlyUnavailable")}</p>}</section>
   </main>;
 
-  return <main className="nutrition-page">
-    <header className="nutrition-header">
-      <Link className="brand" href="/"><span className="brand-mark">C</span><span>CMINE <b>FIT</b></span></Link>
-      <nav><Link href="/account">{t("nutrition.navMyTraining")}</Link><Link href="/pricing">{t("nutrition.navPricing")}</Link></nav>
-    </header>
+  return <ProductShell active="/nutrition" title={t("nav.nutrition")} eyebrow={t("product.design.nutritionSubtitle")}><div className="nutrition-content">
     <section className="nutrition-hero">
-      <div><span>FOOD & ENERGY</span><h1>{t("nutrition.heroTitleLine1")}<br /><em>{t("nutrition.heroTitleLine2")}</em></h1><p>{t("nutrition.heroBody")}</p></div>
+      <div><span>FOOD & ENERGY</span><h2>{t("product.design.nutritionToday")}</h2><p>{t("nutrition.heroBody")}</p></div>
       <div className="nutrition-totals">
-        <article><span>{t("nutrition.caloriesToday")}</span><b>{daily?.calories || 0}</b><small>kcal</small></article>
-        <article><span>{t("nutrition.protein")}</span><b>{daily?.proteinG || 0}</b><small>g</small></article>
-        <article><span>{t("nutrition.carbs")}</span><b>{daily?.carbsG || 0}</b><small>g</small></article>
-        <article><span>{t("nutrition.fat")}</span><b>{daily?.fatG || 0}</b><small>g</small></article>
+        <article><span>{t("nutrition.caloriesToday")}</span><b>{daily?.calories || 0}</b><small>{daily?.targets ? `/ ${daily.targets.calories} kcal` : "kcal"}</small></article>
+        <article><span>{t("nutrition.protein")}</span><b>{daily?.proteinG || 0}</b><small>{daily?.targets ? `/ ${daily.targets.proteinG} g` : "g"}</small></article>
+        <article><span>{t("nutrition.carbs")}</span><b>{daily?.carbsG || 0}</b><small>{daily?.targets ? `/ ${daily.targets.carbsG} g` : "g"}</small></article>
+        <article><span>{t("nutrition.fat")}</span><b>{daily?.fatG || 0}</b><small>{daily?.targets ? `/ ${daily.targets.fatG} g` : "g"}</small></article>
       </div>
     </section>
+
+    {coachDrafts[0] && <section className="nutrition-card" id="coach-meal-draft">
+      <header><div><span>{t("nutrition.coachDraftEyebrow")}</span><h2>{coachDrafts[0].payload.title || t("nutrition.coachDraftTitle")}</h2></div><p>{t("nutrition.coachDraftBody")}</p></header>
+      <div className="recipe-actions"><button onClick={() => { setActiveCoachDraft(coachDrafts[0].id); setQuery(coachDrafts[0].payload.after || coachDrafts[0].payload.description || ""); }}>{t("nutrition.coachDraftStart")}</button><button onClick={() => void finishCoachDraft("reject", coachDrafts[0].id)}>{t("nutrition.coachDraftReject")}</button></div>
+    </section>}
 
     <section className="nutrition-workflow-grid">
       <article className="nutrition-card meal-photo-card">
@@ -353,5 +373,5 @@ export default function NutritionDashboard() {
     </section>
     <footer className="nutrition-footer"><span>{t("nutrition.footerSources")}</span><p>{t("nutrition.footerDisclaimer")}</p></footer>
     {notice && <div className="toast account-toast">{notice}</div>}
-  </main>;
+  </div></ProductShell>;
 }

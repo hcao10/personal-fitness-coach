@@ -129,13 +129,13 @@ export async function consumeCapability(env: WorkerEnv, userId: string, capabili
   const used = Number(before?.used || 0);
   const bonus = Number(before?.bonus || 0);
   if (!allowed || used >= limit + bonus) return { ok: false, tier, limit: limit + bonus, used, remaining: 0 };
-  await env.DB.prepare(`UPDATE feature_usage SET used = used + 1, updated_at = ?
+  const consumed = await env.DB.prepare(`UPDATE feature_usage SET used = used + 1, updated_at = ?
     WHERE user_id = ? AND capability = ? AND period_key = ? AND used < ?`)
     .bind(now, userId, capability, key, limit + bonus).run();
   const after = await env.DB.prepare("SELECT used, bonus FROM feature_usage WHERE user_id = ? AND capability = ? AND period_key = ?")
     .bind(userId, capability, key).first<{ used: number; bonus: number }>();
   const afterUsed = Number(after?.used || used);
-  return { ok: afterUsed > used, tier, limit: limit + Number(after?.bonus || 0), used: afterUsed, remaining: Math.max(0, limit + Number(after?.bonus || 0) - afterUsed) };
+  return { ok: Number(consumed.meta?.changes || 0) === 1, tier, limit: limit + Number(after?.bonus || 0), used: afterUsed, remaining: Math.max(0, limit + Number(after?.bonus || 0) - afterUsed) };
 }
 
 export async function refundCapability(env: WorkerEnv, userId: string, capability: Capability): Promise<void> {

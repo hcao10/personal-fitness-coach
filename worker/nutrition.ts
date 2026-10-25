@@ -467,13 +467,17 @@ export async function mealsForUser(env: WorkerEnv, userId: string, limit = 30) {
 }
 
 export async function dailyNutrition(env: WorkerEnv, userId: string, date: string) {
-  if (!env.DB) return { date, calories: 0, proteinG: 0, carbsG: 0, fatG: 0, meals: 0 };
+  if (!env.DB) return { date, calories: 0, proteinG: 0, carbsG: 0, fatG: 0, meals: 0, targets: null };
   const start = `${date}T00:00:00.000Z`;
   const end = `${date}T23:59:59.999Z`;
-  const row = await env.DB.prepare(`SELECT COUNT(*) AS meals, COALESCE(SUM(calories), 0) AS calories,
+  const [row, active] = await Promise.all([env.DB.prepare(`SELECT COUNT(*) AS meals, COALESCE(SUM(calories), 0) AS calories,
     COALESCE(SUM(protein_g), 0) AS protein_g, COALESCE(SUM(carbs_g), 0) AS carbs_g, COALESCE(SUM(fat_g), 0) AS fat_g
     FROM meal_logs WHERE user_id = ? AND status = 'confirmed' AND eaten_at BETWEEN ? AND ?`)
-    .bind(userId, start, end).first<Record<string, any>>();
+    .bind(userId, start, end).first<Record<string, any>>(),
+  env.DB.prepare(`SELECT p.plan_json FROM plan_cycles c JOIN plan_versions v ON v.id=c.active_version_id JOIN plans p ON p.id=v.plan_id
+    WHERE c.user_id=? AND c.status='active' LIMIT 1`).bind(userId).first<{ plan_json: string }>()]);
+  let plan: { calories?: number; protein?: number; carbs?: number; fat?: number } | null = null;
+  try { plan = active?.plan_json ? JSON.parse(active.plan_json) : null; } catch { /* targets remain unavailable */ }
   return {
     date,
     meals: Number(row?.meals || 0),
@@ -481,6 +485,7 @@ export async function dailyNutrition(env: WorkerEnv, userId: string, date: strin
     proteinG: round(Number(row?.protein_g || 0)),
     carbsG: round(Number(row?.carbs_g || 0)),
     fatG: round(Number(row?.fat_g || 0)),
+    targets: plan ? { calories: Number(plan.calories || 0), proteinG: Number(plan.protein || 0), carbsG: Number(plan.carbs || 0), fatG: Number(plan.fat || 0), source: "active_plan" } : null,
   };
 }
 

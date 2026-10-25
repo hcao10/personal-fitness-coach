@@ -30,7 +30,7 @@ const worker = {
     try {
       const association = mobileAssociation(request, env);
       if (association) return association;
-      const apiResponse = await handleApi(request, env);
+      const apiResponse = await handleApi(request, env, ctx);
       if (apiResponse) return apiResponse;
     } catch (error) {
       console.error("api_unhandled_error", error instanceof Error ? error.message : "unknown");

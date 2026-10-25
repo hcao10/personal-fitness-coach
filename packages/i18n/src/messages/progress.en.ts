@@ -47,7 +47,7 @@ export const progressEn = {
   metricPeakPain: "Peak pain",
   engineSummary: "The coach engine found {count} targeted adjustments in your data{stalled}. {teaser}",
   engineStagnation: ", and flagged {count} stalled exercises",
-  unlockAdjustments: "Upgrade to Pro to unlock and apply the full adjustments →",
+  unlockAdjustments: "Upgrade to Pro to unlock and apply the full adjustments ",
   keepCurrentPlan: "Keep current plan",
   acceptAdjustments: "Accept and apply",
 
@@ -56,7 +56,7 @@ export const progressEn = {
   sleepLabel: "Sleep quality",
   painLabel: "Pain level",
   generating: "Analyzing…",
-  generateReview: "Generate this week's review →",
+  generateReview: "Generate this week's review ",
 
   // Result messages.
   generateFailed: "Could not generate this week's review.",
@@ -68,6 +68,19 @@ export const progressEn = {
   historyEyebrow: "Past reviews",
   historyPlaceholderTitle: "Still collecting data",
   historyEmpty: "After a few weeks of training, your trends and plan versions appear here.",
+
+  measurementDraftEyebrow: "COACH RECORD TO REVIEW",
+  measurementDraftTitle: "Confirm this body measurement",
+  measurementDraftBody: "Coach only created a draft. Check or enter the values; nothing reaches your progress history until you confirm. BMI is calculated from your profile height and is a screening measure only.",
+  weightKg: "Weight (kg)",
+  bodyFatPct: "Body fat (%)",
+  waistCm: "Waist (cm)",
+  measurementNote: "Note (optional)",
+  confirmMeasurement: "Confirm and record",
+  rejectMeasurement: "Do not record",
+  measurementSaved: "Measurement saved and your progress trend is up to date.",
+  measurementRejected: "That draft was discarded.",
+  measurementFailed: "The measurement was not saved. Check the values and try again.",
 
   // Charts.
   chartsEyebrow: "Progress charts",
@@ -86,5 +99,6 @@ export const progressEn = {
   e1rmNote: "e1RM is estimated from your completed sets with the Epley formula. Read it as a trend, not as a tested one-rep max.",
   weightHeading: "Weight trend",
   weightChartLabel: "Weight from {from} kg to {to} kg",
+  bmiLatest: "Latest BMI {bmi} (a screening measure, not a diagnosis)",
   planAdjustments: " · plan adjusted {count}× in this period (latest {date})",
 } as const satisfies Widen<typeof progressZh>;

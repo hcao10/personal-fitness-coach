@@ -19,11 +19,14 @@
 | Web/PWA | `app` | 首页、建档、今日、Coach、饮食、进度、账户、定价与后台 |
 | 原生 App | `apps/mobile` | Expo Router、Cmine PKCE、SQLite 离线队列、本地提醒 + 服务端推送（cue 时间训练提醒、周教练信，安静时段生效）、RevenueCat、HealthKit/Health Connect |
 | 规则核心 | `packages/coach-core` | BMR/TDEE、训练编排、营养边界、安全规则；无网络与数据库依赖 |
+| 身体指标 | `packages/coach-core/src/body-metrics.ts` | BMI 计算与筛查分类；不承担诊断 |
 | 领域逻辑 | `packages/domain` | 周度指标、停滞判断、调整边界和 Coach 安全信号 |
 | API 契约 | `packages/api-contracts` | Web、App、Worker 共用的建档、Coach、复盘、计划与同步类型 |
 | 离线同步 | `packages/sync-core` | 客户端 UUID、幂等键、实体版本和冲突输入校验 |
 | 多语言 | `packages/i18n` | Web/App 共用产品导航与资源入口 |
 | Worker API | `worker` | 身份、所有权、业务 API、AI 路由、账单、食品数据和运营后台 |
+| 操作草稿 | `worker/modules/record-drafts.ts` | 列出、确认、完成和拒绝 Coach 建议；正式记录只在用户确认后产生 |
+| 知识检索 | `worker/modules/knowledge.ts`、`worker/embeddings.ts` | 受审知识、双语词法评分、向量缓存与混合排序；向量服务故障时安全降级 |
 | 定时维护 | `cloudflare/automation` | R2 图片、缓存、会话、OAuth 临时状态清理和复盘到期任务 |
 
 Worker 继续按 `auth`、`onboarding`、`training`、`coach`、`reviews`、`nutrition`、`billing`、`health`、`sync`、`notifications`、`admin` 组织。现阶段不拆微服务；只有 AI Gateway 与 Cron Worker 独立部署。
@@ -33,12 +36,41 @@ Worker 继续按 `auth`、`onboarding`、`training`、`coach`、`reviews`、`nut
 - 匿名 INTAKE 规则预览、登录后恢复、分步建档和首份计划生成。
 - Cmine ID Web 会话，以及面向 App Bearer Token 的 JWKS、issuer、audience、过期和撤销验证入口。
 - 连续 Coach 会话、SSE 响应、操作建议卡、接受/拒绝和危险反馈拦截。
+- Coach 体重/围度草稿在进度页确认，餐食草稿在饮食页补全；长对话使用 AI 语义摘要保持目标、限制、决定和未解决问题。
+- D1 已包含带来源的运动、体重、BMI 与蛋白质基础知识；检索采用向量语义与双语关键词混合排序，首次查询按需建立缓存。
 - 周度复盘、数据充分性判断、三周停滞条件、调整草案、差异确认、计划版本激活与历史追溯。
 - Stripe Checkout/Portal/Webhook 与 RevenueCat Webhook 的统一能力权益模型。
 - 饭菜图片候选识别、条码/搜索、份量确认、食品数据库计算和每日营养汇总。
 - 移动设备注册、离线批量同步、游标增量、健康连接与摘要导入接口。
 - 通知偏好、时区、安静时段、管理员指标、功能开关和维护运行记录。
 - 每日 HMAC 维护任务，每批最多 100 条，重复调用幂等。
+
+## 用户路径的真实状态
+
+这一节此前把五条路径都写成"已闭合"，但其中三条只在配置了 Cmine ID 和语言模型的部署里
+成立；在未配置的环境里，`/onboarding`、`/today` 和 `/coach` 会永久停在加载态或显示无法
+工作的控件。下表按"验收方式"重写，只把跑通过的写成已验证。
+
+| 路径 | 状态 | 验收方式 |
+|---|---|---|
+| **建档 → 规则计划 → 接受 → 动作大图 → 训练 → 反馈 → 下一步（未登录、无模型）** | 已验证 | `tests/guest-funnel.test.mjs` + `docs/E2E_GUEST_FUNNEL.zh-CN.md` 的 20 步浏览器实测 |
+| **入口不再死锁** | 已验证 | `tests/entry-state.test.mjs` 穷举全部探测组合；浏览器实测第 2、13、19 步 |
+| **未配置模型时的确定性 Coach** | 已验证 | `tests/coach-rules.test.mjs`；浏览器实测第 18–20 步 |
+| **登录后的服务端保存与 AI 计划** | 未在本轮重新验证 | 代码路径保留且有契约测试（`tests/backend-api.test.mjs`、`tests/llm-contract.test.mjs`），但需要真实 Cmine ID 与模型凭据的端到端演练不在本轮范围内 |
+| **训练调整与周复盘（差异草案 → 确认 → 新版本）** | 未在本轮重新验证 | 服务端逻辑与测试保留（`tests/adaptive-engine.test.mjs`），本轮没有改动，也没有重跑登录态演练 |
+| **体重与身体趋势、饮食记录与确认** | 未在本轮重新验证 | 同上；这两条路径需要账号，本轮未触碰 |
+
+### 已验证路径的具体内容
+
+1. **建档与首份计划**：四组问题（目标与经验、身体与日常活动、时间与器械、伤病与安全确认），
+   每一步展示这项信息改变了哪一个数字；未登录时资料与计划保存在浏览器本地，登录后按
+   "有答案压过空白"的规则合并，不重复索取；计划先是草案，用户接受后才生效。
+   规则计划始终标注为「安全规则计划」，不会被称作 AI 生成。
+2. **动作理解**：`/plan`、`/today`、`/exercises` 与 Coach 建议卡共用同一个 `ExerciseViewer`
+   与同一份动作契约；JPG 先出、GIF 覆盖，缺媒体时显示文字说明而不是破图；
+   分步要领来自数据集，呼吸/常见错误/停止条件按动作模式由已审核文案给出。
+3. **训练与反馈**：专注模式一次只显示一个动作；完成后只问三个问题；疼痛达到 4/10 时
+   任何分支都不会给出进阶建议，单次建议也不会超过周复盘的 +10% 训练量 / +5% 负重上限。
 
 ## 需要外部账户或商店配置后才能开放
 

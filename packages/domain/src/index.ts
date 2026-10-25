@@ -1,4 +1,5 @@
 import type { ReviewMetrics, ReviewRecommendation } from "../../api-contracts/src";
+import { median } from "simple-statistics";
 
 export type WeeklyEvidence = {
   plannedSessions: number;
@@ -15,10 +16,16 @@ export type WeeklyEvidence = {
 function weightTrend(measurements: WeeklyEvidence["measurements"]): number | null {
   const points = measurements.filter((item) => Number.isFinite(item.weightKg)).sort((a, b) => a.measuredAt.localeCompare(b.measuredAt));
   if (points.length < 2) return null;
-  const first = points[0];
-  const last = points[points.length - 1];
-  const days = Math.max(1, (new Date(last.measuredAt).getTime() - new Date(first.measuredAt).getTime()) / 86_400_000);
-  return Number((((last.weightKg || 0) - (first.weightKg || 0)) / days * 7).toFixed(2));
+  const origin = new Date(points[0].measuredAt).getTime();
+  const series = points.map((item) => [(new Date(item.measuredAt).getTime() - origin) / 86_400_000, Number(item.weightKg)] as [number, number]);
+  const slopes: number[] = [];
+  for (let left = 0; left < series.length; left += 1) {
+    for (let right = left + 1; right < series.length; right += 1) {
+      const days = series[right][0] - series[left][0];
+      if (days > 0) slopes.push((series[right][1] - series[left][1]) / days);
+    }
+  }
+  return slopes.length ? Number((median(slopes) * 7).toFixed(2)) : null;
 }
 
 export function calculateWeeklyReview(evidence: WeeklyEvidence, goal: string): ReviewMetrics {
@@ -35,10 +42,13 @@ export function calculateWeeklyReview(evidence: WeeklyEvidence, goal: string): R
   const volumeHistory = [...(evidence.previousWeeklyVolumes || []), trainingVolumeKg].filter((value) => value > 0);
   const volumeTrendPct = volumeHistory.length >= 3 && volumeHistory[0] > 0 ? Number(((volumeHistory[volumeHistory.length - 1] - volumeHistory[0]) / volumeHistory[0] * 100).toFixed(1)) : null;
   const nutritionDays = evidence.nutritionDays || [];
-  const adherence = (target: number | undefined, selector: (day: { calories: number; proteinG: number }) => number) => target && nutritionDays.length >= 3
-    ? Math.round(nutritionDays.reduce((sum, day) => sum + Math.min(1, selector(day) / target), 0) / nutritionDays.length * 100) : null;
-  const calorieAdherencePct = adherence(evidence.calorieTarget, (day) => day.calories);
-  const proteinAdherencePct = adherence(evidence.proteinTarget, (day) => day.proteinG);
+  const calorieAdherencePct = evidence.calorieTarget && nutritionDays.length >= 3
+    ? Math.round(nutritionDays.reduce((sum, day) => {
+        const deviation = Math.abs(day.calories - evidence.calorieTarget!) / evidence.calorieTarget!;
+        return sum + Math.max(0, 1 - deviation * 2);
+      }, 0) / nutritionDays.length * 100) : null;
+  const proteinAdherencePct = evidence.proteinTarget && nutritionDays.length >= 3
+    ? Math.round(nutritionDays.reduce((sum, day) => sum + Math.min(1, day.proteinG / evidence.proteinTarget!), 0) / nutritionDays.length * 100) : null;
   const eligible = completedSessions >= 2;
   const stalledMetric = goal === "muscle"
     ? volumeTrendPct !== null && volumeTrendPct < 1

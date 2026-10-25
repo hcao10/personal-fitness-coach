@@ -18,6 +18,9 @@ const RECORDED = {
   "2026-08-09.3": "ab24cb3a",
   // training_plan went single-locale and stopped naming its own sessions.
   "2026-08-09.4": "18cefd89",
+  // training_plan gained evidence-based dose, recovery, history and movement
+  // coverage instructions for the v2 planner.
+  "2026-08-20.1": "d7bea705",
 };
 
 test("prompt text and PROMPT_VERSION cannot drift apart", () => {

@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { decoratePlanSchedule, describeSession, EXERCISES, generatePlan, isExerciseAllowed, type CoachPlan, type Profile, type WorkoutDay } from "../app/lib/coach.ts";
+import { decoratePlanSchedule, describeSession, evidencePrescription, exercisePattern, EXERCISES, generatePlan, isExerciseAllowed, type CoachPlan, type Profile, type WorkoutDay } from "../app/lib/coach.ts";
 import { actionsAllowedUnderRisk, auditContentLocale } from "../packages/domain/src/index.ts";
+import { modelCatalogSnapshot } from "./model-catalog.ts";
 import type { WorkerEnv } from "./platform";
 import type { ProductTier } from "./product";
 
@@ -25,9 +26,10 @@ type AiPlanOutput = {
 import type { MealCandidate } from "../packages/api-contracts/src";
 import { DEFAULT_LOCALE, SHIPPABLE_LOCALES, type Locale } from "../packages/i18n/src/index.ts";
 import { systemPrompt } from "./prompts/index.ts";
+import { outputDirective } from "./prompts/locale.ts";
 export type { MealCandidate };
 
-type AiRoute = { provider: "cloudflare" | "openai" | "compatible"; model: string; priority: number };
+export type AiRoute = { provider: "cloudflare" | "openai" | "compatible" | "model_hub"; model: string; priority: number };
 type ProviderResult = {
   text: string;
   requestId: string | null;
@@ -87,6 +89,11 @@ export type CoachChatResult = {
   model: string;
   requestId: string | null;
   estimatedCostUsd: number;
+  usage: { inputTokens: number | null; outputTokens: number | null };
+};
+
+export type ConversationSummaryResult = {
+  summary: string; provider: string; model: string; requestId: string | null; estimatedCostUsd: number;
   usage: { inputTokens: number | null; outputTokens: number | null };
 };
 
@@ -166,6 +173,7 @@ const mealSchema = {
 };
 
 function providerConfigured(env: WorkerEnv, provider: AiRoute["provider"]): boolean {
+  if (provider === 'model_hub') return Boolean(env.MODEL_HUB_API_KEY);
   if (provider === "cloudflare") {
     return Boolean(
       (env.CLOUDFLARE_AI_GATEWAY_URL && env.CLOUDFLARE_AI_GATEWAY_TOKEN) ||
@@ -181,18 +189,17 @@ export function aiServices(env: WorkerEnv) {
   const openai = providerConfigured(env, "openai");
   const compatible = providerConfigured(env, "compatible");
   return {
+    chat: env.COACH_RUNTIME_PAUSED !== 'true' && (Boolean(env.MODEL_HUB_API_KEY) || cloudflare || openai || (compatible && Boolean(env.AI_COMPAT_TEXT_MODEL))),
     planner: cloudflare || openai || compatible,
-    // Only the providers that actually appear in the meal_vision route table
-    // below — an OpenAI-only deployment resolves no vision route, so reporting
-    // vision:true told the admin console a capability was live when the very
-    // next request would fail. Note this cannot see admin-configured ai_routes
-    // rows, so it under-reports if an OpenAI vision route is added by hand.
-    vision: cloudflare || compatible,
+    vision: cloudflare || openai || compatible,
     providers: { cloudflare, openai, compatible },
   };
 }
 
-async function routesFor(env: WorkerEnv, task: "training_plan" | "meal_vision" | "coach_chat", tier: ProductTier): Promise<AiRoute[]> {
+export async function routesFor(env: WorkerEnv, task: "training_plan" | "meal_vision" | "coach_chat", tier: ProductTier): Promise<AiRoute[]> {
+  if (task === 'coach_chat' && env.COACH_RUNTIME_PAUSED === 'true') return [];
+  // Hub authorization/timeout failures must not silently fall back to another paid provider.
+  if (task === 'coach_chat' && env.MODEL_HUB_API_KEY) return [{ provider: 'model_hub', model: env.MODEL_HUB_COACH_MODEL || 'task-default', priority: 0 }];
   if (env.DB) {
     const rows = await env.DB.prepare(`SELECT provider, model, priority FROM ai_routes
       WHERE task = ? AND tier IN (?, 'free') AND enabled = 1
@@ -201,21 +208,32 @@ async function routesFor(env: WorkerEnv, task: "training_plan" | "meal_vision" |
     const configured = (rows.results || []).filter((route) => providerConfigured(env, route.provider));
     if (configured.length) return configured;
   }
-  // OpenAI has no default model: OPENAI_MODEL must name a real model from the
-  // provider's current catalog, otherwise the OpenAI route is simply unavailable.
+  let openAiModel = await settingText(env, "openai_model", env.OPENAI_MODEL || "");
+  let openAiVisionModel = "";
+  if (env.OPENAI_API_KEY && task !== 'coach_chat' && (!openAiModel || task === 'meal_vision')) {
+    try {
+      const catalog = await modelCatalogSnapshot(env, "openai");
+      const selectable = catalog.models.filter((model) => model.selectable);
+      if (!openAiModel) openAiModel = selectable[0]?.id || "";
+      openAiVisionModel = selectable.find((model) => model.id === openAiModel && model.modalities?.input?.includes("image"))?.id ||
+        selectable.find((model) => model.modalities?.input?.includes("image"))?.id || "";
+    } catch { /* Explicit admin or environment configuration remains authoritative. */ }
+  }
   const fallback: Record<string, AiRoute[]> = {
     training_plan: [
       { provider: "cloudflare", model: tier === "pro" ? "@cf/meta/llama-3.3-70b-instruct-fp8-fast" : "@cf/meta/llama-3.1-8b-instruct-fast", priority: 1 },
-      { provider: "openai", model: env.OPENAI_MODEL || "", priority: 2 },
+      { provider: "openai", model: openAiModel, priority: 2 },
       { provider: "compatible", model: env.AI_COMPAT_TEXT_MODEL || "qwen3:8b", priority: 3 },
     ],
     meal_vision: [
       { provider: "cloudflare", model: "@cf/meta/llama-3.2-11b-vision-instruct", priority: 1 },
-      { provider: "compatible", model: env.AI_COMPAT_VISION_MODEL || "Qwen3-VL-8B-Instruct", priority: 2 },
+      { provider: "openai", model: openAiVisionModel, priority: 2 },
+      { provider: "compatible", model: env.AI_COMPAT_VISION_MODEL || "Qwen3-VL-8B-Instruct", priority: 3 },
     ],
     coach_chat: [
       { provider: "cloudflare", model: tier === "pro" ? "@cf/meta/llama-3.3-70b-instruct-fp8-fast" : "@cf/meta/llama-3.1-8b-instruct-fast", priority: 1 },
-      { provider: "openai", model: env.OPENAI_MODEL || "", priority: 2 },
+      { provider: "openai", model: openAiModel, priority: 2 },
+      { provider: "compatible", model: env.AI_COMPAT_TEXT_MODEL || "", priority: 3 },
     ],
   };
   return fallback[task].filter((route) => route.model && providerConfigured(env, route.provider));
@@ -227,6 +245,17 @@ async function settingNumber(env: WorkerEnv, key: string, fallback: number): Pro
   try {
     const value = Number(JSON.parse(row?.value_json || ""));
     return Number.isFinite(value) ? value : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+async function settingText(env: WorkerEnv, key: string, fallback: string): Promise<string> {
+  if (!env.DB) return fallback;
+  const row = await env.DB.prepare("SELECT value_json FROM site_settings WHERE key = ?").bind(key).first<{ value_json: string }>();
+  try {
+    const value = JSON.parse(row?.value_json || "");
+    return typeof value === "string" && value.trim() ? value.trim() : fallback;
   } catch {
     return fallback;
   }
@@ -320,7 +349,9 @@ async function runProvider(env: WorkerEnv, route: AiRoute, options: {
   maxTokens: number;
   safetyIdentifier?: string;
 }): Promise<ProviderResult> {
+  if (route.provider === 'model_hub') throw new Error('MODEL_HUB_REGISTERED_TASK_REQUIRED');
   if (route.provider === "openai") {
+    const reasoningEffort = await settingText(env, "openai_reasoning_effort", env.OPENAI_REASONING_EFFORT || "medium");
     const response = await fetchWithRetry(env.OPENAI_BASE_URL || "https://api.openai.com/v1/responses", {
       method: "POST",
       headers: { authorization: `Bearer ${env.OPENAI_API_KEY}`, "content-type": "application/json" },
@@ -328,9 +359,15 @@ async function runProvider(env: WorkerEnv, route: AiRoute, options: {
         model: route.model,
         store: false,
         max_output_tokens: options.maxTokens,
-        reasoning: { effort: env.OPENAI_REASONING_EFFORT || "medium" },
+        reasoning: { effort: reasoningEffort },
         ...(options.safetyIdentifier ? { safety_identifier: options.safetyIdentifier.slice(0, 64) } : {}),
-        input: [{ role: "system", content: options.system }, { role: "user", content: options.user }],
+        input: [{ role: "system", content: options.system }, { role: "user", content: Array.isArray(options.user)
+          ? options.user.map((item) => item.type === "text"
+            ? { type: "input_text", text: item.text }
+            : item.type === "image_url"
+              ? { type: "input_image", image_url: (item.image_url as { url?: string } | undefined)?.url }
+              : item)
+          : options.user }],
         text: { format: { type: "json_schema", name: options.schemaName, strict: true, schema: options.schema } },
       }),
     });
@@ -401,7 +438,9 @@ function decodedReplyPrefix(raw: string): string {
 async function runProviderStream(env: WorkerEnv, route: AiRoute, options: {
   system: string; user: string; schemaName: string; schema: Record<string, unknown>; maxTokens: number; safetyIdentifier?: string;
 }, onReplyDelta: (delta: string) => void): Promise<ProviderResult> {
+  if (route.provider === 'model_hub') throw new Error('MODEL_HUB_REGISTERED_TASK_REQUIRED');
   const openai = route.provider === "openai";
+  const reasoningEffort = openai ? await settingText(env, "openai_reasoning_effort", env.OPENAI_REASONING_EFFORT || "medium") : "medium";
   const url = openai ? env.OPENAI_BASE_URL || "https://api.openai.com/v1/responses" : route.provider === "cloudflare"
     ? env.CLOUDFLARE_AI_GATEWAY_URL || `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_AI_ACCOUNT_ID}/ai/v1/chat/completions`
     : `${env.AI_COMPAT_BASE_URL!.replace(/\/$/, "")}/chat/completions`;
@@ -409,7 +448,7 @@ async function runProviderStream(env: WorkerEnv, route: AiRoute, options: {
     ? env.CLOUDFLARE_AI_GATEWAY_TOKEN || env.CLOUDFLARE_AI_TOKEN : env.AI_COMPAT_API_KEY;
   const body = openai ? {
     model: route.model, store: false, stream: true, max_output_tokens: options.maxTokens,
-    reasoning: { effort: env.OPENAI_REASONING_EFFORT || "medium" },
+    reasoning: { effort: reasoningEffort },
     ...(options.safetyIdentifier ? { safety_identifier: options.safetyIdentifier.slice(0, 64) } : {}),
     input: [{ role: "system", content: options.system }, { role: "user", content: options.user }],
     text: { format: { type: "json_schema", name: options.schemaName, strict: true, schema: options.schema } },
@@ -455,7 +494,7 @@ async function runProviderStream(env: WorkerEnv, route: AiRoute, options: {
   return { text: rawText, requestId, inputTokens, outputTokens };
 }
 
-function estimatedCost(model: string, inputTokens: number | null, outputTokens: number | null): number {
+export function estimatedCost(model: string, inputTokens: number | null, outputTokens: number | null): number {
   const prices: Array<[string, number, number]> = [
     ["llama-3.1-8b", 0.045, 0.335],
     ["llama-3.3-70b", 0.293, 2.253],
@@ -494,12 +533,20 @@ function parseJson<T>(text: string): T {
  */
 export function applyAiPlan(profile: Profile, base: CoachPlan, output: AiPlanOutput, locale: Locale): CoachPlan {
   if (!Array.isArray(output.days) || !Array.isArray(output.plan_rationale)) throw new Error("AI_SCHEMA_INVALID");
+  const prose = [output.summary, ...(output.plan_rationale || []), ...(output.coach_notes || []), ...(output.diet_guidance || [])].join(" ");
+  const languageAudit = auditContentLocale({ requested: locale, claimed: output.content_locale, text: prose, candidates: SHIPPABLE_LOCALES });
+  // Language is an acceptance rule, not telemetry. A mismatched plan must not
+  // be cached or persisted; generateLlmPlan will try the next configured route.
+  if ((languageAudit.claimed && languageAudit.claimed !== locale) || (languageAudit.detected && languageAudit.detected !== locale)) {
+    throw new Error("AI_LANGUAGE_MISMATCH");
+  }
   const sorted = [...output.days].sort((a, b) => a.day_index - b.day_index);
   if (sorted.length !== 7 || sorted.some((day, index) => day.day_index !== index)) throw new Error("AI_SCHEDULE_INVALID");
   if (sorted.filter((day) => !day.rest_day).length !== profile.days) throw new Error("AI_TRAINING_DAYS_INVALID");
   const expectedTrainingDays = new Set(base.schedule.filter((day) => !day.restDay).map((day) => day.dayIndex));
   if (sorted.some((day) => day.rest_day === expectedTrainingDays.has(day.day_index))) throw new Error("AI_TRAINING_SPACING_INVALID");
   const maximumSessionMinutes = Math.max(20, Math.min(180, Number(profile.sessionMinutes || 90)));
+  const prescription = evidencePrescription(profile);
   const schedule: WorkoutDay[] = sorted.map((day, index) => {
     if (day.rest_day) {
       return {
@@ -518,6 +565,12 @@ export function applyAiPlan(profile: Profile, base: CoachPlan, output: AiPlanOut
         sets: Math.max(2, Math.min(5, Math.round(item.sets))),
         reps: item.reps,
         rest: `${Math.max(30, Math.min(180, Math.round(item.rest_seconds)))}s`,
+        restSeconds: Math.max(30, Math.min(180, Math.round(item.rest_seconds))),
+        targetRir: prescription.targetRir,
+        progression: {
+          zh: `先在目标次数区间内增加次数；连续两次达到上限且仍保留约 ${prescription.targetRir} 次余力时，再小幅加重。`,
+          en: `Add reps within the target range first; after two sessions at the top with about ${prescription.targetRir} reps in reserve, increase load slightly.`,
+        },
       }];
     });
     if (exercises.length < (profile.equipment === "bodyweight" ? 2 : 3)) throw new Error("AI_EXERCISES_INVALID");
@@ -528,15 +581,34 @@ export function applyAiPlan(profile: Profile, base: CoachPlan, output: AiPlanOut
       duration: Math.max(20, Math.min(maximumSessionMinutes, day.duration_minutes)), exercises,
     };
   });
+  const coverage = { push: 0, pull: 0, lower: 0 };
+  const weeklySets = { push: 0, pull: 0, lower: 0 };
+  for (const day of schedule.filter((item) => !item.restDay)) {
+    const patterns = new Set(day.exercises.map((exercise) => exercisePattern(exercise.id)));
+    if ([...patterns].some((pattern) => pattern === "push_h" || pattern === "push_v")) coverage.push += 1;
+    if ([...patterns].some((pattern) => pattern === "pull_h" || pattern === "pull_v")) coverage.pull += 1;
+    if ([...patterns].some((pattern) => pattern === "squat" || pattern === "hinge" || pattern === "lunge" || pattern === "iso_legs")) coverage.lower += 1;
+    for (const exercise of day.exercises) {
+      const pattern = exercisePattern(exercise.id);
+      if (pattern === "push_h" || pattern === "push_v") weeklySets.push += exercise.sets;
+      if (pattern === "pull_h" || pattern === "pull_v") weeklySets.pull += exercise.sets;
+      if (pattern === "squat" || pattern === "hinge" || pattern === "lunge" || pattern === "iso_legs") weeklySets.lower += exercise.sets;
+    }
+  }
+  if (coverage.push < 1 || coverage.pull < 1 || coverage.lower < 1) throw new Error("AI_MOVEMENT_COVERAGE_INVALID");
+  const minimumSets = Math.min(6, prescription.weeklySetsPerMajorMuscle.min);
+  const maximumSets = prescription.weeklySetsPerMajorMuscle.max + 4;
+  if (Object.values(weeklySets).some((sets) => sets < minimumSets || sets > maximumSets)) throw new Error("AI_WEEKLY_DOSE_INVALID");
   const staged = decoratePlanSchedule(profile, schedule);
   return {
     ...base,
     schedule: staged.schedule,
     phase: staged.phase,
+    prescription,
     insights: {
       // The measured language of what the model wrote, not the language it was
       // asked for — those differ exactly when something went wrong.
-      contentLocale: auditContentLocale({ requested: locale, claimed: output.content_locale, text: output.summary, candidates: SHIPPABLE_LOCALES }).detected ?? locale,
+      contentLocale: locale,
       summary: output.summary,
       planRationale: output.plan_rationale.slice(0, 3),
       coachNotes: (output.coach_notes || []).slice(0, 3),
@@ -547,6 +619,32 @@ export function applyAiPlan(profile: Profile, base: CoachPlan, output: AiPlanOut
         en: ["Stop the movement if pain reaches 4/10 or keeps worsening.", "Stop training and seek timely help for chest pain, fainting, breathing difficulty, or inability to bear weight."],
       },
     },
+  };
+}
+
+async function planningHistory(env: WorkerEnv, userId?: string): Promise<Record<string, unknown> | null> {
+  if (!env.DB || !userId) return null;
+  const since = new Date(Date.now() - 28 * 86_400_000).toISOString();
+  const [sessions, sets, measurement, review, memories] = await Promise.all([
+    env.DB.prepare(`SELECT COUNT(*) AS completed,AVG(rpe) AS average_rpe,MAX(pain) AS max_pain
+      FROM workout_occurrence_sessions WHERE user_id=? AND status='completed' AND updated_at>=?`).bind(userId, since).first<Record<string, unknown>>(),
+    env.DB.prepare(`SELECT exercise_id,COUNT(*) AS completed_sets,AVG(rir) AS average_rir,MAX(weight_kg) AS top_weight
+      FROM workout_occurrence_sets WHERE user_id=? AND completed=1 AND updated_at>=?
+      GROUP BY exercise_id ORDER BY completed_sets DESC LIMIT 20`).bind(userId, since).all<Record<string, unknown>>(),
+    env.DB.prepare("SELECT weight_kg,measured_at FROM measurements WHERE user_id=? ORDER BY measured_at DESC LIMIT 1").bind(userId).first<Record<string, unknown>>(),
+    env.DB.prepare("SELECT metrics_json,recommendation_json FROM weekly_reviews WHERE user_id=? AND status IN ('generated','accepted') ORDER BY week_start DESC LIMIT 1").bind(userId).first<Record<string, unknown>>(),
+    env.DB.prepare("SELECT memory_key,value FROM coach_memories WHERE user_id=? AND status='active' ORDER BY updated_at DESC LIMIT 10").bind(userId).all<Record<string, unknown>>(),
+  ]);
+  const parse = (value: unknown) => { try { return typeof value === "string" ? JSON.parse(value) : null; } catch { return null; } };
+  return {
+    window_days: 28,
+    completed_sessions: Number(sessions?.completed || 0),
+    average_rpe: sessions?.average_rpe == null ? null : Number(Number(sessions.average_rpe).toFixed(1)),
+    max_pain: Number(sessions?.max_pain || 0),
+    exercise_history: sets.results || [],
+    latest_measurement: measurement || null,
+    latest_review: review ? { metrics: parse(review.metrics_json), recommendation: parse(review.recommendation_json) } : null,
+    user_declared_preferences: memories.results || [],
   };
 }
 
@@ -564,6 +662,8 @@ export async function generateLlmPlan(env: WorkerEnv, profile: Profile, safetyId
       bmr: base.bmr, tdee: base.tdee, calories: base.calories, calorie_delta: base.calorieDelta,
       protein: base.protein, carbs: base.carbs, fat: base.fat, weeks: base.weeks,
     },
+    evidence_prescription: base.prescription,
+    observed_history: await planningHistory(env, safetyIdentifier),
     required_training_day_indexes: trainingDays,
     allowed_exercises: allowed.map((exercise) => ({ id: exercise.id, zh: exercise.name.zh, en: exercise.name.en, target: exercise.target.en })),
   });
@@ -744,6 +844,35 @@ export async function generateCoachChat(env: WorkerEnv, input: {
         requestId: result.requestId, estimatedCostUsd: estimatedCost(route.model, result.inputTokens, result.outputTokens),
         usage: { inputTokens: result.inputTokens, outputTokens: result.outputTokens },
       };
+    } catch (error) { lastError = error; }
+  }
+  throw lastError instanceof Error ? lastError : new Error("AI_GENERATION_FAILED");
+}
+
+export async function generateConversationSummary(env: WorkerEnv, input: {
+  locale: Locale; previousSummary?: string | null; messages: Array<{ role: "user" | "assistant"; content: string }>; safetyIdentifier: string;
+}, tier: ProductTier): Promise<ConversationSummaryResult> {
+  await assertAiBudget(env, input.safetyIdentifier);
+  const routes = (await routesFor(env, "coach_chat", tier)).slice(0, 2);
+  if (!routes.length) throw new Error("AI_NOT_CONFIGURED");
+  const schema = { type: "object", additionalProperties: false, required: ["summary"], properties: {
+    summary: { type: "string", minLength: 20, maxLength: 1800 },
+  } };
+  const system = [
+    "Summarize a fitness coaching conversation for continuity in future turns.",
+    "Preserve the user's goals, constraints, preferences, completed decisions, unresolved questions and safety-relevant facts.",
+    "Do not add advice, diagnoses, facts or actions. Do not include private reasoning. Distinguish user-reported facts from coach suggestions.",
+    outputDirective(input.locale),
+  ].join("\n\n");
+  const user = JSON.stringify({ previous_summary: input.previousSummary || null, messages: input.messages.slice(-18) });
+  let lastError: unknown = null;
+  for (const route of routes) {
+    try {
+      const result = await runProvider(env, route, { system, user, schemaName: "cmine_fit_conversation_summary", schema, maxTokens: 900, safetyIdentifier: input.safetyIdentifier });
+      const output = parseJson<{ summary?: string }>(result.text);
+      if (!output?.summary || output.summary.trim().length < 20) throw new Error("AI_SCHEMA_INVALID");
+      return { summary: output.summary.trim().slice(0, 1800), provider: route.provider, model: route.model, requestId: result.requestId,
+        estimatedCostUsd: estimatedCost(route.model, result.inputTokens, result.outputTokens), usage: { inputTokens: result.inputTokens, outputTokens: result.outputTokens } };
     } catch (error) { lastError = error; }
   }
   throw lastError instanceof Error ? lastError : new Error("AI_GENERATION_FAILED");

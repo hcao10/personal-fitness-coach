@@ -5,6 +5,7 @@ import PwaRegister from "./pwa-register";
 import { resolveLocale } from "./lib/locale-server";
 import { LOCALE_META, SHIPPABLE_LOCALES } from "../packages/i18n/src";
 import { LocaleProvider } from "./lib/i18n-provider";
+import { CapabilityProvider } from "./shared/api/capability-provider";
 
 const SITE_COPY = {
   zh: {
@@ -72,6 +73,13 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   // produces a fresh provider rather than stale state from the previous render.
   return <html lang={meta.tag} dir={meta.dir}><body>
     <PwaRegister />
-    <LocaleProvider key={locale} locale={locale}>{children}</LocaleProvider>
+    <LocaleProvider key={locale} locale={locale}>
+      {/* One capability probe for the whole app. Every page used to run its own
+          and interpret the answer differently; on failure, most of them simply
+          stopped. */}
+      <CapabilityProvider>
+        {children}
+      </CapabilityProvider>
+    </LocaleProvider>
   </body></html>;
 }

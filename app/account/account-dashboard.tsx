@@ -1,8 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { BrandMark } from "../shared/ui/brand-mark";
 import Link from "next/link";
+import ProductShell from "../components/product-shell";
 import { beginCmineLogin, signOutCmine } from "../lib/auth";
+import { useCapabilities } from "../shared/api/capability-provider";
 import { defaultProfile, readPlanInsights, type CoachPlan, type Localized, type Profile } from "../lib/coach";
 import { useLocale, useT, useLocaleRef } from "../lib/i18n-provider";
 import { dateFormatter, pick, type Locale, type MessageKey } from "../../packages/i18n/src";
@@ -72,7 +75,10 @@ function dateText(value: string, locale: Locale) {
 export default function AccountDashboard() {
   const { locale, t } = useLocale();
   const localeRef = useLocaleRef();
+  // A sign-in button is only honest when signing in is configured.
+  const accountsConfigured = Boolean(useCapabilities().capabilities?.accounts);
   const [data, setData] = useState<AccountData | null>(null);
+  const [todaySession, setTodaySession] = useState<{ dayIndex: number; workout: CoachPlan["schedule"][number] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [signedOut, setSignedOut] = useState(false);
   const [profile, setProfile] = useState<Profile>(defaultProfile);
@@ -86,10 +92,15 @@ export default function AccountDashboard() {
 
   const loadAccount = async () => {
     setLoading(true);
-    const [response, catalogResponse] = await Promise.all([
+    const [response, catalogResponse, todayResponse] = await Promise.all([
       fetch("/api/v1/me", { cache: "no-store" }).catch(() => null),
       fetch("/api/v1/billing/catalog", { cache: "no-store" }).catch(() => null),
+      fetch("/api/v1/coach/home", { cache: "no-store" }).catch(() => null),
     ]);
+    if (todayResponse?.ok) {
+      const home = await todayResponse.json().catch(() => null) as { today?: { dayIndex: number; workout: CoachPlan["schedule"][number] } | null } | null;
+      setTodaySession(home?.today ?? null);
+    }
     if (catalogResponse?.ok) {
       const catalog = await catalogResponse.json().catch(() => null) as { configured?: boolean } | null;
       setCatalogConfigured(Boolean(catalog?.configured));
@@ -117,8 +128,8 @@ export default function AccountDashboard() {
     return () => window.clearTimeout(timer);
   }, [notice]);
 
-  const today = (new Date().getDay() + 6) % 7;
-  const todayPlan = data?.latestPlan?.plan?.schedule[today] || null;
+  const today = todaySession?.dayIndex ?? (new Date().getDay() + 6) % 7;
+  const todayPlan = todaySession?.workout ?? null;
   const weightChange = useMemo(() => {
     const values = (data?.measurements || []).filter((item) => item.weightKg !== null);
     if (values.length < 2) return null;
@@ -205,41 +216,30 @@ export default function AccountDashboard() {
 
   if (signedOut || !data) {
     return <main className="account-shell">
-      <header className="account-public-header"><Link className="brand" href="/"><span className="brand-mark">C</span><span>CMINE <b>FIT</b></span></Link></header>
+      <header className="account-public-header"><Link className="brand" href="/"><BrandMark /><span>CMINE <b>FIT</b></span></Link></header>
       <section className="account-signin">
         <span>YOUR TRAINING, CONNECTED</span>
         <h1>{t("account.signinTitleA")}<br />{t("account.signinTitleB")}</h1>
         <p>{t("account.signinText")}</p>
-        <button onClick={() => void beginCmineLogin("/account", localeRef.current)}><b>C</b> {t("account.signinButton")} <em>→</em></button>
-        <Link href="/">{t("account.signinBackHome")}</Link>
+        {/* Only offered when signing in can actually happen. On a deployment
+            with no Cmine ID this used to be a button whose only outcome was an
+            error toast; the core training path needs no account, so the honest
+            answer is to say so and point at it. */}
+        {accountsConfigured
+          ? <button onClick={() => void beginCmineLogin("/account", localeRef.current)}><b>C</b> {t("account.signinButton")} <em></em></button>
+          : <p className="account-signin-unavailable">{t("product.entry.accountOnlyUnavailable")}</p>}
+        <Link href={accountsConfigured ? "/" : "/plan"}>{accountsConfigured ? t("account.signinBackHome") : t("product.entry.backToPlan")}</Link>
       </section>
     </main>;
   }
 
-  return <main className="account-shell">
-    <aside className="account-rail">
-      <Link className="brand account-brand" href="/"><span className="brand-mark">C</span><span>CMINE <b>FIT</b></span></Link>
-      <nav>
-        <Link href="/today"><span>01</span>{t("account.todayTraining")}</Link>
-        <Link href="/coach"><span>02</span>{t("nav.coach")}</Link>
-        <Link href="/nutrition"><span>03</span>{t("account.nutritionLog")}</Link>
-        <Link href="/progress"><span>04</span>{t("account.bodyProgress")}</Link>
-        <a href="#plans"><span>05</span>{t("account.planHistory")}</a>
-        <a href="#profile"><span>06</span>{t("account.trainingProfile")}</a>
-        <a href="#membership"><span>07</span>{t("account.membership")}</a>
-        <a href="#account"><span>08</span>{t("account.accountAndData")}</a>
+  return <ProductShell active="/account" title={t("account.title")} eyebrow={data.user.email || "CMINE FIT"}
+    action={<button className="header-chip" onClick={async () => { await signOutCmine(); window.location.assign("/"); }}>{t("account.signOut")}</button>}>
+    <section className="account-content">
+      <nav className="account-section-nav" aria-label={t("account.title")}>
+        <a href="#plans">{t("account.planHistory")}</a><a href="#profile">{t("account.trainingProfile")}</a>
+        <a href="#membership">{t("account.membership")}</a><a href="#account">{t("account.accountAndData")}</a>
       </nav>
-      <div className="account-user">
-        <span>{(data.user.name || data.user.email || "C").slice(0, 1).toUpperCase()}</span>
-        <div><b>{data.user.name || t("account.userFallbackName")}</b><small>{data.user.email}</small></div>
-      </div>
-    </aside>
-
-    <section className="account-main">
-      <header className="account-topbar">
-        <div><span>CMINE FIT / MY TRAINING</span><strong>{t("account.title")}</strong></div>
-        <div><Link href="/nutrition">{t("account.nutritionLog")}</Link><Link href="/pricing">{t("account.membership")}</Link><Link href="/">{t("account.newPlan")} ↗</Link><button onClick={async () => { await signOutCmine(); window.location.assign("/"); }}>{t("account.signOut")}</button></div>
-      </header>
 
       <section className="account-hero" id="today">
         <div>
@@ -249,11 +249,11 @@ export default function AccountDashboard() {
           <span>{data.user.name?.split(" ")[0]
             ? t("account.welcomeBack", { name: data.user.name.split(" ")[0] })
             : t("account.welcomeBackNoName")}</span>
-          <h1>{todayPlan?.restDay ? t("account.heroRestTitle") : todayPlan ? (pick(todayPlan.title, locale) || t("account.planFallbackTitle")) : t("account.heroNoPlanTitle")}</h1>
+          <h2>{todayPlan?.restDay ? t("account.heroRestTitle") : todayPlan ? (pick(todayPlan.title, locale) || t("account.planFallbackTitle")) : t("account.heroNoPlanTitle")}</h2>
           {/* A plan that exists but carries no focus must not fall back to the
               no-plan line, which would be untrue for someone who has one. */}
           <p>{todayPlan ? (pick(todayPlan.focus, locale) || t("account.heroFocusFallback")) : t("account.heroNoPlanFocus")}</p>
-          {data.latestPlan ? <Link href="/today">{t("account.heroViewToday")} <b>→</b></Link> : <Link href="/onboarding">{t("account.createFirstPlan")} <b>→</b></Link>}
+          {data.latestPlan ? <Link href="/today">{t("account.heroViewToday")} <b></b></Link> : <Link href="/onboarding">{t("account.createFirstPlan")} <b></b></Link>}
         </div>
         <article>
           <small>TODAY</small>
@@ -276,20 +276,23 @@ export default function AccountDashboard() {
           <label><span>{t("account.feedbackRpe")}</span><input type="range" min="1" max="10" value={feedback.rpe} onChange={(event) => setFeedback({ ...feedback, rpe: Number(event.target.value) })} /><b>{feedback.rpe}/10</b></label>
           <label className="feedback-pain"><input type="checkbox" checked={feedback.pain} onChange={(event) => setFeedback({ ...feedback, pain: event.target.checked })} /><span>{t("account.feedbackPain")}</span></label>
           <label className="feedback-notes"><span>{t("account.notes")}</span><input value={feedback.notes} maxLength={500} onChange={(event) => setFeedback({ ...feedback, notes: event.target.value })} placeholder={t("account.feedbackNotesPlaceholder")} /></label>
-          <button onClick={() => void saveFeedback()} disabled={savingFeedback || !data.latestPlan}>{savingFeedback ? t("account.saving") : `${t("account.saveFeedback")} →`}</button>
+          <button onClick={() => void saveFeedback()} disabled={savingFeedback || !data.latestPlan}>{savingFeedback ? t("account.saving") : `${t("account.saveFeedback")} `}</button>
         </div>
       </section>
 
       <section className="account-panel" id="plans">
         <div className="account-section-title"><div><span>04 / PLAN HISTORY</span><h2>{t("account.planHistory")}</h2></div><p>{t("account.planHistoryIntro")}</p></div>
         {data.plans.length ? <div className="plan-history">
-          {data.plans.map((item, index) => <article key={item.id}>
+          {data.plans.map((item, index) => {
+            const insights = readPlanInsights(item.plan?.insights, locale);
+            const summary = insights?.contentLocale === locale ? insights.summary : null;
+            return <article key={item.id}>
             <div><span>{String(data.plans.length - index).padStart(2, "0")}</span><small>{dateText(item.createdAt, locale)}</small></div>
             <h3>{pick(item.plan?.schedule.find((day) => !day.restDay)?.title, locale) || t("account.planFallbackTitle")}</h3>
-            <p>{readPlanInsights(item.plan?.insights, locale)?.summary || t("account.planSummaryFallback", { days: item.profile?.days || "—", calories: item.plan?.calories || "—" })}</p>
+            <p>{summary || t("account.planSummaryFallback", { days: item.profile?.days || "—", calories: item.plan?.calories || "—" })}</p>
             <footer><span>{item.model}</span><b>{t.plural("account.planWeeks", item.plan?.weeks || 0)}</b></footer>
-          </article>)}
-        </div> : <div className="account-empty"><p>{t("account.planHistoryEmpty")}</p><Link href="/#coach">{t("account.createFirstPlan")} →</Link></div>}
+          </article>; })}
+        </div> : <div className="account-empty"><p>{t("account.planHistoryEmpty")}</p><Link href="/#coach">{t("account.createFirstPlan")} </Link></div>}
       </section>
 
       <section className="account-panel" id="progress">
@@ -304,7 +307,7 @@ export default function AccountDashboard() {
               <label><span>{t("account.measureArm")}</span><div><input type="number" min="15" max="80" step="0.1" value={measurement.armCm} onChange={(event) => setMeasurement({ ...measurement, armCm: event.target.value })} /><em>cm</em></div></label>
             </div>
             <label className="measurement-note"><span>{t("account.notes")}</span><input value={measurement.note} onChange={(event) => setMeasurement({ ...measurement, note: event.target.value })} placeholder={t("account.measurementNotePlaceholder")} /></label>
-            <button onClick={() => void addMeasurement()} disabled={savingMeasurement}>{savingMeasurement ? t("account.saving") : `${t("account.saveMeasurement")} →`}</button>
+            <button onClick={() => void addMeasurement()} disabled={savingMeasurement}>{savingMeasurement ? t("account.saving") : `${t("account.saveMeasurement")} `}</button>
           </div>
           <div className="progress-records">
             <div className="progress-summary"><span>{t("account.weightTrend")}</span><b>{weightChange === null ? t("account.weightTrendPending") : `${weightChange > 0 ? "+" : ""}${weightChange} kg`}</b></div>
@@ -335,7 +338,7 @@ export default function AccountDashboard() {
           <label><span>{t("account.profileDiet")}</span><select value={profile.dietaryPreference || "balanced"} onChange={(event) => setProfile({ ...profile, dietaryPreference: event.target.value as NonNullable<Profile["dietaryPreference"]> })}><option value="balanced">{t("account.dietBalanced")}</option><option value="vegetarian">{t("account.dietVegetarian")}</option><option value="high_protein">{t("account.dietHighProtein")}</option><option value="none">{t("account.dietNone")}</option></select></label>
           <label><span>{t("account.profileExclusions")}</span><input value={profile.exclusions || ""} onChange={(event) => setProfile({ ...profile, exclusions: event.target.value })} placeholder={t("account.optionalPlaceholder")} /></label>
           <label className="profile-limitations"><span>{t("account.profileLimitations")}</span><input value={profile.limitations} onChange={(event) => setProfile({ ...profile, limitations: event.target.value })} placeholder={t("account.optionalPlaceholder")} /></label>
-          <button onClick={() => void saveProfile()} disabled={savingProfile}>{savingProfile ? t("account.saving") : `${t("account.saveProfile")} →`}</button>
+          <button onClick={() => void saveProfile()} disabled={savingProfile}>{savingProfile ? t("account.saving") : `${t("account.saveProfile")} `}</button>
         </div>
       </section>
 
@@ -360,11 +363,11 @@ export default function AccountDashboard() {
             <li>{t("account.proCoachQuota", { count: data.product.usage.capabilities["coach.chat"]?.limit ?? "—" })}</li>
             <li>{t("account.proReviewFeature")}</li>
           </ul>
-          <div className="membership-price"><small>{t("account.subscriptionManage")}</small><b>PRO</b><span>{data.product.membership.status === "trial" ? t("account.trialBillingNote") : t("account.stripeBillingNote")}</span>{catalogConfigured && (data.product.membership.status === "trial" ? <Link href="/pricing">{t("account.viewSubscription")} →</Link> : <button onClick={() => void openBillingPortal()}>{t("account.manageSubscription")} →</button>)}</div>
+          <div className="membership-price"><small>{t("account.subscriptionManage")}</small><b>PRO</b><span>{data.product.membership.status === "trial" ? t("account.trialBillingNote") : t("account.stripeBillingNote")}</span>{catalogConfigured && (data.product.membership.status === "trial" ? <Link href="/pricing">{t("account.viewSubscription")} </Link> : <button onClick={() => void openBillingPortal()}>{t("account.manageSubscription")} </button>)}</div>
         </div> : <div className="membership-preview">
           <div><span>CMINE FIT PRO</span><h3>{t("account.freeHeadline")}</h3><p>{t("account.freeBody")}</p></div>
           <ul><li>{t("account.freeFeatureAdopt")}</li><li>{t("account.freeFeatureAdapt")}</li><li>{t("account.freeFeatureQuota")}</li><li>{t("account.freeFeatureTrends")}</li></ul>
-          <div className="membership-price"><small>{t("account.planPriceLabel")}</small><b>{t("account.planPriceValue")}</b><span>{t("account.planPriceNote")}</span>{catalogConfigured && <Link href="/pricing">{t("account.choosePro")} →</Link>}</div>
+          <div className="membership-price"><small>{t("account.planPriceLabel")}</small><b>{t("account.planPriceValue")}</b><span>{t("account.planPriceNote")}</span>{catalogConfigured && <Link href="/pricing">{t("account.choosePro")} </Link>}</div>
         </div>}
         <div className="points-redemption">
           <div><span>{t("account.pointsBalance")}</span><b>{data.points}</b><small>{t("account.pointsHint")}</small></div>
@@ -376,10 +379,21 @@ export default function AccountDashboard() {
       <HabitCommitmentCard />
       <NotificationPreferencesCard />
 
+      {/* Read-only by design. anyBite has planning documents and no deployed
+          service, so a toggle here would be a control that cannot do anything —
+          see docs/adr/0002. The adapter reports `unsupported`; this renders it. */}
+      <section className="account-panel account-integrations-panel" id="integrations">
+        <div className="account-section-title"><div><span>07.8 / INTEGRATIONS</span><h2>{t("product.integrations.title")}</h2></div><p>{t("product.integrations.intro")}</p></div>
+        <article className="integration-row">
+          <div><h3>{t("product.integrations.anybiteName")}</h3><p>{t("product.integrations.anybiteBody")}</p></div>
+          <span className="integration-status">{t("product.integrations.statusUnsupported")}</span>
+        </article>
+      </section>
+
       <section className="account-panel account-data-panel" id="account">
         <div className="account-section-title"><div><span>08 / ACCOUNT & DATA</span><h2>{t("account.accountAndData")}</h2></div><p>{t("account.accountDataIntro")}</p></div>
         <div className="account-data-actions">
-          <article><div><h3>{t("account.exportTitle")}</h3><p>{t("account.exportBody")}</p></div><a href="/api/v1/export">{t("account.exportStart")} ↗</a></article>
+          <article><div><h3>{t("account.exportTitle")}</h3><p>{t("account.exportBody")}</p></div><a href="/api/v1/export">{t("account.exportStart")} </a></article>
           <article className="danger"><div><h3>{t("account.deleteTitle")}</h3><p>{t("account.deleteBody")}</p></div><button onClick={() => void removeAccount()}>{t("account.deleteAction")}</button></article>
         </div>
       </section>
@@ -387,7 +401,7 @@ export default function AccountDashboard() {
       <footer className="account-footer"><span>{t("account.footerTagline")}</span><p>{t("account.footerDisclaimer")}</p></footer>
     </section>
     {notice && <div className="toast account-toast">{notice}</div>}
-  </main>;
+  </ProductShell>;
 }
 
 type NotificationPreferences = { training: boolean; coach: boolean; reviews: boolean; nutrition: boolean; billing: boolean; quietStart: string; quietEnd: string };

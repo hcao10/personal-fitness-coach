@@ -1,5 +1,6 @@
 // Stateless by design: this package has no account, database, or network dependencies.
 import { EXERCISE_POOL, type MovementPattern } from "./exercise-pool.ts";
+import { calculateBmi } from "./body-metrics.ts";
 
 // Keeps the package standalone (no dependency on packages/i18n) while collapsing
 // what used to be a dozen separate { zh; en } literals into one alias: widening
@@ -8,6 +9,7 @@ import { EXERCISE_POOL, type MovementPattern } from "./exercise-pool.ts";
 export type Localized<T = string> = { zh: T; en: T };
 
 export { EXERCISE_POOL, type MovementPattern, type PoolExercise } from "./exercise-pool.ts";
+export { calculateBmi, bmiCategory, type BmiCategory } from "./body-metrics.ts";
 
 export type Goal = "fat_loss" | "muscle" | "recomp" | "arms" | "strength";
 export type Sex = "female" | "male";
@@ -81,6 +83,16 @@ export type PlanPhase = {
   currentWeek: number;
   weeklyFocus: Array<Localized>;
 };
+export type TrainingPrescription = {
+  version: "evidence-v2";
+  weeklyStrengthDays: number;
+  weeklySetsPerMajorMuscle: { min: number; max: number };
+  targetRir: number;
+  repRange: string;
+  compoundRestSeconds: number;
+  isolationRestSeconds: number;
+  aerobicMinutes: { min: number; max: number };
+};
 /**
  * Everything the planner says about a plan in prose.
  *
@@ -117,6 +129,7 @@ export type CoachPlan = {
   bmr: number; tdee: number; calories: number; calorieDelta: number; bmi: number;
   weeks: number; protein: number; carbs: number; fat: number;
   track?: TrainingTrack;
+  prescription?: TrainingPrescription;
   phase?: PlanPhase;
   schedule: WorkoutDay[]; confidence: "high" | "medium";
   insights?: PlanInsights | LegacyPlanInsights;
@@ -202,7 +215,7 @@ export function exercisePattern(exerciseId: string): MovementPattern | null {
 // Reviewed labels for each movement pattern. Hand-written in both languages,
 // which is what lets a day title stay multilingual: it is dataset content, not
 // prose someone generated once in one language.
-const PATTERN_LABEL: Record<MovementPattern, Localized> = {
+export const PATTERN_LABEL: Record<MovementPattern, Localized> = {
   push_h: { zh: "水平推", en: "Horizontal push" },
   push_v: { zh: "垂直推", en: "Vertical push" },
   pull_h: { zh: "水平拉", en: "Horizontal pull" },
@@ -272,6 +285,27 @@ const repByExperience: Record<Experience, { sets: number; reps: string; rest: st
   intermediate: { sets: 4, reps: "8–12", rest: "75s" },
   advanced: { sets: 4, reps: "6–10", rest: "90s" },
 };
+
+/**
+ * Conservative defaults for healthy adults. The planner may choose movements,
+ * but dose and progression boundaries stay deterministic and auditable.
+ */
+export function evidencePrescription(profile: Profile): TrainingPrescription {
+  const hypertrophy = profile.goal === "muscle" || profile.goal === "arms" || profile.goal === "recomp";
+  const weeklySetsPerMajorMuscle = profile.experience === "beginner"
+    ? { min: 6, max: 10 }
+    : profile.experience === "intermediate" ? { min: 8, max: 14 } : { min: 10, max: 16 };
+  return {
+    version: "evidence-v2",
+    weeklyStrengthDays: Math.max(2, Math.min(profile.days, profile.experience === "advanced" ? 5 : 4)),
+    weeklySetsPerMajorMuscle,
+    targetRir: profile.experience === "beginner" ? 3 : hypertrophy ? 2 : 3,
+    repRange: profile.goal === "strength" ? "5–8" : hypertrophy ? "8–12" : "8–12",
+    compoundRestSeconds: profile.goal === "strength" ? 180 : 120,
+    isolationRestSeconds: hypertrophy ? 75 : 60,
+    aerobicMinutes: profile.goal === "fat_loss" ? { min: 150, max: 300 } : { min: 75, max: 150 },
+  };
+}
 
 type SessionSeed = { title: Localized; focus: Localized; exerciseIds: string[] };
 const sessionLibraries: Record<Goal, SessionSeed[]> = {
@@ -385,6 +419,7 @@ export function decoratePlanSchedule(profile: Profile, schedule: WorkoutDay[]): 
 
 function buildSchedule(profile: Profile): WorkoutDay[] {
   const track = resolveTrainingTrack(profile);
+  const evidence = evidencePrescription(profile);
   const allowedDays = track === "beginner_fat_loss" ? Math.min(4, profile.days) : profile.days;
   const slots = trainingSlots(allowedDays);
   const library = sessionLibraries[profile.goal];
@@ -403,10 +438,10 @@ function buildSchedule(profile: Profile): WorkoutDay[] {
     const exercises = Array.from(unique.values()).map((exercise, index) => ({
       ...exercise,
       sets: track === "beginner_fat_loss" ? (index < 2 ? 3 : 2) : index === 0 && profile.experience === "beginner" ? 3 : prescription.sets,
-      reps: exercise.id === "deadBug" ? "8/side" : prescription.reps,
-      rest: track === "beginner_fat_loss" ? "60–75s" : prescription.rest,
-      restSeconds: track === "beginner_fat_loss" ? 60 : profile.experience === "advanced" ? 90 : 75,
-      targetRir: track === "beginner_fat_loss" ? null : profile.experience === "advanced" ? 1 : 2,
+      reps: exercise.id === "deadBug" ? "8/side" : evidence.repRange,
+      rest: `${exercisePattern(exercise.id)?.startsWith("iso_") || exercisePattern(exercise.id) === "core" ? evidence.isolationRestSeconds : evidence.compoundRestSeconds}s`,
+      restSeconds: exercisePattern(exercise.id)?.startsWith("iso_") || exercisePattern(exercise.id) === "core" ? evidence.isolationRestSeconds : evidence.compoundRestSeconds,
+      targetRir: evidence.targetRir,
       progression: track === "beginner_fat_loss"
         ? { zh: "动作稳定后再增加次数或难度。", en: "Add reps or difficulty only after the movement feels stable." }
         : { zh: "达到次数上限且保留目标 RIR 时，下次负重最多增加 5%。", en: "At the top of the rep range and target RIR, add no more than 5% next time." },
@@ -425,9 +460,14 @@ export function generatePlan(profile: Profile): CoachPlan {
   const bmr = 10 * weight + 6.25 * height - 5 * age + sexOffset;
   const tdee = bmr * activityFactors[profile.activity];
   let calorieDelta = 0;
-  if (profile.goal === "fat_loss") calorieDelta = -Math.min(700, Math.max(300, weight * 5.5));
+  if (profile.goal === "fat_loss") {
+    // Aim near 0.5% body weight per week, while capping the deficit at 25% of
+    // estimated expenditure. This is a starting estimate, not a promise.
+    const targetDeficit = weight * 7700 * 0.005 / 7;
+    calorieDelta = -Math.min(750, tdee * 0.25, Math.max(250, targetDeficit));
+  }
   if (profile.goal === "arms") calorieDelta = profile.targetWeight < weight ? -250 : 0;
-  if (profile.goal === "muscle") calorieDelta = profile.experience === "beginner" ? 250 : 180;
+  if (profile.goal === "muscle") calorieDelta = profile.acceptsWeightGain ? Math.min(300, Math.max(150, tdee * 0.07)) : 0;
   if (profile.goal === "strength") calorieDelta = 120;
   const minimum = profile.sex === "female" ? 1200 : 1500;
   const calories = Math.max(minimum, Math.round((tdee + calorieDelta) / 10) * 10);
@@ -439,15 +479,16 @@ export function generatePlan(profile: Profile): CoachPlan {
   else if (profile.goal === "strength") weeks = 8;
   else if (profile.goal === "arms") weeks = 10;
   weeks = Math.min(52, weeks);
-  const proteinMultiplier = profile.goal === "muscle" ? 2 : profile.goal === "fat_loss" ? 1.9 : 1.7;
+  const proteinMultiplier = profile.goal === "fat_loss" ? 1.8 : profile.goal === "muscle" || profile.goal === "recomp" ? 1.6 : 1.6;
   const protein = Math.round(weight * proteinMultiplier);
-  const fat = Math.round(weight * 0.8);
+  const fat = Math.round(Math.max(weight * 0.6, calories * 0.2 / 9));
   const carbs = Math.max(70, Math.round((calories - protein * 4 - fat * 9) / 4));
   const staged = decoratePlanSchedule(profile, buildSchedule(profile));
   return {
     bmr: Math.round(bmr), tdee: Math.round(tdee), calories, calorieDelta,
-    bmi: Number((weight / ((height / 100) ** 2)).toFixed(1)), weeks, protein, carbs, fat,
-    schedule: staged.schedule, phase: staged.phase, confidence: profile.limitations.trim() ? "medium" : "high", track,
+    bmi: calculateBmi(weight, height) ?? 0, weeks, protein, carbs, fat,
+    schedule: staged.schedule, phase: staged.phase, prescription: evidencePrescription(profile),
+    confidence: profile.limitations.trim() ? "medium" : "high", track,
   };
 }
 

@@ -54,15 +54,30 @@ test("fewer than two logged sessions holds and asks for data", () => {
   assert.equal(adjustment.confidence, "low");
 });
 
-test("acute load spike above 1.35x chronic average recommends a deload and pauses increases", () => {
+test("workload ratio is a context signal and does not prescribe a deload by itself", () => {
   const sets = [];
   for (let age = 27; age >= 7; age -= 3) sets.push(set("bench", age, 60, 10, 2));
   for (let index = 0; index < 14; index += 1) sets.push(set("bench", index % 6, 60, 12, 2));
   const ratio = fatigueRatio(sets, TODAY);
-  assert.ok(ratio > 1.35, `expected spike ratio > 1.35, got ${ratio}`);
+  assert.ok(ratio > 1.5, `expected a clear workload spike, got ${ratio}`);
   const report = runEngine({ today: TODAY, experience: "intermediate", sessions: [], sets, exercises: [bench] });
+  assert.equal(report.deloadRecommended, false);
+});
+
+test("a workload spike plus repeated high RPE recommends a deload and pauses increases", () => {
+  const sets = [];
+  for (let age = 27; age >= 7; age -= 3) sets.push(set("bench", age, 60, 10, 2));
+  for (let index = 0; index < 14; index += 1) sets.push(set("bench", index % 6, 60, 12, 2));
+  const sessions = [{ date: day(2), rpe: 9, pain: 0 }, { date: day(4), rpe: 9, pain: 0 }];
+  const report = runEngine({ today: TODAY, experience: "intermediate", sessions, sets, exercises: [bench] });
   assert.equal(report.deloadRecommended, true);
   assert.ok(report.adjustments.every((item) => item.kind !== "increase_load"), "load increases must be withheld during a deload");
+});
+
+test("poor recovery check-in can recommend a deload without inventing pain", () => {
+  const report = runEngine({ today: TODAY, experience: "beginner", sessions: [], sets: [], exercises: [], recovery: { recovery: 1, sleep: 1, pain: 0 } });
+  assert.equal(report.deloadRecommended, true);
+  assert.doesNotMatch(report.deloadReason.zh, /疼痛信号/);
 });
 
 test("two painful sessions inside a week recommend a deload", () => {

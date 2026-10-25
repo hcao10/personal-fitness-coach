@@ -1,13 +1,23 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { beginCmineLogin } from "../lib/auth";
 import { useLocale } from "../lib/i18n-provider";
 
 type AdminUser = { id: string; email: string | null; name: string | null; status: string; createdAt?: string; created_at?: string };
 type AiRoute = { id: string; task: string; tier: string; priority: number; provider: "cloudflare" | "openai" | "compatible"; model: string; enabled: boolean };
+type CatalogProvider = { id: string; name: string; npm: string; doc: string; modelCount: number; configured: boolean; runtime: string };
+type CatalogModel = {
+  id: string; name: string; description: string; reasoning: boolean; reasoningEfforts: string[]; structuredOutput: boolean;
+  status: string; releaseDate: string | null; lastUpdated: string | null; modalities: { input?: string[]; output?: string[] };
+  cost: { input?: number; output?: number } | null; limits: { context?: number; output?: number } | null; available: boolean; selectable: boolean;
+};
+type ModelCatalog = {
+  source: string; sourceUrl: string; error: string; selectedProvider: string; providers: CatalogProvider[]; models: CatalogModel[];
+  connection: { ok: boolean; configured: boolean; latencyMs: number; modelIds: string[]; message: string };
+};
 type AdminOverview = {
   admin: { email: string | null; name: string | null; role: string };
   metrics: Record<string, number> & {
@@ -47,6 +57,34 @@ export default function AdminDashboard() {
   const [userQuery, setUserQuery] = useState("");
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [routes, setRoutes] = useState<AiRoute[]>([]);
+  const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
+  const [openAiModels, setOpenAiModels] = useState<CatalogModel[]>([]);
+  const [openAiConnection, setOpenAiConnection] = useState<ModelCatalog["connection"] | null>(null);
+  const [catalogProvider, setCatalogProvider] = useState("openai");
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [modelSearch, setModelSearch] = useState("");
+  const [defaultOpenAiModel, setDefaultOpenAiModel] = useState("");
+  const [reasoningEffort, setReasoningEffort] = useState("medium");
+
+  const loadCatalog = useCallback(async (provider: string) => {
+    setCatalogLoading(true);
+    const response = await fetch(`/api/v1/admin/llm/catalog?provider=${encodeURIComponent(provider)}`, { cache: "no-store" }).catch(() => null);
+    const body = await response?.json().catch(() => null) as ModelCatalog | { message?: string } | null;
+    if (!response?.ok || !body || !("providers" in body)) {
+      setNotice((body as { message?: string } | null)?.message || "模型目录读取失败。");
+      setCatalogLoading(false);
+      return;
+    }
+    setCatalog(body);
+    if (provider === "openai") {
+      setOpenAiModels(body.models.filter((model) => model.selectable));
+      setOpenAiConnection(body.connection);
+      const firstSelectable = body.models.find((model) => model.selectable)?.id || "";
+      setDefaultOpenAiModel((current) => current || firstSelectable);
+    }
+    setCatalogProvider(provider);
+    setCatalogLoading(false);
+  }, []);
 
   const load = async () => {
     const response = await fetch("/api/v1/admin/overview", { cache: "no-store" }).catch(() => null);
@@ -61,14 +99,16 @@ export default function AdminDashboard() {
     setAnnouncement(String(next.settings.announcement?.value || ""));
     setRoutes(next.aiRoutes || []);
     setUsers(next.recentUsers || []);
+    setDefaultOpenAiModel(String(next.settings.openai_model?.value || ""));
+    setReasoningEffort(String(next.settings.openai_reasoning_effort?.value || next.services.reasoningEffort || "medium"));
     setError("");
     setErrorCode("");
   };
 
   useEffect(() => {
-    const task = window.setTimeout(() => void load(), 0);
+    const task = window.setTimeout(() => { void load(); void loadCatalog("openai"); }, 0);
     return () => window.clearTimeout(task);
-  }, []);
+  }, [loadCatalog]);
   useEffect(() => {
     if (!notice) return;
     const timer = window.setTimeout(() => setNotice(""), 3600);
@@ -112,13 +152,43 @@ export default function AdminDashboard() {
     await load();
   };
 
+  const testOpenAiKey = async () => {
+    const response = await fetch("/api/v1/admin/llm/test", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ provider: "openai", model: defaultOpenAiModel || undefined }),
+    });
+    const body = await response.json().catch(() => null) as { message?: string } | null;
+    setNotice(body?.message || "API Key 测试失败。");
+    await loadCatalog("openai");
+  };
+
+  const saveOpenAiDefaults = async () => {
+    if (!defaultOpenAiModel) return setNotice("请先选择一个当前账号可用的 OpenAI 模型。");
+    const requests = [
+      ["openai_model", defaultOpenAiModel],
+      ["openai_reasoning_effort", reasoningEffort],
+    ].map(([key, value]) => fetch("/api/v1/admin/settings", {
+      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ key, value }),
+    }));
+    const responses = await Promise.all(requests);
+    if (responses.some((response) => !response.ok)) return setNotice("OpenAI 默认设置保存失败。");
+    setNotice("OpenAI 默认模型和推理强度已经保存。");
+    await load();
+  };
+
+  const applyModelToOpenAiRoutes = () => {
+    if (!defaultOpenAiModel) return setNotice("请先选择 OpenAI 模型。");
+    setRoutes((current) => current.map((route) => route.provider === "openai" ? { ...route, model: defaultOpenAiModel } : route));
+    setNotice("已填入所有 OpenAI 路由；确认后逐项保存即可生效。");
+  };
+
   if (error) {
     return <section className="admin-denied">
       <span>CMINE ID · ACCESS CONTROL</span>
       <h1>{errorCode === "AUTH_REQUIRED" ? "先确认你的 Cmine 身份。" : "当前账号不能进入管理后台。"}</h1>
       <p>{error}</p>
       {errorCode === "AUTH_REQUIRED"
-        ? <button className="admin-login-button" onClick={() => void beginCmineLogin("/admin", locale)}>使用 Cmine ID 登录 →</button>
+        ? <button className="admin-login-button" onClick={() => void beginCmineLogin("/admin", locale)}>使用 Cmine ID 登录 </button>
         : <Link href="/account">查看当前登录账号</Link>}
     </section>;
   }
@@ -140,6 +210,13 @@ export default function AdminDashboard() {
     { name: "服务端推送", detail: "训练提醒、周教练信与试用到期提醒", live: Boolean(services?.push) },
     { name: "激励广告", detail: "只有签名回调成功才发积分", live: Boolean(services?.rewardAds) },
   ];
+  const selectableOpenAiModels = openAiModels;
+  const selectedDefaultModel = selectableOpenAiModels.find((model) => model.id === defaultOpenAiModel);
+  const reasoningEffortOptions = selectedDefaultModel?.reasoningEfforts.length
+    ? selectedDefaultModel.reasoningEfforts : ["none", "low", "medium", "high", "xhigh", "max"];
+  const normalizedModelSearch = modelSearch.trim().toLowerCase();
+  const visibleCatalogModels = (catalog?.models || []).filter((model) => !normalizedModelSearch ||
+    model.id.toLowerCase().includes(normalizedModelSearch) || model.name.toLowerCase().includes(normalizedModelSearch)).slice(0, 40);
 
   return <>
     <div className="admin-intro">
@@ -179,13 +256,60 @@ export default function AdminDashboard() {
     </section>
 
     <section className="admin-panel" id="models">
-      <div className="admin-section-title"><div><span>03 / AI ROUTING</span><h2>模型路由</h2></div><p>按任务与用户权益切换供应商。密钥不会出现在此页面。</p></div>
+      <div className="admin-section-title"><div><span>03 / AI ROUTING</span><h2>模型与提供商</h2></div><p>密钥只保存在 Cloudflare。后台从提供商读取当前账号可用模型，并用开源目录补充价格和能力信息。</p></div>
+      <div className="llm-control-grid">
+        <article>
+          <div><span>OpenAI 连接</span><h3>{openAiConnection?.ok ? "API Key 有效" : openAiConnection?.configured ? "连接异常" : "尚未配置"}</h3><p>{openAiConnection?.message || "正在读取提供商状态…"}</p></div>
+          <button disabled={catalogLoading} onClick={() => void testOpenAiKey()}>{catalogLoading ? "正在检查…" : "测试 API Key"}</button>
+        </article>
+        <article>
+          <label><span>默认 OpenAI 模型</span><select value={defaultOpenAiModel} onChange={(event) => {
+            const model = selectableOpenAiModels.find((item) => item.id === event.target.value);
+            setDefaultOpenAiModel(event.target.value);
+            if (model?.reasoningEfforts.length && !model.reasoningEfforts.includes(reasoningEffort)) {
+              setReasoningEffort(model.reasoningEfforts.includes("medium") ? "medium" : model.reasoningEfforts[0]);
+            }
+          }}>
+            {!defaultOpenAiModel && <option value="">请选择模型</option>}
+            {defaultOpenAiModel && !selectableOpenAiModels.some((model) => model.id === defaultOpenAiModel) && <option value={defaultOpenAiModel}>{defaultOpenAiModel}（当前设置）</option>}
+            {selectableOpenAiModels.map((model) => <option key={model.id} value={model.id}>{model.name} · {model.id}</option>)}
+          </select></label>
+          <label><span>推理强度</span><select value={reasoningEffort} onChange={(event) => setReasoningEffort(event.target.value)}>
+            {!reasoningEffortOptions.includes(reasoningEffort) && <option value={reasoningEffort}>{reasoningEffort}（当前设置）</option>}
+            {reasoningEffortOptions.map((effort) => <option key={effort} value={effort}>{effort}</option>)}
+          </select></label>
+          <div className="llm-actions"><button onClick={() => void saveOpenAiDefaults()}>保存默认设置</button><button className="secondary" onClick={applyModelToOpenAiRoutes}>填入 OpenAI 路由</button></div>
+        </article>
+      </div>
+      <div className="model-library-toolbar">
+        <label><span>提供商目录</span><select value={catalogProvider} disabled={catalogLoading} onChange={(event) => void loadCatalog(event.target.value)}>
+          {(catalog?.providers || []).map((provider) => <option key={provider.id} value={provider.id}>{provider.name} · {provider.modelCount} 个模型{provider.configured ? " · 已配置" : ""}</option>)}
+        </select></label>
+        <label><span>搜索模型</span><input value={modelSearch} onChange={(event) => setModelSearch(event.target.value)} placeholder="名称或模型 ID" /></label>
+        <p>目录来自 <a href="https://models.dev" target="_blank" rel="noreferrer">models.dev </a>；“可用”以提供商 API 返回结果为准。</p>
+      </div>
+      {catalog?.error && <div className="admin-empty">{catalog.error}</div>}
+      <div className="model-library-list">{visibleCatalogModels.map((model) => <article key={model.id}>
+        <div><b>{model.name}</b><code>{model.id}</code></div>
+        <p>{model.description || `${model.modalities.input?.join(" + ") || "text"}  ${model.modalities.output?.join(" + ") || "text"}`}</p>
+        <span>{model.reasoning ? `推理 ${model.reasoningEfforts.join("/") || "支持"}` : "非推理"}</span>
+        <span>{model.limits?.context ? `${Math.round(model.limits.context / 1000)}K 上下文` : "上下文未标注"}</span>
+        <span>{model.cost ? `$${model.cost.input ?? "—"} / $${model.cost.output ?? "—"}` : "价格未标注"}</span>
+        <em className={model.available ? "status-good" : "status-warn"}>{model.available ? "当前 Key 可用" : model.status === "deprecated" ? "已弃用" : "目录参考"}</em>
+      </article>)}</div>
+      {!catalogLoading && !visibleCatalogModels.length && <div className="admin-empty">没有符合条件的模型。</div>}
+      <h3 className="admin-subhead">任务路由</h3>
       <div className="ai-route-list">{routes.map((route, index) => <article key={route.id}>
         <div><b>{route.task}</b><span>{route.tier} · 优先级 {route.priority}</span></div>
         <select value={route.provider} onChange={(event) => setRoutes((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, provider: event.target.value as AiRoute["provider"] } : item))}>
           <option value="cloudflare">Cloudflare</option><option value="openai">OpenAI</option><option value="compatible">OpenAI-compatible</option>
         </select>
-        <input value={route.model} onChange={(event) => setRoutes((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, model: event.target.value } : item))} />
+        {route.provider === "openai" && selectableOpenAiModels.length
+          ? <select value={route.model} onChange={(event) => setRoutes((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, model: event.target.value } : item))}>
+              {!selectableOpenAiModels.some((model) => model.id === route.model) && <option value={route.model}>{route.model}（当前）</option>}
+              {selectableOpenAiModels.map((model) => <option key={model.id} value={model.id}>{model.name} · {model.id}</option>)}
+            </select>
+          : <input value={route.model} onChange={(event) => setRoutes((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, model: event.target.value } : item))} />}
         <label><input type="checkbox" checked={route.enabled} onChange={(event) => setRoutes((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, enabled: event.target.checked } : item))} />启用</label>
         <button onClick={() => void updateRoute(route)}>保存</button>
       </article>)}</div>
@@ -229,7 +353,7 @@ export default function AdminDashboard() {
     <section className="admin-panel" id="nutrition-admin">
       <div className="admin-section-title"><div><span>06 / NUTRITION</span><h2>营养识别质量</h2></div><p>低置信度结果必须由用户确认，不以图片估算冒充精确热量。</p></div>
       <div className="nutrition-admin-metrics"><article><span>识别请求</span><b>{metrics?.mealAnalyses ?? 0}</b></article><article><span>成功率</span><b>{metrics?.mealAnalysisSuccessRate ?? 0}%</b></article><article><span>低置信度</span><b>{metrics?.lowConfidenceMeals ?? 0}</b></article><article><span>确认餐食</span><b>{metrics?.meals ?? 0}</b></article><article><span>食品搜索</span><b>{metrics?.foodSearches ?? 0}</b></article><article><span>零结果率</span><b>{metrics?.foodZeroResultRate ?? 0}%</b></article><article><span>待审纠错</span><b>{metrics?.pendingFoodCorrections ?? 0}</b></article><article><span>用户食品</span><b>{metrics?.customFoods ?? 0}</b></article></div>
-      <div className="food-source-admin">{overview?.foodSources?.map((source) => <article key={source.source}><div><b>{source.title}</b><span>{source.source} · {source.license_name}</span></div><a href={source.license_url} target="_blank" rel="noreferrer">许可证 ↗</a><em className={source.status === "verified" ? "status-good" : "status-warn"}>{source.status === "verified" ? "已核验" : "待核验"}</em></article>)}</div>
+      <div className="food-source-admin">{overview?.foodSources?.map((source) => <article key={source.source}><div><b>{source.title}</b><span>{source.source} · {source.license_name}</span></div><a href={source.license_url} target="_blank" rel="noreferrer">许可证 </a><em className={source.status === "verified" ? "status-good" : "status-warn"}>{source.status === "verified" ? "已核验" : "待核验"}</em></article>)}</div>
     </section>
 
     <section className="admin-panel" id="users">

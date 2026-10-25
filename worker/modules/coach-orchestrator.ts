@@ -4,30 +4,20 @@ import type { StoredUser } from "../db";
 import { ensureActiveOccurrences, localDateInTimezone, occurrenceForDate, profileForUser, setOccurrenceMode } from "../db";
 import type { WorkerEnv } from "../platform";
 import { entitlementSnapshot } from "../product";
+import { tierForUser } from "../product";
+import { generateConversationSummary } from "../llm";
+import { recordGenerationRun } from "../telemetry";
+import { toLocale, translator } from "../../packages/i18n/src";
 
 function parseJson<T>(value: string | null | undefined): T | null { try { return value ? JSON.parse(value) as T : null; } catch { return null; } }
 function clamp(value: unknown, min: number, max: number) { return Math.max(min, Math.min(max, Number(value))); }
 function dateDifference(start: string, end: string) { return Math.floor((new Date(`${end}T00:00:00Z`).getTime() - new Date(`${start}T00:00:00Z`).getTime()) / 86_400_000); }
 
-export async function knowledgeForQuestion(env: WorkerEnv, question: string) {
-  if (!env.DB) return [];
-  const rows = await env.DB.prepare(`SELECT a.id,a.title,a.summary,a.keywords,s.title AS source_title,s.publisher,s.url
-    FROM knowledge_articles a JOIN knowledge_sources s ON s.id=a.source_id
-    WHERE a.status='active' AND s.status='active' LIMIT 30`).all<{
-      id: string; title: string; summary: string; keywords: string; source_title: string; publisher: string; url: string;
-    }>();
-  const terms = question.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((term) => term.length >= 2);
-  return (rows.results || []).map((row) => {
-    const haystack = `${row.title} ${row.summary} ${row.keywords}`.toLowerCase();
-    return { row, score: terms.reduce((score, term) => score + (haystack.includes(term) ? 1 : 0), 0) };
-  }).filter((item) => item.score > 0).sort((a, b) => b.score - a.score).slice(0, 3).map(({ row }) => ({
-    id: row.id, title: row.title, summary: row.summary, publisher: row.publisher, url: row.url,
-  }));
-}
-
 export async function coachHome(env: WorkerEnv, user: StoredUser) {
   if (!env.DB) throw new Error("DATABASE_NOT_CONFIGURED");
   const cycle = await ensureActiveOccurrences(env, user.id);
+  const locale = toLocale(user.locale);
+  const t = translator(locale);
   const timezone = user.timezone || cycle?.timezone || "UTC";
   const localDate = localDateInTimezone(timezone);
   const occurrence = cycle ? await occurrenceForDate(env, user.id, localDate) : null;
@@ -35,7 +25,7 @@ export async function coachHome(env: WorkerEnv, user: StoredUser) {
   const profile = cycle?.profile as Profile | null;
   const relativeDay = cycle ? Math.max(0, dateDifference(cycle.startDate, localDate)) : 0;
   const dayIndex = occurrence?.day_index ?? relativeDay % 7;
-  const day = plan?.schedule?.[dayIndex] || null;
+  const day = (occurrence?.workout_override_json ? parseJson<WorkoutDay>(occurrence.workout_override_json) : null) || plan?.schedule?.[dayIndex] || null;
   const since = new Date(Date.now() - 28 * 86_400_000).toISOString();
   const [occurrenceSessions, legacySessions, measurement, nutrition, health, pending, review, memoryCount, preferences, product] = await Promise.all([
     env.DB.prepare(`SELECT rpe,pain,duration_minutes,status,completed_at FROM workout_occurrence_sessions
@@ -68,24 +58,24 @@ export async function coachHome(env: WorkerEnv, user: StoredUser) {
   const recentRpe = completed.filter((item) => Number.isFinite(item.rpe)).slice(0, 2).map((item) => Number(item.rpe));
   const steps = (health.results || []).find((item) => item.type === "steps");
   const evidence: CoachEvidence[] = [];
-  if (plan) evidence.push({ label: "当前计划", value: `${plan.phase?.currentWeek || Math.floor(relativeDay / 7) + 1}/${plan.phase?.lengthWeeks || cycle?.phaseWeeks || 4} 周`, observedAt: cycle?.startDate, source: "Cmine Fit" });
-  if (recentRpe.length) evidence.push({ label: "最近训练 RPE", value: recentRpe.join("、"), observedAt: completed[0]?.completed_at, source: "训练记录" });
-  if (measurement?.weight_kg) evidence.push({ label: "最近体重", value: `${measurement.weight_kg} kg`, observedAt: measurement.measured_at, source: "身体记录" });
-  if (steps) evidence.push({ label: "最近步数", value: `${Math.round(steps.value)} 步`, observedAt: steps.observed_at, source: steps.source_name || "健康设备" });
+  if (plan) evidence.push({ label: t("coach.briefEvidencePlan"), value: t("coach.briefWeekValue", { current: plan.phase?.currentWeek || Math.floor(relativeDay / 7) + 1, total: plan.phase?.lengthWeeks || cycle?.phaseWeeks || 4 }), observedAt: cycle?.startDate, source: "Cmine Fit" });
+  if (recentRpe.length) evidence.push({ label: t("coach.briefEvidenceRpe"), value: recentRpe.join(locale === "zh" ? "、" : ", "), observedAt: completed[0]?.completed_at, source: t("coach.briefSourceTraining") });
+  if (measurement?.weight_kg) evidence.push({ label: t("coach.briefEvidenceWeight"), value: `${measurement.weight_kg} kg`, observedAt: measurement.measured_at, source: t("coach.briefSourceBody") });
+  if (steps) evidence.push({ label: t("coach.briefEvidenceSteps"), value: t("coach.briefStepsValue", { count: Math.round(steps.value) }), observedAt: steps.observed_at, source: steps.source_name || t("coach.briefSourceHealth") });
   const dataState: CoachDailyBrief["dataState"] = product.membership.tier === "pro" && completed.length >= 2 ? "personalized" : evidence.length > 1 ? "partial" : "plan_only";
   const rest = !day || Boolean(day.restDay);
   const proactiveEnabled = preferences ? Boolean(preferences.proactive_enabled) : true;
   const priorities = !proactiveEnabled ? [] : rest
-    ? ["完成轻松步行或日常活动", "用 8 分钟活动主要关节", `优先达到约 ${plan?.protein || "计划"} g 蛋白质目标`]
-    : [`完成 ${day.title.zh} 的关键动作`, `预留约 ${day.duration} 分钟`, "动作不适时立即使用替代动作，不勉强完成"];
+    ? [t("coach.briefRestWalk"), t("coach.briefRestMobility"), t("coach.briefProteinTarget", { grams: plan?.protein || "—" })]
+    : [t("coach.briefTrainingPriority", { title: day.title[locale] }), t("coach.briefReserveMinutes", { minutes: day.duration }), t("coach.briefUseAlternative")];
   const brief: CoachDailyBrief = {
     localDate,
-    headline: rest ? "今天的任务是恢复好，而不是补偿昨天。" : `今天：${day.title.zh}`,
+    headline: rest ? t("coach.briefRestHeadline") : t("coach.briefTrainingHeadline", { title: day.title[locale] }),
     summary: dataState === "plan_only"
-      ? "目前主要根据当前计划安排；完成几次训练并记录反馈后，建议会更贴近你的实际状态。"
-      : recentRpe.some((value) => value >= 9) ? "最近训练强度偏高，今天先保证动作质量，不主动增加负荷。" : "结合最近记录，今天可以按当前节奏完成。",
+      ? t("coach.briefPlanOnlySummary")
+      : recentRpe.some((value) => value >= 9) ? t("coach.briefHighRpeSummary") : t("coach.briefReadySummary"),
     priorities,
-    primaryAction: { label: rest ? "查看恢复安排" : "开始今天训练", href: "/today", kind: rest ? "recover" : "train" },
+    primaryAction: { label: rest ? t("coach.briefRecoveryAction") : t("coach.briefTrainingAction"), href: "/today", kind: rest ? "recover" : "train" },
     basis: evidence,
     dataState,
   };
@@ -96,7 +86,7 @@ export async function coachHome(env: WorkerEnv, user: StoredUser) {
   return {
     brief,
     phase: plan?.phase ? { ...plan.phase, currentWeek: Math.min(plan.phase.lengthWeeks, Math.floor(relativeDay / 7) + 1), progressPct: Math.min(100, Math.round((relativeDay + 1) / (plan.phase.lengthWeeks * 7) * 100)) } : null,
-    today: day ? { occurrenceId: occurrence?.id || null, scheduledDate: localDate, dayIndex, status: occurrence?.status || "scheduled", mode: occurrence?.mode || "standard", workout: day } : null,
+    today: day ? { occurrenceId: occurrence?.id || null, scheduledDate: localDate, dayIndex, status: occurrence?.status || "scheduled", mode: occurrence?.mode || "standard", revision: occurrence?.revision || 0, versionId: occurrence?.version_id || null, workout: day } : null,
     pendingActions: (pending.results || []).map((item) => ({ id: item.id, type: item.action_type, status: item.status, expiresAt: item.expires_at, payload: parseJson(item.payload_json) || {} })),
     latestReview: review || null,
     memoryCount: Number(memoryCount?.value || 0),
@@ -113,13 +103,14 @@ export async function saveCoachCheckin(env: WorkerEnv, user: StoredUser, input: 
   const availableMinutes = clamp(input.availableMinutes, 10, 180);
   if (![energy, soreness, pain, availableMinutes].every(Number.isFinite)) throw new Error("INVALID_CHECKIN");
   const home = await coachHome(env, user); const plannedDuration = Number(home.today?.workout.duration || 30);
+  const t = translator(toLocale(user.locale));
   let mode: "standard" | "short" | "recovery" | "reschedule" = "standard";
-  let title = "按原计划完成"; let explanation = "当前反馈没有触发减量条件，先保持动作质量。";
-  if (pain >= 4) { mode = "recovery"; title = "停止引发疼痛的动作"; explanation = "疼痛达到安全拦截范围，今天不增加强度；只做无痛活动或改日完成。"; }
-  else if (energy <= 1 || soreness >= 8) { mode = "recovery"; title = "今天使用恢复版"; explanation = "精力或酸痛状态不适合完成原训练量，先降低强度和总量。"; }
-  else if (availableMinutes < Math.min(20, plannedDuration)) { mode = "reschedule"; title = "建议改到下一可用时间"; explanation = "当前时间不足以完成关键动作和必要准备，改日比匆忙训练更安全。"; }
-  else if (availableMinutes < plannedDuration || energy <= 2 || soreness >= 6) { mode = "short"; title = "今天使用缩短版"; explanation = "保留最重要的两个动作，避免因为时间或恢复状态不足而完全跳过。"; }
-  const recommendation = { mode, title, explanation, stopConditions: ["疼痛达到 4/10 或持续加重时停止相关动作。", "出现胸痛、晕厥、呼吸困难或无法承重时停止训练并及时求助。"] };
+  let title = t("coach.checkinStandardTitle"); let explanation = t("coach.checkinStandardExplanation");
+  if (pain >= 4) { mode = "recovery"; title = t("coach.checkinPainTitle"); explanation = t("coach.checkinPainExplanation"); }
+  else if (energy <= 1 || soreness >= 8) { mode = "recovery"; title = t("coach.checkinRecoveryTitle"); explanation = t("coach.checkinRecoveryExplanation"); }
+  else if (availableMinutes < Math.min(20, plannedDuration)) { mode = "reschedule"; title = t("coach.checkinRescheduleTitle"); explanation = t("coach.checkinRescheduleExplanation"); }
+  else if (availableMinutes < plannedDuration || energy <= 2 || soreness >= 6) { mode = "short"; title = t("coach.checkinShortTitle"); explanation = t("coach.checkinShortExplanation"); }
+  const recommendation = { mode, title, explanation, stopConditions: [t("coach.checkinStopPain"), t("coach.checkinStopEmergency")] };
   const id = crypto.randomUUID(); const now = new Date().toISOString(); const occurrenceId = typeof input.occurrenceId === "string" ? input.occurrenceId : null;
   await env.DB.prepare(`INSERT INTO coach_checkins
     (id,user_id,occurrence_id,energy,soreness,pain,available_minutes,note,recommendation_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)`)
@@ -191,18 +182,36 @@ export async function saveCoachFeedback(env: WorkerEnv, userId: string, messageI
 }
 
 export async function updateConversationSummary(env: WorkerEnv, userId: string, conversationId: string) {
+  // Summary requires a separately registered Hub task; never send it via an unrelated task/provider.
+  if (env.MODEL_HUB_API_KEY) return;
   if (!env.DB) return;
   const count = await env.DB.prepare("SELECT COUNT(*) AS value FROM coach_messages WHERE conversation_id=? AND user_id=?")
     .bind(conversationId, userId).first<{ value: number }>();
   if (Number(count?.value || 0) < 12 || Number(count?.value || 0) % 6 !== 0) return;
-  const rows = await env.DB.prepare(`SELECT id,role,content FROM coach_messages WHERE conversation_id=? AND user_id=?
-    ORDER BY created_at DESC LIMIT 10`).bind(conversationId, userId).all<{ id: string; role: string; content: string }>();
-  const ordered = [...(rows.results || [])].reverse(); const summary = ordered.map((item) => `${item.role === "user" ? "用户" : "Coach"}：${item.content.slice(0, 160)}`).join("\n").slice(0, 1600);
+  const [rows, conversation, user] = await Promise.all([
+    env.DB.prepare(`SELECT id,role,content FROM coach_messages WHERE conversation_id=? AND user_id=?
+      ORDER BY created_at DESC LIMIT 18`).bind(conversationId, userId).all<{ id: string; role: "user" | "assistant"; content: string }>(),
+    env.DB.prepare("SELECT summary FROM coach_conversations WHERE id=? AND user_id=?").bind(conversationId, userId).first<{ summary: string | null }>(),
+    env.DB.prepare("SELECT locale FROM users WHERE id=?").bind(userId).first<{ locale: string }>(),
+  ]);
+  const ordered = [...(rows.results || [])].reverse();
+  let summary = ordered.map((item) => `${item.role === "user" ? "User" : "Coach"}: ${item.content.slice(0, 180)}`).join("\n").slice(0, 1600);
+  let method = "deterministic_fallback"; let provider: string | null = null; let model: string | null = null;
+  const started = Date.now();
+  try {
+    const generated = await generateConversationSummary(env, { locale: toLocale(user?.locale), previousSummary: conversation?.summary,
+      messages: ordered, safetyIdentifier: userId }, await tierForUser(env, userId));
+    summary = generated.summary; method = "ai_semantic"; provider = generated.provider; model = generated.model;
+    await recordGenerationRun(env, { userId, status: "succeeded", model: generated.model, provider: generated.provider,
+      latencyMs: Date.now() - started, requestId: generated.requestId, inputTokens: generated.usage.inputTokens,
+      outputTokens: generated.usage.outputTokens, estimatedCostUsd: generated.estimatedCostUsd, task: "conversation_summary", locale: toLocale(user?.locale) });
+  } catch { /* Conversation continuity must survive a provider outage. */ }
   const now = new Date().toISOString(); const through = ordered[ordered.length - 1]?.id || null;
   await env.DB.batch([
     env.DB.prepare("UPDATE coach_conversations SET summary=? WHERE id=? AND user_id=?").bind(summary, conversationId, userId),
-    env.DB.prepare("INSERT INTO coach_conversation_summaries (id,conversation_id,user_id,summary,through_message_id,created_at) VALUES (?,?,?,?,?,?)")
-      .bind(crypto.randomUUID(), conversationId, userId, summary, through, now),
+    env.DB.prepare(`INSERT INTO coach_conversation_summaries
+      (id,conversation_id,user_id,summary,through_message_id,method,provider,model,message_count,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)`)
+      .bind(crypto.randomUUID(), conversationId, userId, summary, through, method, provider, model, Number(count?.value || 0), now),
   ]);
 }
 

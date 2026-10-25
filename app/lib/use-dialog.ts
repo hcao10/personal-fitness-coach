@@ -56,7 +56,10 @@ export function useDialog<T extends HTMLElement = HTMLDivElement>(open: boolean,
       document.removeEventListener("keydown", onKeyDown, true);
       // Only restore if focus is still inside the dialog; the user may have
       // deliberately moved on (e.g. the dialog navigated away).
-      if (previouslyFocused && container.contains(document.activeElement)) previouslyFocused.focus();
+      const active = document.activeElement;
+      // React may detach the dialog before passive cleanup; the browser then
+      // moves focus to body. That is still a dismissal, not a deliberate move.
+      if (previouslyFocused?.isConnected && (!active || active === document.body || container.contains(active))) previouslyFocused.focus();
     };
   }, [open]);
 

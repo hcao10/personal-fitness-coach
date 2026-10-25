@@ -20,6 +20,8 @@ import { exercisesZh } from "./exercises.zh.ts";
 import { exercisesEn } from "./exercises.en.ts";
 import { authZh } from "./auth.zh.ts";
 import { authEn } from "./auth.en.ts";
+import { productZh } from "./product.zh.ts";
+import { productEn } from "./product.en.ts";
 
 // Chinese is the schema. Every other locale is `satisfies Messages`, so a
 // missing key, an extra key or a wrong type is a compile error rather than a
@@ -59,6 +61,13 @@ export const zh = {
     PLAN_LIMIT_REACHED: "本周期的 AI 计划额度已用完，可使用积分兑换或升级专业版。",
     MEAL_SCAN_LIMIT_REACHED: "本周期的饭菜识别额度已用完，可使用积分兑换或升级专业版。",
     COACH_LIMIT_REACHED: "本周期的 Coach 体验额度已用完。",
+    COACH_MODEL_FAILED: "模型暂时无法完成回复，额度已退回，可以重试。",
+    COACH_CONTEXT_STALE: "训练上下文已变化，请重新打开今日训练后提问。",
+    COACH_MUTATION_CONFLICT: "重试请求与原问题不一致，请作为新问题发送。",
+    COACH_TURN_RUNNING: "这条问题仍在处理中，请稍后再试。",
+    COACH_RETRY_REQUIRED: "上次回复未完成，请使用重试继续原请求。",
+    SESSION_ALREADY_STARTED_OR_CHANGED: "训练已开始或发生变化，无法应用这份预览。请重新生成建议。",
+    ACTION_PREVIEW_REQUIRED: "这份旧建议缺少精确预览，请重新向教练提问。",
     REVIEW_LIMIT_REACHED: "本月的完整复盘额度已用完。",
     REVIEW_UPGRADE_REQUIRED: "复盘摘要免费可看；采纳教练的完整调整方案需要升级 Pro。",
     AI_NOT_CONFIGURED: "AI 教练尚未配置，计划没有生成，也不会消耗你的额度。",
@@ -130,6 +139,16 @@ export const zh = {
     INVALID_SYNC_BATCH: "同步批次无效。",
     INVALID_HEALTH_CONNECTION: "健康数据连接无效。",
     INVALID_HEALTH_BATCH: "健康数据批次无效。",
+    EXERCISE_GUIDANCE_UNAVAILABLE: "动作指导暂时不可用，下面仍是已审核的要领。",
+    // Failures the server never got to name: the request timed out, was refused
+    // before it reached a handler, or died in the browser. app/shared/api/client
+    // maps each failure kind onto one of these.
+    CAPABILITY_UNAVAILABLE: "这项能力在当前部署中尚未配置。",
+    NETWORK_UNREACHABLE: "无法连接到服务器，请检查网络后重试。",
+    REQUEST_TIMEOUT: "请求超时，请重试。",
+    SERVER_ERROR: "服务端暂时出错，请稍后重试。",
+    REQUEST_REJECTED: "这次请求被拒绝了，请检查填写内容。",
+    REQUEST_ABORTED: "请求已取消。",
   },
   home: homeZh,
   today: todayZh,
@@ -141,6 +160,9 @@ export const zh = {
   onboarding: onboardingZh,
   exercises: exercisesZh,
   auth: authZh,
+  // The core loop: entry states, exercise viewer, plan overview, coach dock and
+  // the session player.
+  product: productZh,
 } as const;
 
 export type Messages = Widen<typeof zh>;
@@ -174,6 +196,13 @@ export const en = {
     PLAN_LIMIT_REACHED: "You have used this period's AI plan quota. Redeem points or upgrade to Pro.",
     MEAL_SCAN_LIMIT_REACHED: "You have used this period's meal recognition quota. Redeem points or upgrade to Pro.",
     COACH_LIMIT_REACHED: "You have used this period's Coach message quota.",
+    COACH_MODEL_FAILED: "The model could not finish. Your quota was refunded; you can retry.",
+    COACH_CONTEXT_STALE: "Your training context changed. Open Today again before asking.",
+    COACH_MUTATION_CONFLICT: "This retry differs from the original question. Send it as a new question.",
+    COACH_TURN_RUNNING: "This question is still being processed. Try again shortly.",
+    COACH_RETRY_REQUIRED: "The previous reply did not finish. Use Retry to resume the original request.",
+    SESSION_ALREADY_STARTED_OR_CHANGED: "The session has started or changed. Ask for a new preview.",
+    ACTION_PREVIEW_REQUIRED: "This older suggestion lacks a precise preview. Ask the coach again.",
     REVIEW_LIMIT_REACHED: "You have used this month's full review quota.",
     REVIEW_UPGRADE_REQUIRED: "The review summary is free; adopting the coach's full adjustments requires Pro.",
     AI_NOT_CONFIGURED: "The AI coach is not configured. No plan was generated and no quota was used.",
@@ -241,6 +270,13 @@ export const en = {
     INVALID_SYNC_BATCH: "That sync batch is not valid.",
     INVALID_HEALTH_CONNECTION: "That health connection is not valid.",
     INVALID_HEALTH_BATCH: "That health data batch is not valid.",
+    EXERCISE_GUIDANCE_UNAVAILABLE: "Step-by-step guidance is unavailable right now; the reviewed cue below still applies.",
+    CAPABILITY_UNAVAILABLE: "This capability is not configured in this deployment.",
+    NETWORK_UNREACHABLE: "Could not reach the server. Check your connection and try again.",
+    REQUEST_TIMEOUT: "The request timed out. Please try again.",
+    SERVER_ERROR: "The server hit a temporary problem. Please try again shortly.",
+    REQUEST_REJECTED: "That request was rejected. Please check what you entered.",
+    REQUEST_ABORTED: "The request was cancelled.",
   },
   home: homeEn,
   today: todayEn,
@@ -252,6 +288,7 @@ export const en = {
   onboarding: onboardingEn,
   exercises: exercisesEn,
   auth: authEn,
+  product: productEn,
 } as const satisfies Messages;
 
 export const MESSAGES: Record<Locale, Messages> = { zh, en };

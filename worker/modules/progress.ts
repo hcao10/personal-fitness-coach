@@ -3,20 +3,20 @@
 // computed from logged sets — nothing is modeled or smoothed into existence.
 import type { WorkerEnv } from "../platform";
 import { estimateE1rm } from "../../services/adaptive-engine/src";
-import { EXERCISES } from "../../packages/coach-core/src";
+import { calculateBmi, EXERCISES } from "../../packages/coach-core/src";
 import { isoWeekStart } from "../../services/habit-engine/src";
 
 export type ProgressSeries = {
   weeks: Array<{ weekStart: string; tonnageKg: number; sets: number; sessions: number }>;
   exercises: Array<{ exerciseId: string; name: { zh: string; en: string }; points: Array<{ date: string; e1rm: number }>; changePct: number | null }>;
-  weight: Array<{ date: string; weightKg: number }>;
+  weight: Array<{ date: string; weightKg: number; bmi: number | null }>;
   planVersions: Array<{ date: string; versionNumber: number }>;
 };
 
 export async function progressSeries(env: WorkerEnv, userId: string, days = 120): Promise<ProgressSeries> {
   if (!env.DB) throw new Error("DATABASE_NOT_CONFIGURED");
   const since = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
-  const [sets, sessions, measurements, versions] = await Promise.all([
+  const [sets, sessions, measurements, versions, profile] = await Promise.all([
     env.DB.prepare(`SELECT s.exercise_id, s.weight_kg, s.reps, o.scheduled_date AS date
       FROM workout_occurrence_sets s JOIN workout_occurrences o ON o.id=s.occurrence_id
       WHERE s.user_id=? AND s.completed=1 AND o.scheduled_date>=? ORDER BY o.scheduled_date`)
@@ -29,7 +29,10 @@ export async function progressSeries(env: WorkerEnv, userId: string, days = 120)
       .bind(userId, since).all<{ weight_kg: number; measured_at: string }>(),
     env.DB.prepare(`SELECT version_number, created_at FROM plan_versions WHERE user_id=? AND created_at>=? ORDER BY created_at`)
       .bind(userId, `${since}T00:00:00.000Z`).all<{ version_number: number; created_at: string }>(),
+    env.DB.prepare("SELECT profile_json FROM profiles WHERE user_id=?").bind(userId).first<{ profile_json: string }>(),
   ]);
+  let heightCm: number | null = null;
+  try { const value = JSON.parse(profile?.profile_json || "{}") as { height?: unknown }; heightCm = Number(value.height) || null; } catch { /* no valid profile yet */ }
 
   // Weekly tonnage: completed load volume, the clearest "I did more work" signal.
   const weekBuckets = new Map<string, { tonnageKg: number; sets: number }>();
@@ -82,7 +85,8 @@ export async function progressSeries(env: WorkerEnv, userId: string, days = 120)
   return {
     weeks,
     exercises,
-    weight: (measurements.results || []).map((row) => ({ date: row.measured_at.slice(0, 10), weightKg: row.weight_kg })),
+    weight: (measurements.results || []).map((row) => ({ date: row.measured_at.slice(0, 10), weightKg: row.weight_kg,
+      bmi: heightCm ? calculateBmi(row.weight_kg, heightCm) : null })),
     planVersions: (versions.results || []).map((row) => ({ date: row.created_at.slice(0, 10), versionNumber: row.version_number })),
   };
 }

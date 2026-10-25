@@ -12,7 +12,7 @@ export const nutritionZh = {
   signedOutTitleLine1: "先识别，",
   signedOutTitleLine2: "再由你确认。",
   signedOutBody: "登录后可以拍照、扫码或手动记录餐食。我们只在你确认份量后计算营养，不把照片估算包装成精确答案。",
-  signedOutAction: "使用 Cmine ID 登录 →",
+  signedOutAction: "使用 Cmine ID 登录 ",
 
   navMyTraining: "我的训练",
   navPricing: "专业计划",
@@ -29,13 +29,13 @@ export const nutritionZh = {
   // 01 / PHOTO
   photoCardTitle: "拍照识别",
   photoPickLabel: "选择饭菜照片",
-  photoHint: "JPEG、PNG 或 WebP；上传后会压缩并清除 EXIF",
+  photoHint: "拍清整餐，识别后确认食物与份量。",
   mealTypeBreakfast: "早餐",
   mealTypeLunch: "午餐",
   mealTypeDinner: "晚餐",
   mealTypeSnack: "加餐",
   analyzing: "正在识别…",
-  uploadAndAnalyze: "上传并识别 →",
+  uploadAndAnalyze: "上传并识别 ",
 
   // 02 / BARCODE
   barcodeCardTitle: "包装食品",
@@ -54,7 +54,7 @@ export const nutritionZh = {
   candidateNutritionRef: "营养参考",
   candidateManualPer100g: "每 100g 手动营养",
   saving: "正在保存…",
-  confirmAndCalculate: "确认份量并计算营养 →",
+  confirmAndCalculate: "确认份量并计算营养 ",
 
   // 03 / SEARCH
   searchCardTitle: "手动搜索食品",
@@ -74,6 +74,12 @@ export const nutritionZh = {
   searchEmpty: "没有匹配结果。可尝试英文名称、品牌或创建自定义食品。",
   gramsEaten: "食用克数",
   addToToday: "加入今天",
+  coachDraftEyebrow: "COACH 餐食草稿",
+  coachDraftTitle: "把建议变成你确认的餐食记录",
+  coachDraftBody: "Coach 只准备了记录意图，不会猜测你实际吃了什么。选择“开始填写”，再搜索食品、确认克数并保存。",
+  coachDraftStart: "开始填写",
+  coachDraftReject: "不记录",
+  coachDraftCompleted: "Coach 餐食草稿已完成。",
 
   // 04 / CUSTOM FOOD
   customFoodTitle: "创建自定义食品",
@@ -84,7 +90,7 @@ export const nutritionZh = {
   macroProtein: "蛋白质 g",
   macroCarbs: "碳水 g",
   macroFat: "脂肪 g",
-  saveCustomFood: "保存自定义食品 →",
+  saveCustomFood: "保存自定义食品 ",
 
   // 05 / RECIPE
   recipeCardTitle: "菜谱与餐食模板",
@@ -99,7 +105,7 @@ export const nutritionZh = {
   savedTitle: "常用菜谱与模板",
   savedHint: "低成本地复用真实记录，不需要再次调用 AI。",
   templateMacros: "{calories} kcal · 蛋白质 {protein}g",
-  templateAddToToday: "一键加入今天 →",
+  templateAddToToday: "一键加入今天 ",
   recipeSummary: "{servings} 份 · 全菜谱 {calories} kcal",
   // The counted phrase interpolated into `recipeSummary`. Chinese keeps its
   // measure word (份) in the sentence, so the counted form here is the numeral

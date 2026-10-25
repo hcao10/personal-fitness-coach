@@ -9,12 +9,12 @@ export const todayEn = {
   greetingFallback: "Hi there",
   title: "{name}, train at your own pace today",
   exerciseLibraryLink: "Exercise library",
-  askCoachLink: "Ask Coach ↗",
+  askCoachLink: "Ask Coach ",
 
   // No active plan
   emptyTitle: "Start with a plan that actually fits you",
   emptyBody: "Spend 2–3 minutes on your profile. We calculate your base metrics, then AI builds a full training cycle.",
-  emptyCta: "Start your profile →",
+  emptyCta: "Start your profile ",
 
   // Daily brief strip
   briefFromPlan: "From your current plan",
@@ -34,7 +34,7 @@ export const todayEn = {
   availableTimeAria: "Time available (minutes)",
   minutesValue: "{minutes} min",
   checkinPending: "Checking…",
-  checkinSubmit: "See today's recommendation →",
+  checkinSubmit: "See today's recommendation ",
   recommendationEyebrow: "Today's recommendation",
   recheck: "Check again",
 
@@ -109,8 +109,8 @@ export const todayEn = {
   rpeLabel: "Perceived effort RPE",
   painLevelLabel: "Pain level",
   painWarning: "Stop any movement that causes pain. If the pain continues or gets worse, see a qualified professional.",
-  updateLog: "Update this session →",
-  completeAndLog: "Finish and log session →",
+  updateLog: "Update this session ",
+  completeAndLog: "Finish and log session ",
 
   // Exercise media dialog
   closeModal: "Close ×",
@@ -119,7 +119,7 @@ export const todayEn = {
   mediaTip2: "Exhale through the hard part, inhale on the way back.",
   mediaTip3: "Stop immediately if you get sharp pain, numbness or joint instability.",
   mediaCoachPrompt: "Given my plan, explain the form cues for {name} and which exercises I could use instead.",
-  mediaCoachLink: "Ask Coach to explain it for me →",
+  mediaCoachLink: "Ask Coach to explain it for me ",
 
   // Notes written onto the saved session record
   noteShortVariant: "Did the short version.",

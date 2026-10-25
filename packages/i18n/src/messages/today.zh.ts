@@ -7,12 +7,12 @@ export const todayZh = {
   greetingFallback: "你好",
   title: "{name}，今天按自己的节奏来",
   exerciseLibraryLink: "动作目录",
-  askCoachLink: "询问 Coach ↗",
+  askCoachLink: "询问 Coach ",
 
   // No active plan
   emptyTitle: "先建立一份真正适合你的计划",
   emptyBody: "完成 2–3 分钟建档后，系统会计算基础指标并由 AI 编排完整训练周期。",
-  emptyCta: "开始建档 →",
+  emptyCta: "开始建档 ",
 
   // Daily brief strip
   briefFromPlan: "根据当前计划",
@@ -32,7 +32,7 @@ export const todayZh = {
   availableTimeAria: "可用时间（分钟）",
   minutesValue: "{minutes} 分钟",
   checkinPending: "判断中…",
-  checkinSubmit: "查看今天的建议 →",
+  checkinSubmit: "查看今天的建议 ",
   recommendationEyebrow: "今日建议",
   recheck: "重新检查",
 
@@ -107,8 +107,8 @@ export const todayZh = {
   rpeLabel: "主观强度 RPE",
   painLevelLabel: "疼痛程度",
   painWarning: "请停止引发疼痛的动作。若疼痛持续或加重，请咨询专业人员。",
-  updateLog: "更新训练记录 →",
-  completeAndLog: "完成并记录训练 →",
+  updateLog: "更新训练记录 ",
+  completeAndLog: "完成并记录训练 ",
 
   // Exercise media dialog
   closeModal: "关闭 ×",
@@ -117,7 +117,7 @@ export const todayZh = {
   mediaTip2: "动作困难阶段呼气，返回时吸气。",
   mediaTip3: "出现锐痛、麻木或关节不稳定时立即停止。",
   mediaCoachPrompt: "请结合我的计划，讲解 {name} 的动作要点和替代动作。",
-  mediaCoachLink: "让 Coach 结合我的情况讲解 →",
+  mediaCoachLink: "让 Coach 结合我的情况讲解 ",
 
   // Notes written onto the saved session record
   noteShortVariant: "完成缩短版。",

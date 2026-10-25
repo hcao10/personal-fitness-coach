@@ -30,6 +30,7 @@ import {
   saveProfile,
   saveWorkoutOccurrenceSession,
   saveWorkoutSession,
+  schemaReadiness,
   settingValue,
   updateAdminSetting,
   updateAiRoute,
@@ -41,7 +42,9 @@ import {
   type StoredUser,
   type WorkoutSetInput,
 } from "./db";
-import { aiServices, generateLlmPlan } from "./llm";
+import { aiServices, generateLlmPlan, routesFor } from "./llm";
+import { hubRequest } from './ai/model-hub-client.ts';
+import { modelCatalogSnapshot, testProviderKey } from "./model-catalog";
 import { billingCatalog, createCheckout, createPortal, processStripeEvent, stripeConfigured, verifyStripeWebhook } from "./billing";
 import { consumeCapability, entitlementSnapshot, limitForCapability, redeemPoints, refundCapability, tierForUser, usageForUser } from "./product";
 import {
@@ -77,10 +80,12 @@ import { runMaintenance, verifyMaintenanceRequest } from "./modules/maintenance"
 import { expoPushConfigured, runNotifications } from "./modules/notifications";
 import { habitSummary, upsertHabitCommitment } from "./modules/habits";
 import { progressSeries } from "./modules/progress";
+import { completeRecordDraft, confirmMeasurementDraft, recordDraftsForUser, rejectRecordDraft } from "./modules/record-drafts";
 import { enforceRateLimit, RATE_RULES } from "./modules/rate-limit";
 import { isShippableLocale, toLocale } from "../packages/i18n/src";
 import { PROMPT_VERSION } from "./prompts";
 import { readPlanInsights } from "../packages/coach-core/src";
+import { sceneSchema } from './coach/validation.ts';
 
 const json = (body: unknown, status = 200, headers?: HeadersInit) => Response.json(body, {
   status,
@@ -100,17 +105,20 @@ const secondsUntilUtcMidnight = () => {
   const midnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
   return Math.max(60, Math.ceil((midnight - now.getTime()) / 1000));
 };
-function coachStream(run: (emit: (event: string, data: unknown) => void) => Promise<{ assistantMessage: { id: string; content: string; actions?: unknown[]; intent?: string; basis?: unknown[]; limitations?: string[]; sources?: unknown[] }; duplicate?: boolean }>) {
+function coachStream(run: (emit: (event: string, data: unknown) => void, signal: AbortSignal) => Promise<{ assistantMessage: { id: string; content: string; actions?: unknown[]; intent?: string; basis?: unknown[]; limitations?: string[]; sources?: unknown[]; safety?: { highRisk: boolean } }; duplicate?: boolean }>, requestSignal?: AbortSignal) {
   const encoder = new TextEncoder();
+  const cancellation = new AbortController();
+  const signal = AbortSignal.any([cancellation.signal, requestSignal || new AbortController().signal]);
+  let closed = false;
   const stream = new ReadableStream({
     async start(controller) {
       let emitted = false;
-      const emit = (event: string, data: unknown) => { emitted = emitted || event === "message.delta"; controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)); };
+      const emit = (event: string, data: unknown) => { if (closed || signal.aborted) return; emitted = emitted || event === "message.delta"; controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)); };
       try {
         emit("message.started", { at: new Date().toISOString() });
-        const result = await run(emit);
+        const result = await run(emit, signal);
         if (!emitted && result.assistantMessage.content) emit("message.delta", { delta: result.assistantMessage.content });
-        emit("message.metadata", { intent: result.assistantMessage.intent, basis: result.assistantMessage.basis || [], limitations: result.assistantMessage.limitations || [], sources: result.assistantMessage.sources || [] });
+        emit("message.metadata", { intent: result.assistantMessage.intent, basis: result.assistantMessage.basis || [], limitations: result.assistantMessage.limitations || [], sources: result.assistantMessage.sources || [], safety: result.assistantMessage.safety });
         for (const action of result.assistantMessage.actions || []) emit("action.proposed", action);
         emit("message.completed", { id: result.assistantMessage.id, duplicate: Boolean(result.duplicate) });
       } catch (error) {
@@ -123,8 +131,9 @@ function coachStream(run: (emit: (event: string, data: unknown) => void) => Prom
             : code === "AI_BUDGET_EXHAUSTED" ? "今日 AI 成本保护已触发，请稍后再试。"
               : "Coach 暂时无法完成回复，请稍后再试。";
         emit("message.error", { error: code, retryable: code !== "COACH_LIMIT_REACHED" && !code.includes("BUDGET_EXHAUSTED"), message });
-      } finally { controller.close(); }
+      } finally { if (!closed) { closed = true; controller.close(); } }
     },
+    cancel() { closed = true; cancellation.abort(); },
   });
   return new Response(stream, { headers: { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-store", connection: "keep-alive" } });
 }
@@ -139,6 +148,7 @@ const editableSettings = new Set([
   "announcement", "maintenance_mode", "disclaimer_version", "privacy_version", "trial_days",
   "ai_daily_warning_usd", "ai_daily_hard_usd", "ai_monthly_warning_usd", "ai_monthly_hard_usd", "ai_user_daily_hard_usd",
   "free_plan_limit", "free_meal_scan_limit", "free_coach_message_limit", "pro_plan_limit", "pro_meal_scan_limit", "pro_coach_message_limit",
+  "openai_model", "openai_reasoning_effort",
 ]);
 
 function profileFrom(value: unknown): Profile | null {
@@ -369,19 +379,25 @@ async function authCallback(request: Request, env: WorkerEnv): Promise<Response>
 }
 
 async function planRequest(request: Request, env: WorkerEnv): Promise<Response> {
-  const body = await request.json().catch(() => null) as { profile?: unknown; consent?: unknown; startDate?: unknown; timezone?: unknown } | null;
+  const body = await request.json().catch(() => null) as { profile?: unknown; consent?: unknown; startDate?: unknown; timezone?: unknown; locale?: unknown } | null;
   const profile = profileFrom(body?.profile);
   if (!profile) return errorJson("INVALID_PROFILE", "训练档案不完整或超出安全范围。", 400);
   if (body?.consent !== true) return errorJson("CONSENT_REQUIRED", "生成前需要确认健康免责声明与数据处理说明。", 412);
   const required = await requireUser(request, env);
   if (required instanceof Response) return required;
   const user = required;
+  if (body?.locale !== undefined && !isShippableLocale(body.locale)) return errorJson("INVALID_LOCALE", "不支持的语言。", 400);
+  // The browser's live selection is authoritative for an interactive
+  // generation. Reading only users.locale creates a race with the async locale
+  // persistence request and can generate a Chinese plan from an English UI.
+  const planLocale = isShippableLocale(body?.locale) ? body.locale : toLocale(user.locale);
   const requestedTimezone = typeof body?.timezone === "string" && body.timezone.length <= 80 ? body.timezone : user.timezone;
   const requestedStartDate = typeof body?.startDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.startDate) ? body.startDate : undefined;
   try { new Intl.DateTimeFormat("en", { timeZone: requestedTimezone }).format(new Date()); }
   catch { return errorJson("INVALID_TIMEZONE", "设备时区无效，请重新选择开始日期。", 400); }
-  if (env.DB && requestedTimezone !== user.timezone) {
-    await env.DB.prepare("UPDATE users SET timezone=?,updated_at=? WHERE id=?").bind(requestedTimezone, new Date().toISOString(), user.id).run();
+  if (env.DB && (requestedTimezone !== user.timezone || planLocale !== toLocale(user.locale))) {
+    await env.DB.prepare("UPDATE users SET timezone=?,locale=?,updated_at=? WHERE id=?")
+      .bind(requestedTimezone, planLocale, new Date().toISOString(), user.id).run();
   }
   if (await settingValue<boolean>(env, "maintenance_mode", false)) {
     return errorJson("MAINTENANCE_MODE", "AI 教练正在进行短暂维护，请稍后再试。", 503);
@@ -391,8 +407,14 @@ async function planRequest(request: Request, env: WorkerEnv): Promise<Response> 
   // belong in the key. Without them a user switching to English would be served
   // the Chinese plan cached minutes earlier, and a prompt fix would go unseen
   // for the life of the cache entry.
-  const planLocale = toLocale(user.locale);
-  const inputHash = await sha256(JSON.stringify({ profile, locale: planLocale, promptVersion: PROMPT_VERSION }));
+  const evidence = env.DB ? await env.DB.prepare(`SELECT MAX(changed_at) AS changed_at FROM (
+    SELECT MAX(updated_at) AS changed_at FROM workout_occurrence_sessions WHERE user_id=?
+    UNION ALL SELECT MAX(updated_at) FROM workout_occurrence_sets WHERE user_id=?
+    UNION ALL SELECT MAX(measured_at) FROM measurements WHERE user_id=?
+    UNION ALL SELECT MAX(updated_at) FROM weekly_reviews WHERE user_id=?
+    UNION ALL SELECT MAX(updated_at) FROM coach_memories WHERE user_id=?
+  )`).bind(user.id, user.id, user.id, user.id, user.id).first<{ changed_at: string | null }>() : null;
+  const inputHash = await sha256(JSON.stringify({ profile, locale: planLocale, promptVersion: PROMPT_VERSION, evidenceVersion: evidence?.changed_at || null }));
   const cached = env.DB ? await env.DB.prepare(`SELECT result_json FROM ai_request_cache
     WHERE user_id = ? AND task = 'training_plan' AND input_hash = ? AND expires_at > ?`)
     .bind(user.id, inputHash, new Date().toISOString()).first<{ result_json: string }>() : null;
@@ -527,6 +549,26 @@ function measurementFrom(value: unknown): MeasurementInput | null {
   };
 }
 
+/**
+ * The shipped exercise catalog.
+ *
+ * `env.ASSETS` is the binding in production, but it is absent under `vinext dev`,
+ * where the file is served by Vite from public/ instead. Reading it through one
+ * helper means a dev environment gets a working exercise library rather than a
+ * 500 from `undefined.fetch`, and a genuinely missing catalog is still reported
+ * as unavailable rather than as an empty result.
+ */
+async function exerciseCatalog(request: Request, env: WorkerEnv): Promise<{ count: number; mediaPolicy: string; exercises: Array<Record<string, unknown>> } | null> {
+  const url = new URL("/exercise-catalog.json", request.url);
+  try {
+    const response = env.ASSETS ? await env.ASSETS.fetch(new Request(url)) : await fetch(url);
+    if (!response.ok) return null;
+    return await response.json() as { count: number; mediaPolicy: string; exercises: Array<Record<string, unknown>> };
+  } catch {
+    return null;
+  }
+}
+
 function services(env: WorkerEnv) {
   const ai = aiServices(env);
   return {
@@ -539,6 +581,7 @@ function services(env: WorkerEnv) {
     vision: ai.vision && Boolean(env.R2) && Boolean(env.IMAGES),
     imageTransform: Boolean(env.IMAGES),
     llm: ai.planner,
+    coachChat: ai.chat,
     cmine: Boolean(env.CMINE_CLIENT_ID && env.CMINE_CLIENT_SECRET && env.SESSION_SECRET && env.DB),
     foodData: foodDataConfigured(),
     billing: stripeConfigured(env),
@@ -578,6 +621,18 @@ async function handleAdmin(request: Request, env: WorkerEnv, url: URL): Promise<
   if (url.pathname === "/api/v1/admin/audit" && request.method === "GET") {
     return json({ events: await adminAuditEvents(env, Number(url.searchParams.get("limit") || 100)) });
   }
+  if (url.pathname === "/api/v1/admin/llm/catalog" && request.method === "GET") {
+    return json(await modelCatalogSnapshot(env, url.searchParams.get("provider") || "openai"));
+  }
+  if (url.pathname === "/api/v1/admin/llm/test" && request.method === "POST") {
+    const body = await request.json().catch(() => null) as { provider?: unknown; model?: unknown } | null;
+    const provider = String(body?.provider || "");
+    if (!["openai", "compatible"].includes(provider) || (body?.model !== undefined && typeof body.model !== "string")) {
+      return errorJson("INVALID_LLM_TEST", "提供商或模型参数无效。", 400);
+    }
+    const result = await testProviderKey(env, provider, typeof body?.model === "string" ? body.model : undefined);
+    return json(result, result.ok ? 200 : result.configured ? 422 : 409);
+  }
   const aiRouteMatch = url.pathname.match(/^\/api\/v1\/admin\/ai-routes\/([^/]+)$/);
   if (aiRouteMatch && request.method === "PATCH") {
     const body = await request.json().catch(() => null) as { provider?: unknown; model?: unknown; enabled?: unknown } | null;
@@ -605,11 +660,17 @@ async function handleAdmin(request: Request, env: WorkerEnv, url: URL): Promise<
   if (url.pathname === "/api/v1/admin/settings" && request.method === "PUT") {
     const body = await request.json().catch(() => null) as { key?: unknown; value?: unknown } | null;
     if (typeof body?.key !== "string" || !editableSettings.has(body.key)) return errorJson("INVALID_SETTING", "该设置不能从管理后台修改。", 400);
+    if (body.key === "openai_model" && (typeof body.value !== "string" || !/^[A-Za-z0-9._:\/-]{2,160}$/.test(body.value))) {
+      return errorJson("INVALID_SETTING_VALUE", "OpenAI 模型 ID 无效。", 400);
+    }
+    if (body.key === "openai_reasoning_effort" && !["none", "low", "medium", "high", "xhigh", "max"].includes(String(body.value))) {
+      return errorJson("INVALID_SETTING_VALUE", "推理强度无效。", 400);
+    }
     if (body.key === "maintenance_mode" && typeof body.value !== "boolean") return errorJson("INVALID_SETTING_VALUE", "维护状态必须是布尔值。", 400);
     if ((body.key === "announcement" || body.key === "disclaimer_version" || body.key === "privacy_version") && (typeof body.value !== "string" || body.value.length > 300)) {
       return errorJson("INVALID_SETTING_VALUE", "设置内容无效。", 400);
     }
-    if (!["announcement", "disclaimer_version", "privacy_version", "maintenance_mode"].includes(body.key) &&
+    if (!["announcement", "disclaimer_version", "privacy_version", "maintenance_mode", "openai_model", "openai_reasoning_effort"].includes(body.key) &&
       (typeof body.value !== "number" || !Number.isFinite(body.value) || body.value < 0 || body.value > 10000)) {
       return errorJson("INVALID_SETTING_VALUE", "额度或预算必须是有效的非负数字。", 400);
     }
@@ -620,7 +681,7 @@ async function handleAdmin(request: Request, env: WorkerEnv, url: URL): Promise<
   return errorJson("NOT_FOUND", "没有找到该管理接口。", 404);
 }
 
-export async function handleApi(request: Request, env: WorkerEnv): Promise<Response | null> {
+export async function handleApi(request: Request, env: WorkerEnv, ctx?: { waitUntil(work: Promise<unknown>): void }): Promise<Response | null> {
   const url = new URL(request.url);
   if (!url.pathname.startsWith("/api/")) return null;
   if (["POST", "PUT", "PATCH", "DELETE"].includes(request.method) && !writeOriginAllowed(request, env)) {
@@ -635,24 +696,57 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
     // reasoning settings are configuration reconnaissance — admin overview
     // (authenticated) carries the full services() object.
     const publicServices: Record<string, unknown> = { ...services(env) };
+    // Resolve chat independently: explicit DB routes/settings may differ from planner/vision.
+    try { publicServices.coachChat = (await routesFor(env, 'coach_chat', 'free')).length > 0; }
+    catch { publicServices.coachChat = false; }
     delete publicServices.providers;
     delete publicServices.model;
     delete publicServices.reasoningEffort;
-    return json({ ok: true, ...publicServices });
+    // A binding is not a schema. `database` answers "is D1 bound", `schemaReady`
+    // answers "have the migrations been applied" — reporting only the first is
+    // what let /api/v1/site 500 on a healthy-looking deployment. `missingTables`
+    // is the local fix instruction, and is safe to expose because the table
+    // names are in the repository.
+    const schema = await schemaReadiness(env);
+    return json({ ok: true, ...publicServices, schemaReady: schema.ready, missingTables: schema.missing });
   }
   if (request.method === "GET" && url.pathname === "/api/v1/site") {
+    const capabilities = services(env);
+    const schema = await schemaReadiness(env);
+    // Every value below has a shipped default, so an un-migrated database
+    // degrades rather than taking the consent gate and the homepage with it.
     return json({
       announcement: await settingValue<string>(env, "announcement", ""),
-      disclaimerVersion: await settingValue<string>(env, "disclaimer_version", "health-v2"),
-      privacyVersion: await settingValue<string>(env, "privacy_version", "privacy-v1"),
+      disclaimerVersion: await settingValue<string>(env, "disclaimer_version", "health-v3"),
+      privacyVersion: await settingValue<string>(env, "privacy_version", "privacy-v2"),
+      schemaReady: schema.ready,
       capabilities: {
-        planner: services(env).planner,
-        vision: services(env).vision,
-        billing: services(env).billing,
-        mobileBilling: services(env).mobileBilling,
-        rewardAds: services(env).rewardAds,
+        accounts: capabilities.cmine,
+        planner: capabilities.planner,
+        vision: capabilities.vision,
+        billing: capabilities.billing,
+        mobileBilling: capabilities.mobileBilling,
+        rewardAds: capabilities.rewardAds,
       },
     });
+  }
+  // Movement guidance for the shared exercise viewer. Unauthenticated on
+  // purpose: a signed-out user following a demo GIF needs the steps and the
+  // stop conditions more than a signed-in one, and the source is a static asset
+  // that ships in this repository, not user data.
+  if (request.method === "GET" && url.pathname === "/api/v1/exercises/guidance") {
+    const limited = await enforceRateLimit(env, request, "exercise_guidance", RATE_RULES.exerciseSearch);
+    if (limited) return limited;
+    const ids = (url.searchParams.get("ids") || "").split(",").map((id) => id.trim()).filter(Boolean).slice(0, 24);
+    if (!ids.length) return errorJson("EXERCISE_NOT_FOUND", "请提供动作 id。", 400);
+    const catalog = await exerciseCatalog(request, env);
+    if (!catalog) return errorJson("EXERCISE_CATALOG_UNAVAILABLE", "动作目录暂时不可用。", 503);
+    // Plan ids are `ex0032`; the dataset is keyed `0032`.
+    const wanted = new Map(ids.map((id) => [id.startsWith("ex") ? id.slice(2) : id, id]));
+    const steps = catalog.exercises
+      .filter((item) => wanted.has(String(item.id)))
+      .map((item) => ({ id: wanted.get(String(item.id)), instructions: item.instructions, attribution: item.attribution }));
+    return json({ exercises: steps }, 200, { "cache-control": "public, max-age=86400" });
   }
   if (request.method === "GET" && url.pathname === "/api/auth/config") {
     return json({ cmine: services(env).cmine });
@@ -693,7 +787,10 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
     const profile = profileFrom(body?.profile);
     if (!profile) return errorJson("INVALID_PROFILE", "训练档案不完整或超出安全范围。", 400);
     if (body?.consent !== true) return errorJson("CONSENT_REQUIRED", "请先确认健康免责声明。", 412);
-    await recordConsent(request, env, user.id, toLocale(body.locale));
+    const onboardingLocale = toLocale(body.locale, toLocale(user.locale));
+    if (env.DB) await env.DB.prepare("UPDATE users SET locale=?,updated_at=? WHERE id=?")
+      .bind(onboardingLocale, new Date().toISOString(), user.id).run();
+    await recordConsent(request, env, user.id, onboardingLocale);
     return json(await completeOnboarding(env, user.id, profile), 201);
   }
   if (url.pathname === "/api/v1/onboarding/skip" && request.method === "POST") {
@@ -821,6 +918,26 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
   if (url.pathname === "/api/v1/progress/series" && request.method === "GET") {
     const user = await requireUser(request, env); return user instanceof Response ? user : json(await progressSeries(env, user.id));
   }
+  if (url.pathname === "/api/v1/record-drafts" && request.method === "GET") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    return json({ drafts: await recordDraftsForUser(env, user.id, url.searchParams.get("type")) });
+  }
+  const recordDraftMatch = url.pathname.match(/^\/api\/v1\/record-drafts\/([^/]+)\/(confirm|complete|reject)$/);
+  if (recordDraftMatch && request.method === "POST") {
+    const user = await requireUser(request, env); if (user instanceof Response) return user;
+    const draftId = decodeURIComponent(recordDraftMatch[1]);
+    try {
+      if (recordDraftMatch[2] === "reject") return json(await rejectRecordDraft(env, user.id, draftId));
+      if (recordDraftMatch[2] === "complete") return json(await completeRecordDraft(env, user.id, draftId));
+      const measurement = measurementFrom(await request.json().catch(() => null));
+      if (!measurement) return errorJson("INVALID_MEASUREMENT", "请至少填写一项有效身体数据。", 400);
+      return json(await confirmMeasurementDraft(env, user.id, draftId, measurement), 201);
+    } catch (error) {
+      return error instanceof Error && error.message === "DRAFT_NOT_FOUND"
+        ? errorJson("DRAFT_NOT_FOUND", "没有找到这条待确认记录。", 404)
+        : errorJson("DRAFT_CONFIRM_FAILED", "记录草稿暂时无法处理。", 409);
+    }
+  }
   if (url.pathname === "/api/v1/habits" && request.method === "GET") {
     const user = await requireUser(request, env); return user instanceof Response ? user : json(await habitSummary(env, user.id, user.timezone));
   }
@@ -860,7 +977,8 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
   if (url.pathname === "/api/v1/coach/conversations" && request.method === "POST") {
     const user = await requireUser(request, env); if (user instanceof Response) return user;
     const body = await request.json().catch(() => ({})) as { title?: unknown };
-    return json({ conversation: await createConversation(env, user.id, typeof body.title === "string" ? body.title : undefined) }, 201);
+    const defaultTitle = toLocale(user.locale) === "en" ? "New conversation" : "新的对话";
+    return json({ conversation: await createConversation(env, user.id, typeof body.title === "string" ? body.title : defaultTitle) }, 201);
   }
   const coachMessagesMatch = url.pathname.match(/^\/api\/v1\/coach\/conversations\/([^/]+)\/messages$/);
   if (coachMessagesMatch && request.method === "GET") {
@@ -870,19 +988,24 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
   }
   if (coachMessagesMatch && request.method === "POST") {
     const user = await requireUser(request, env); if (user instanceof Response) return user;
+    if (env.COACH_RUNTIME_PAUSED === 'true') return errorJson('COACH_RUNTIME_PAUSED', 'Coach 正在维护，请稍后重试。已保存的训练与记录仍可查看。', 503);
     const limited = await enforceRateLimit(env, request, "coach_chat", RATE_RULES.coachChat, user.id);
     if (limited) return limited;
-    const body = await request.json().catch(() => null) as { message?: unknown; clientMutationId?: unknown } | null;
+    const body = await request.json().catch(() => null) as { message?: unknown; clientMutationId?: unknown; scene?: unknown; retry?: unknown } | null;
     if (typeof body?.message !== "string") return errorJson("MESSAGE_REQUIRED", "请输入要发送给 Coach 的内容。", 400);
+    const scene = sceneSchema.safeParse(body.scene || {});
+    if (!scene.success || (body.retry !== undefined && typeof body.retry !== 'boolean')) return errorJson('INVALID_COACH_CONTEXT', '训练上下文无效，请重新打开今日训练。', 400);
     const message = body.message;
     const conversationId = decodeURIComponent(coachMessagesMatch[1]);
-    return coachStream((emit) => sendCoachMessage(env, user, conversationId, { message,
+    return coachStream((emit, signal) => sendCoachMessage(env, user, conversationId, { message, scene: scene.data, retry: body.retry === true, signal,
+      defer: ctx ? work => ctx.waitUntil(work) : undefined,
       clientMutationId: typeof body.clientMutationId === "string" ? body.clientMutationId.slice(0, 100) : null,
-      onDelta: (delta) => emit("message.delta", { delta }) }));
+      onDelta: (delta) => emit("message.delta", { delta }) }), request.signal);
   }
   const coachActionMatch = url.pathname.match(/^\/api\/v1\/coach\/actions\/([^/]+)\/(accept|reject)$/);
   if (coachActionMatch && request.method === "POST") {
     const user = await requireUser(request, env); if (user instanceof Response) return user;
+    if (coachActionMatch[2] === 'accept' && env.COACH_RUNTIME_PAUSED === 'true') return errorJson('COACH_RUNTIME_PAUSED', 'Coach 正在维护，暂时不能确认调整。', 503);
     try { return json(await decideCoachAction(env, user.id, decodeURIComponent(coachActionMatch[1]), coachActionMatch[2] === "accept" ? "accepted" : "rejected")); }
     catch (error) { const code = error instanceof Error ? error.message : "ACTION_NOT_FOUND"; return errorJson(code, code.includes("NOT_FOUND") ? "没有找到这条 Coach 建议。" : "这条建议已过期或无法安全执行。", code.includes("NOT_FOUND") ? 404 : 409); }
   }
@@ -1059,9 +1182,8 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
     const query = (url.searchParams.get("q") || "").trim().toLocaleLowerCase().slice(0, 80);
     const equipmentFilter = (url.searchParams.get("equipment") || "").trim().toLocaleLowerCase();
     const targetFilter = (url.searchParams.get("target") || "").trim().toLocaleLowerCase();
-    const assetResponse = await env.ASSETS.fetch(new Request(new URL("/exercise-catalog.json", request.url)));
-    if (!assetResponse.ok) return errorJson("EXERCISE_CATALOG_UNAVAILABLE", "动作目录暂时不可用。", 503);
-    const catalog = await assetResponse.json() as { count: number; mediaPolicy: string; exercises: Array<Record<string, unknown>> };
+    const catalog = await exerciseCatalog(request, env);
+    if (!catalog) return errorJson("EXERCISE_CATALOG_UNAVAILABLE", "动作目录暂时不可用。", 503);
     const results = catalog.exercises.filter((item) => {
       const text = `${item.name || ""} ${item.bodyPart || ""} ${item.target || ""} ${item.muscleGroup || ""}`.toLocaleLowerCase();
       return (!query || text.includes(query)) && (!equipmentFilter || String(item.equipment || "").toLocaleLowerCase() === equipmentFilter) && (!targetFilter || text.includes(targetFilter));
@@ -1071,8 +1193,7 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
   const exerciseDetailMatch = url.pathname.match(/^\/api\/v1\/exercises\/([^/]+)$/);
   if (exerciseDetailMatch && request.method === "GET") {
     const user = await requireUser(request, env); if (user instanceof Response) return user;
-    const assetResponse = await env.ASSETS.fetch(new Request(new URL("/exercise-catalog.json", request.url)));
-    const catalog = assetResponse.ok ? await assetResponse.json() as { exercises: Array<Record<string, unknown>> } : null;
+    const catalog = await exerciseCatalog(request, env);
     const exercise = catalog?.exercises.find((item) => String(item.id) === decodeURIComponent(exerciseDetailMatch[1]));
     return exercise ? json({ exercise }) : errorJson("EXERCISE_NOT_FOUND", "没有找到该动作。", 404);
   }
@@ -1187,8 +1308,8 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
     // wipe an account. The client has to echo an explicit confirmation phrase.
     const body = await request.json().catch(() => null) as { confirm?: unknown } | null;
     if (body?.confirm !== "DELETE") return errorJson("DELETE_CONFIRMATION_REQUIRED", "删除账户需要在请求中确认（confirm: \"DELETE\"）。", 428);
-    console.log("account_deleted", user.id);
     await deleteUserData(env, user.id);
+    console.log("account_deleted", user.id);
     return json({ ok: true }, 200, { "set-cookie": cookie("cmine_fit_session", "", request, 0) });
   }
   if (url.pathname === "/api/v1/export" && request.method === "GET") {
@@ -1198,7 +1319,9 @@ export async function handleApi(request: Request, env: WorkerEnv): Promise<Respo
     const limited = await enforceRateLimit(env, request, "export", RATE_RULES.exportData, user.id);
     if (limited) return limited;
     console.log("data_export", user.id);
-    return json(await exportUserData(env, user), 200, {
+    const exported = await exportUserData(env, user);
+    const modelHub = env.MODEL_HUB_API_KEY ? (await hubRequest(env, user.id, '/v1/privacy/export')).body : undefined;
+    return json({ ...exported, ...(modelHub ? { modelHub } : {}) }, 200, {
       "content-disposition": `attachment; filename="cmine-fit-export-${new Date().toISOString().slice(0, 10)}.json"`,
     });
   }

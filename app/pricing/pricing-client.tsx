@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { BrandMark } from "../shared/ui/brand-mark";
 import { useEffect, useState } from "react";
 import { beginCmineLogin } from "../lib/auth";
 import { useLocale } from "../lib/i18n-provider";
@@ -85,7 +86,7 @@ export default function PricingClient() {
 
   return <main className="pricing-page">
     <header className="pricing-header">
-      <Link className="brand" href="/"><span className="brand-mark">C</span><span>CMINE <b>FIT</b></span></Link>
+      <Link className="brand" href="/"><BrandMark /><span>CMINE <b>FIT</b></span></Link>
       <nav><Link href="/nutrition">{t("pricing.navNutrition")}</Link><Link href="/account">{t("pricing.navMyTraining")}</Link></nav>
     </header>
 

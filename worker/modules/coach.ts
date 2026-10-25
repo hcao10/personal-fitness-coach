@@ -1,13 +1,7 @@
-import { actionsAllowedUnderRisk, assessSafety, medicalDisclaimer, safetyGuidance } from "../../packages/domain/src";
-import { toLocale } from "../../packages/i18n/src";
+import { executeSessionChange } from '../coach/execute.ts';
 import { EXERCISES, isExerciseAllowed, type CoachPlan, type Profile } from "../../packages/coach-core/src";
 import type { WorkerEnv } from "../platform";
-import type { StoredUser } from "../db";
-import { activeCycleForUser, localDateInTimezone, occurrenceForDate, profileForUser, recordGenerationRun, rescheduleOccurrence, savePlan, setOccurrenceMode } from "../db";
-import { observedLocale } from "../telemetry";
-import { generateCoachChat } from "../llm";
-import { consumeCapability, refundCapability } from "../product";
-import { coachMemorySnapshot, knowledgeForQuestion, updateConversationSummary } from "./coach-orchestrator";
+import { activeCycleForUser, localDateInTimezone, occurrenceForDate, rescheduleOccurrence, savePlan, setOccurrenceMode } from "../db";
 
 function parseJson<T>(value: string | null): T | null { try { return value ? JSON.parse(value) as T : null; } catch { return null; } }
 
@@ -54,144 +48,8 @@ export async function conversationMessages(env: WorkerEnv, userId: string, conve
   });
 }
 
-async function buildContext(env: WorkerEnv, user: StoredUser, conversationId: string, tier: "free" | "pro") {
-  const now = new Date(); const since = new Date(now.getTime() - 28 * 86400_000).toISOString();
-  const nutritionSince = new Date(now.getTime() - 14 * 86400_000).toISOString();
-  const [profile, cycle, occurrenceWorkouts, legacyWorkouts, measurements, workoutSets, nutrition, reviews, health, memory, conversationSummary] = await Promise.all([
-    profileForUser(env, user.id),
-    activeCycleForUser(env, user.id),
-    env.DB!.prepare(`SELECT o.day_index,s.status,s.duration_minutes,s.rpe,s.pain,s.notes,s.completed_at FROM workout_occurrence_sessions s
-      JOIN workout_occurrences o ON o.id=s.occurrence_id WHERE s.user_id=? AND s.updated_at>=? ORDER BY s.updated_at DESC LIMIT 40`).bind(user.id, since).all(),
-    env.DB!.prepare(`SELECT day_index,status,duration_minutes,rpe,pain,notes,completed_at FROM workout_sessions
-      WHERE user_id=? AND updated_at>=? ORDER BY updated_at DESC LIMIT 40`).bind(user.id, since).all(),
-    env.DB!.prepare(`SELECT weight_kg,body_fat_pct,waist_cm,arm_cm,measured_at FROM measurements
-      WHERE user_id=? ORDER BY measured_at DESC LIMIT 12`).bind(user.id).all(),
-    env.DB!.prepare(`SELECT exercise_id,set_index,set_type,weight_kg,reps,rir,rpe,completed,updated_at FROM workout_occurrence_sets
-      WHERE user_id=? AND updated_at>=? ORDER BY updated_at DESC LIMIT 160`).bind(user.id, since).all(),
-    env.DB!.prepare(`SELECT substr(eaten_at,1,10) AS day,SUM(calories) AS calories,SUM(protein_g) AS protein_g,SUM(carbs_g) AS carbs_g,SUM(fat_g) AS fat_g
-      FROM meal_logs WHERE user_id=? AND status='confirmed' AND eaten_at>=? GROUP BY substr(eaten_at,1,10) ORDER BY day DESC`).bind(user.id, nutritionSince).all(),
-    env.DB!.prepare(`SELECT week_start,status,metrics_json,recommendation_json FROM weekly_reviews WHERE user_id=? ORDER BY week_start DESC LIMIT 4`).bind(user.id).all(),
-    env.DB!.prepare(`SELECT type,value,unit,observed_at,source_name FROM health_observations WHERE user_id=? AND observed_at>=?
-      ORDER BY observed_at DESC LIMIT 20`).bind(user.id, since).all(),
-    coachMemorySnapshot(env, user.id),
-    env.DB!.prepare("SELECT summary FROM coach_conversations WHERE id=? AND user_id=?").bind(conversationId, user.id).first<{ summary: string | null }>(),
-  ]);
-  if (memory.preferences.coachingMode === "education") return { locale: toLocale(user.locale), timezone: user.timezone, coachingMode: "education", tone: memory.preferences.tone,
-    profile: null, activePlan: null, recentWorkouts: [], recentWorkoutSets: [], recentMeasurements: [], nutrition14Days: [], recentReviews: [], healthSummaries: [], coachMemory: [], conversationSummary: null };
-  const workouts = Number(occurrenceWorkouts.results?.length || 0) ? occurrenceWorkouts : legacyWorkouts;
-  return { locale: toLocale(user.locale), timezone: user.timezone, profile, activePlan: cycle ?{ id: cycle.planId, versionId: cycle.versionId, startDate: cycle.startDate, phaseWeeks: cycle.phaseWeeks, plan: cycle.plan } : null,
-    recentWorkouts: workouts.results || [], recentWorkoutSets: workoutSets.results || [], recentMeasurements: measurements.results || [],
-    nutrition14Days: nutrition.results || [], recentReviews: (reviews.results || []).map((row) => ({ ...row,
-      metrics_json: parseJson(String((row as Record<string, unknown>).metrics_json || "")), recommendation_json: parseJson(String((row as Record<string, unknown>).recommendation_json || "")) })),
-    healthSummaries: health.results || [], coachMemory: tier === "pro" && memory.preferences.memoryEnabled ? memory.memories.slice(0, 20) : [], coachingMode: memory.preferences.coachingMode, tone: memory.preferences.tone,
-    conversationSummary: conversationSummary?.summary || null };
-}
 
-export async function sendCoachMessage(env: WorkerEnv, user: StoredUser, conversationId: string, input: {
-  message: string; clientMutationId?: string | null; onDelta?: (delta: string) => void;
-}) {
-  if (!env.DB || !await ownedConversation(env, user.id, conversationId)) throw new Error("CONVERSATION_NOT_FOUND");
-  const message = input.message.trim().slice(0, 2000);
-  if (!message) throw new Error("MESSAGE_REQUIRED");
-  if (input.clientMutationId) {
-    const duplicate = await env.DB.prepare("SELECT id FROM coach_messages WHERE user_id=? AND client_mutation_id=?")
-      .bind(user.id, input.clientMutationId).first<{ id: string }>();
-    if (duplicate) {
-      const messages = await conversationMessages(env, user.id, conversationId);
-      const assistantMessage = [...messages].reverse().find((item) => item.role === "assistant") || { id: duplicate.id, role: "assistant" as const, content: "", createdAt: new Date().toISOString(), actions: [] };
-      return { duplicate: true, userMessage: null, assistantMessage };
-    }
-  }
-  const locale = toLocale(user.locale);
-  const now = new Date().toISOString(); const userMessageId = crypto.randomUUID();
-  // A user's own language is measured, not assumed from their interface
-  // setting: someone reading the app in English still asks questions in Chinese.
-  await env.DB.prepare(`INSERT INTO coach_messages (id,conversation_id,user_id,role,content,client_mutation_id,content_locale,created_at)
-    VALUES (?,?,?,'user',?,?,?,?)`).bind(userMessageId, conversationId, user.id, message, input.clientMutationId || null,
-      observedLocale(locale, message), now).run();
-  const triage = assessSafety(message);
-  // Severity decides whether the model is consulted at all:
-  //  - emergency (chest pain, fainting, cannot bear weight): the only correct
-  //    answer is stop and seek help, so the model is not involved;
-  //  - caution (pain at or above the threshold): the user gets a real answer —
-  //    refusing to help someone with a sore knee just sends them to guess alone
-  //    — with guidance appended and every intensity increase withheld.
-  const emergency = triage.level === "emergency";
-  let result: Awaited<ReturnType<typeof generateCoachChat>> | null = null;
-  let reply = emergency ? safetyGuidance(locale) : "";
-  const started = Date.now();
-  const knowledge = await knowledgeForQuestion(env, message);
-  if (triage.highRisk) {
-    await env.DB.prepare(`INSERT INTO coach_evaluation_runs (id,task,provider,model,schema_valid,safety_passed,action_valid,latency_ms,detail_json,created_at)
-      VALUES (?,'coach_consult','rules','safety-policy',1,0,1,0,?,?)`)
-      .bind(crypto.randomUUID(), JSON.stringify({ level: triage.level, blocked: emergency, pain: triage.pain, matched: triage.matched }), now).run();
-  }
-  if (!emergency) {
-    const quota = await consumeCapability(env, user.id, "coach.chat");
-    if (!quota.ok) throw new Error("COACH_LIMIT_REACHED");
-    try {
-      const history = (await conversationMessages(env, user.id, conversationId)).slice(-12).map((item) => ({ role: item.role, content: item.content }));
-      result = await generateCoachChat(env, { message, locale, context: await buildContext(env, user, conversationId, quota.tier), history, knowledge, safetyIdentifier: user.id, onDelta: input.onDelta }, quota.tier);
-      reply = result.reply;
-      // Guidance is appended when either layer sees risk: the keyword screen for
-      // an explicit score, the model for paraphrase it cannot match.
-      if (result.safety.highRisk || triage.highRisk) {
-        const guidance = safetyGuidance(locale);
-        reply = `${reply}\n\n${guidance}`;
-        if (input.onDelta) input.onDelta(`\n\n${guidance}`);
-        await env.DB.prepare(`INSERT INTO coach_evaluation_runs (id,task,provider,model,schema_valid,safety_passed,action_valid,latency_ms,detail_json,created_at)
-          VALUES (?,'coach_consult',?,?,1,0,1,?,?,?)`)
-          .bind(crypto.randomUUID(), result.provider, result.model, Date.now() - started,
-            JSON.stringify({ modelFlagged: result.safety.highRisk, keywordLevel: triage.level, category: result.safety.category, detail: result.safety.detail }), new Date().toISOString()).run();
-      }
-    } catch (error) { await refundCapability(env, user.id, "coach.chat"); throw error; }
-  }
-  if (emergency && input.onDelta) input.onDelta(reply);
-  const assistantId = crypto.randomUUID(); const completedAt = new Date().toISOString();
-  const metadata = result ? { intent: result.intent, basis: result.basis, limitations: result.limitations,
-    sources: knowledge.filter((source) => result!.sourceIds.includes(source.id)).map(({ id, title, publisher, url }) => ({ id, title, publisher, url })) }
-    : { intent: "safety", basis: [], limitations: [medicalDisclaimer(locale)], sources: [] };
-  // The emergency reply is deterministic product copy rendered in `locale`;
-  // a model reply carries whatever language the server measured in it.
-  const replyLocale = result?.contentLocale ?? locale;
-  const statements = [
-    env.DB.prepare(`INSERT INTO coach_messages (id,conversation_id,user_id,role,content,metadata_json,content_locale,created_at) VALUES (?,?,?,'assistant',?,?,?,?)`)
-      .bind(assistantId, conversationId, user.id, reply, JSON.stringify(metadata), replyLocale, completedAt),
-    env.DB.prepare("UPDATE coach_conversations SET updated_at=?, title=CASE WHEN title='新的对话' THEN ? ELSE title END WHERE id=?")
-      .bind(completedAt, message.slice(0, 36), conversationId),
-  ];
-  await env.DB.batch(statements);
-  const actions = [];
-  const activeCycle = await activeCycleForUser(env, user.id);
-  // The LLM layer already filtered on its own safety flag; this applies the
-  // keyword screen's verdict too, so a stated pain score withholds intensity
-  // increases even when the model did not flag the message itself.
-  for (const action of actionsAllowedUnderRisk(result?.actions || [], triage.highRisk)) {
-    const id = crypto.randomUUID(); const payload = { title: action.title, description: action.description, before: action.before, after: action.after,
-      reason: action.reason, impact: action.impact, reversible: action.reversible, exerciseId: action.exercise_id || null,
-      replacementExerciseId: action.replacement_exercise_id || null, durationMinutes: action.duration_minutes || null,
-      targetDate: action.target_date || null, loadMultiplier: action.load_multiplier || null, setMultiplier: action.set_multiplier || null };
-    const expiresAt = new Date(Date.now() + 48 * 3600_000).toISOString();
-    await env.DB.prepare(`INSERT INTO coach_action_proposals
-      (id,conversation_id,message_id,user_id,action_type,payload_json,base_version_id,reason_codes_json,impact_json,reversible,expires_at,status,created_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,'pending',?)`)
-      .bind(id, conversationId, assistantId, user.id, action.type, JSON.stringify(payload), activeCycle?.versionId || null,
-        JSON.stringify([action.reason]), JSON.stringify(action.impact), action.reversible ? 1 : 0, expiresAt, completedAt).run();
-    actions.push({ id, type: action.type, status: "pending", payload, baseVersionId: activeCycle?.versionId || null, expiresAt });
-  }
-  if (result) await recordGenerationRun(env, { userId: user.id, status: "succeeded", model: result.model, latencyMs: Date.now() - started,
-    requestId: result.requestId, inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens,
-    task: "coach_chat", provider: result.provider, estimatedCostUsd: result.estimatedCostUsd,
-    locale, contentLocale: result.contentLocale });
-  if (result) await env.DB.prepare(`INSERT INTO coach_evaluation_runs (id,task,provider,model,schema_valid,safety_passed,action_valid,latency_ms,detail_json,created_at)
-    VALUES (?,'coach_consult',?,?,1,1,1,?,?,?)`).bind(crypto.randomUUID(), result.provider, result.model, Date.now() - started,
-      // localeClaimMismatch is the interesting one: a model whose self-report
-      // disagrees with what it actually wrote is unreliable on both counts.
-      JSON.stringify({ requestedLocale: locale, contentLocale: result.contentLocale, localeClaimMismatch: result.localeClaimMismatch }), completedAt).run();
-  await updateConversationSummary(env, user.id, conversationId).catch(() => undefined);
-  return { duplicate: false, userMessage: { id: userMessageId, role: "user", content: message, createdAt: now },
-    assistantMessage: { id: assistantId, role: "assistant", content: reply, createdAt: completedAt, actions, ...metadata } };
-}
+export { sendCoachMessage } from '../coach/send.ts';
 
 function adjustedPlanForAction(plan: CoachPlan, profile: Profile, type: string, payload: Record<string, unknown>): CoachPlan {
   const next = structuredClone(plan);
@@ -228,10 +86,12 @@ export async function decideCoachAction(env: WorkerEnv, userId: string, actionId
     await env.DB.prepare("UPDATE coach_action_proposals SET status='expired',decided_at=? WHERE id=? AND user_id=?").bind(now, actionId, userId).run();
     return { id: action.id, type: action.action_type, status: "expired", payload, duplicate: false };
   }
+  if (payload.scope === 'occurrence') return executeSessionChange(env, userId, action, decision);
   if (decision === "rejected") {
     await env.DB.prepare("UPDATE coach_action_proposals SET status='rejected',decided_at=? WHERE id=? AND user_id=?").bind(now, actionId, userId).run();
     return { id: action.id, type: action.action_type, status: "rejected", payload, duplicate: false };
   }
+  if (['replace_exercise','shorten_session','adjust_load'].includes(action.action_type)) throw new Error('ACTION_PREVIEW_REQUIRED');
   const active = await activeCycleForUser(env, userId);
   const versionedTypes = new Set(["replace_exercise", "adjust_load", "plan_adjustment"]);
   if (versionedTypes.has(action.action_type) && action.base_version_id && active?.versionId !== action.base_version_id) {
@@ -263,9 +123,9 @@ export async function decideCoachAction(env: WorkerEnv, userId: string, actionId
         .bind(crypto.randomUUID(), userId, active.id, weekStart, now, now).run(); draftUrl = "/progress#weekly-review"; result = { weekStart };
     } else if (action.action_type === "create_meal_draft") {
       draftId = crypto.randomUUID();
-      await env.DB.prepare(`INSERT INTO meal_logs (id,user_id,meal_type,status,eaten_at,note,calories,protein_g,carbs_g,fat_g,created_at,updated_at)
-        VALUES (?,?,'other','draft',?,?,0,0,0,0,?,?)`).bind(draftId, userId, now, String(payload.description || payload.title || "Coach 创建的餐食草稿").slice(0, 300), now, now).run();
-      draftUrl = "/nutrition"; result = { mealId: draftId };
+      await env.DB.prepare(`INSERT OR IGNORE INTO coach_record_drafts (id,user_id,action_id,draft_type,payload_json,status,created_at,updated_at)
+        VALUES (?,?,?,'meal',?,'draft',?,?)`).bind(draftId, userId, actionId, JSON.stringify(payload), now, now).run();
+      draftUrl = "/nutrition#coach-meal-draft"; result = { draftId };
     } else if (action.action_type === "log_workout") {
       const occurrence = active ? await occurrenceForDate(env, userId, localDateInTimezone(active.timezone)) : null;
       if (!active || !occurrence) throw new Error("OCCURRENCE_NOT_FOUND");

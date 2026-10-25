@@ -34,6 +34,6 @@ export const exercisesEn = {
   supportingMuscles: "Supporting muscles: {muscles}",
   muscleSeparator: ", ",
   notSpecified: "Not listed",
-  askCoachToSwap: "Ask Coach if this swap works →",
+  askCoachToSwap: "Ask Coach if this swap works ",
   swapPrompt: "I want to replace my current exercise with {name}. Based on my plan, my equipment and my movement limits, is it a good fit?",
 } as const satisfies Widen<typeof exercisesZh>;

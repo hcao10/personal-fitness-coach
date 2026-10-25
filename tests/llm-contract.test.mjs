@@ -19,6 +19,12 @@ const profile = {
 
 const base = generatePlan(profile);
 const trainingDays = new Set(base.schedule.filter((day) => !day.restDay).map((day) => day.dayIndex));
+const trainingIndexes = [...trainingDays];
+const balancedSessions = [
+  ["bench", "shoulder", "pushdown"],
+  ["row", "pulldown", "curl"],
+  ["squat", "deadlift", "lunge"],
+];
 
 const PROSE = {
   zh: {
@@ -44,11 +50,7 @@ function modelPlan(locale, overrides = {}) {
       rest_day: !trainingDays.has(index),
       duration_minutes: 45,
       exercises: trainingDays.has(index)
-        ? [
-          { exercise_id: "bench", sets: 3, reps: "8-12", rest_seconds: 90 },
-          { exercise_id: "shoulder", sets: 3, reps: "8-12", rest_seconds: 90 },
-          { exercise_id: "pushdown", sets: 3, reps: "10-12", rest_seconds: 60 },
-        ]
+        ? balancedSessions[trainingIndexes.indexOf(index)].map((exerciseId) => ({ exercise_id: exerciseId, sets: 3, reps: "8-12", rest_seconds: 90 }))
         : [],
     })),
     ...overrides,
@@ -65,11 +67,10 @@ test("a plan comes back in the locale it was generated for, in every locale", ()
   }
 });
 
-// The measured language wins over the requested one, so a model that answered
-// in the wrong language is recorded as such instead of being relabelled.
-test("a plan written in the wrong language records the language it is in", () => {
-  const plan = applyAiPlan(profile, base, modelPlan("en"), "zh");
-  assert.equal(readPlanInsights(plan.insights, "zh").contentLocale, "en");
+// A language mismatch is a failed generation, not a plan that can be shown or
+// cached. The router may retry another provider after this rejection.
+test("a plan written in the wrong language is rejected", () => {
+  assert.throws(() => applyAiPlan(profile, base, modelPlan("en"), "zh"), /AI_LANGUAGE_MISMATCH/);
 });
 
 test("stop conditions stay multilingual — they are reviewed copy, not model output", () => {
@@ -107,6 +108,21 @@ test("a plan that moves the training days is rejected", () => {
   // model's to reschedule.
   output.days = [...output.days].reverse().map((day, index) => ({ ...day, day_index: index }));
   assert.throws(() => applyAiPlan(profile, base, output, "zh"), /AI_TRAINING_SPACING_INVALID/);
+});
+
+test("a plan missing a major movement region is rejected", () => {
+  const output = modelPlan("zh");
+  output.days = output.days.map((day) => day.rest_day ? day : { ...day, exercises: balancedSessions[0].map((exerciseId) => ({ exercise_id: exerciseId, sets: 3, reps: "8-12", rest_seconds: 90 })) });
+  assert.throws(() => applyAiPlan(profile, base, output, "zh"), /AI_MOVEMENT_COVERAGE_INVALID/);
+});
+
+test("a plan with excessive weekly sets for one movement region is rejected", () => {
+  const output = modelPlan("zh");
+  output.days = output.days.map((day) => day.rest_day ? day : { ...day, exercises: [
+    ...day.exercises,
+    { exercise_id: "dumbbellBench", sets: 5, reps: "8-12", rest_seconds: 90 },
+  ] });
+  assert.throws(() => applyAiPlan(profile, base, output, "zh"), /AI_WEEKLY_DOSE_INVALID/);
 });
 
 test("exercises outside the allowed set are dropped, and a thin day fails", () => {

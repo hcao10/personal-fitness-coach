@@ -16,9 +16,46 @@ Cmine Fit 是一套包含自主轻量版与专业增强版的 AI 健身教练产
 - PWA：移动端导航、Web App Manifest 与可安装能力
 - 原生 App：`apps/mobile` 已提供 Expo Router 五模块、Cmine PKCE、SecureStore、SQLite 离线队列、RevenueCat、训练提醒（本地提醒 + 服务端推送：按用户承诺的 cue 时间发送训练提醒与周日晚教练信，尊重安静时段；需配置 Expo 推送与每小时 cron）、HealthKit 与 Health Connect 开发构建；商店能力按供应商配置启用
 - 长期 Coach：连续会话、SSE、用户确认操作卡、周度复盘、停滞判断、不可变计划版本、差异确认和回退数据链路
+- 闭环记录：Coach 的体重/围度与餐食建议先进入草稿，用户可在进度或饮食页补全、确认或拒绝；确认后才写入正式记录
+- 上下文与知识：长对话使用 AI 语义摘要（供应商故障时退回确定性摘要），知识库使用向量语义与中英文关键词混合检索，并保留来源
 - 契约测试：覆盖无密钥状态、跨站写入、管理员权限、AI 路由、结构化响应、支付签名与营养确认边界
 
-未配置外部凭据时，产品不会伪装成已经调用 AI 或已经登录。完整计划只在 LLM 成功生成并通过服务端校验后展示。
+未配置外部凭据时，产品不会伪装成已经调用 AI 或已经登录。
+
+## 两种能力模式
+
+产品显式支持两种模式，它们共用同一套领域结构，只是持久化不同：
+
+- **本地模式（Guest / Open）**：不需要账号。资料与计划保存在浏览器本地，由
+  `packages/coach-core` 的确定性规划器在安全规则内生成完整计划；可以看完整周安排、
+  动作大图与动画、完成一次训练并提交反馈，得到确定性的下一步建议。
+  规则计划标注为「安全规则计划」，任何界面都不会把它称作 AI 生成。
+- **账号模式（Account / Pro）**：配置 Cmine ID 后可登录并跨设备持久化；再配置 LLM
+  后可生成结构化 AI 计划并使用连续 Coach。AI 计划仍须通过服务端安全校验。
+
+未配置账号或模型时，界面显示明确状态和可继续的下一步，不会出现无限加载、空壳页面
+或点了没有反应的按钮。核心训练路径不依赖登录，也不依赖模型。
+
+## 核心模块边界
+
+```
+packages/
+  coach-core/          确定性计划与动作库（纯函数，无网络与数据库）
+  product-state/       Profile / Plan / Workout / Coach / Capability 状态机，可被 node --test 直接加载
+  exercise-catalog/    动作视图契约与按动作模式的已审核指导
+  api-contracts/       请求、响应与事件类型的唯一来源
+  domain/              安全规则、语言检测与周复盘计算
+  i18n/                语言注册表与消息目录
+  integrations/anybite/ 与 anyBite 的版本化契约和默认关闭的适配器（见 docs/adr/0002）
+app/
+  features/{profile,plan,workout,exercise,coach}/  各自的页面、仓储与组件
+  shared/{api,async-state,ui,analytics}/           typed client、能力探测、入口状态与共享 UI
+  styles/                                          按 tokens / 共享 / 特性拆分的样式
+worker/
+  api.ts               组合路由；业务逻辑在 worker/modules/*
+```
+
+设计决策记录在 `docs/adr/`。
 
 ## 本地运行
 
@@ -30,7 +67,29 @@ Cmine Fit 是一套包含自主轻量版与专业增强版的 AI 健身教练产
 验证：
 
     npm run lint
+    npm run typecheck
     npm test
+
+`npm run dev` 之后 `GET /api/health` 会分别报告 `database`（D1 是否绑定）与
+`schemaReady`（产品所需数据表是否存在）。首次本地运行时 `schemaReady` 为 false，
+本地模式仍可完整使用；需要账号能力时执行：
+
+    npx wrangler d1 migrations apply DB --local
+
+核心闭环的验收步骤见 `docs/E2E_GUEST_FUNNEL.zh-CN.md`。
+
+## 独立部署到 Cloudflare
+
+主站使用仓库根目录的 `wrangler.jsonc` 直接部署到 Cloudflare Workers，D1、R2、
+Cloudflare Images 和静态资源均由该 Cloudflare 项目管理，不依赖 ChatGPT/Sites
+托管。首次部署或数据库结构更新时执行：
+
+    npm run build
+    npm run db:migrate:remote
+    npm run deploy
+
+生产密钥使用 `wrangler secret put <NAME>` 设置，不要提交到仓库。OpenAI 路由是
+可选能力；不设置 `OPENAI_API_KEY` 和 `OPENAI_MODEL` 时不会连接 OpenAI 服务。
 
 ## 生产环境变量
 
@@ -39,6 +98,7 @@ Cmine Fit 是一套包含自主轻量版与专业增强版的 AI 健身教练产
 - `SESSION_SECRET`：随机会话签名密钥
 - `OPENAI_API_KEY`：OpenAI API 密钥
 - `OPENAI_MODEL`：无默认值，必须显式填写 OpenAI 当前目录中的真实模型 ID；留空则 OpenAI 路由不参与
+- `OPENAI_EMBEDDING_MODEL`：知识库向量检索模型，默认 `text-embedding-3-small`；不可用时自动退回已审核知识的关键词检索
 - `OPENAI_REASONING_EFFORT`：默认 `medium`
 - `CLOUDFLARE_AI_GATEWAY_URL` / `CLOUDFLARE_AI_GATEWAY_TOKEN`：内部 Workers AI binding 网关；生产默认路由
 - `AI_COMPAT_BASE_URL` / `AI_COMPAT_API_KEY`：可选 OpenAI-compatible 或自托管 Qwen/Ollama/vLLM
@@ -56,7 +116,7 @@ Cmine Fit 是一套包含自主轻量版与专业增强版的 AI 健身教练产
 - `REVENUECAT_WEBHOOK_SECRET` / `REVENUECAT_PROJECT_ID`：移动订阅回调与项目标识
 - `REVENUECAT_API_KEY`：**授予权益前必须配置**——RevenueCat webhook 不带签名，服务端会用 REST API 回查订阅状态；未配置时 webhook 只记录事件、不发放任何权益
 - `CMINE_MOBILE_CLIENT_IDS`：允许访问 Fit API 的 Cmine ID Public Client ID 列表
-- `MAINTENANCE_SECRET`：Sites 与每日清理 Worker 共用的 HMAC Secret；`cmine-fit-automation` Worker 用它调用每日维护与每小时通知任务
+- `MAINTENANCE_SECRET`：主站 Worker 与每日清理 Worker 共用的 HMAC Secret；`cmine-fit-automation` Worker 用它调用每日维护与每小时通知任务
 - `EXPO_ACCESS_TOKEN`：服务端推送（训练提醒、周教练信、试用到期提醒）所需；未配置时不发送任何服务端推送，`/api/health` 的 `push` 报 `false`，每小时任务会记录 `notifications_skipped` 并照常维护里程碑数据
 
 移动端标识由构建环境注入（`apps/mobile/app.config.js`），不写入仓库：
@@ -97,7 +157,7 @@ Apache-2.0 授权，不依赖账号、数据库或网络。仓库其余部分继
 许可证，专业版的账号、历史、进度、运营、权益与长期 Coach 能力不属于
 `coach-core`。
 
-完整架构见 [产品架构](docs/PRODUCT_ARCHITECTURE.zh-CN.md)，当前模块和发布闸门见 [长期产品模块](docs/LONG_TERM_PRODUCT_MODULES.zh-CN.md)，健康与法律边界见 [免责声明草案](docs/LEGAL_DISCLAIMER.zh-CN.md)。
+完整架构见 [产品架构](docs/PRODUCT_ARCHITECTURE.zh-CN.md)，当前模块和发布闸门见 [长期产品模块](docs/LONG_TERM_PRODUCT_MODULES.zh-CN.md)，健康与使用边界见 [健康免责声明](docs/LEGAL_DISCLAIMER.zh-CN.md)。
 
 ## 安全边界
 

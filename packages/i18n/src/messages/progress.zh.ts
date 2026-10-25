@@ -52,7 +52,7 @@ export const progressZh = {
   // the server already sends per locale.
   engineSummary: "教练引擎在你的数据里找到了 {count} 条针对性调整{stalled}。{teaser}",
   engineStagnation: "，并检测到 {count} 个停滞动作",
-  unlockAdjustments: "升级 Pro，解锁并一键采纳完整调整方案 →",
+  unlockAdjustments: "升级 Pro，解锁并一键采纳完整调整方案 ",
   keepCurrentPlan: "保留当前计划",
   acceptAdjustments: "接受并启用调整",
 
@@ -61,7 +61,7 @@ export const progressZh = {
   sleepLabel: "睡眠质量",
   painLabel: "疼痛程度",
   generating: "正在分析…",
-  generateReview: "生成本周复盘 →",
+  generateReview: "生成本周复盘 ",
 
   // Result messages.
   generateFailed: "复盘生成失败。",
@@ -73,6 +73,19 @@ export const progressZh = {
   historyEyebrow: "历史复盘",
   historyPlaceholderTitle: "记录收集中",
   historyEmpty: "完成几周训练后，趋势和计划版本会显示在这里。",
+
+  measurementDraftEyebrow: "COACH 待确认记录",
+  measurementDraftTitle: "确认本次身体记录",
+  measurementDraftBody: "Coach 只创建草稿。请你填写或核对数值，确认后才会写入进度趋势。BMI 会根据建档身高自动计算，仅作为筛查指标。",
+  weightKg: "体重（kg）",
+  bodyFatPct: "体脂率（%）",
+  waistCm: "腰围（cm）",
+  measurementNote: "备注（可选）",
+  confirmMeasurement: "确认并记录",
+  rejectMeasurement: "不记录",
+  measurementSaved: "身体记录已保存，进度趋势已经更新。",
+  measurementRejected: "已放弃这条草稿。",
+  measurementFailed: "身体记录未保存，请检查数值后重试。",
 
   // Charts.
   chartsEyebrow: "进步曲线",
@@ -93,5 +106,6 @@ export const progressZh = {
   e1rmNote: "估算 1RM 按 Epley 公式从你完成的组数换算，用于观察趋势，不建议直接当作实测最大重量。",
   weightHeading: "体重趋势",
   weightChartLabel: "体重从 {from} kg 到 {to} kg",
+  bmiLatest: "最新 BMI {bmi}（筛查指标，不是诊断）",
   planAdjustments: "　·　期间计划调整 {count} 次（最近 {date}）",
 } as const;

@@ -35,7 +35,7 @@ export const exercisesZh = {
   // Separator between muscle names; Chinese uses the enumeration comma.
   muscleSeparator: "、",
   notSpecified: "未标注",
-  askCoachToSwap: "请 Coach 判断能否替换 →",
+  askCoachToSwap: "请 Coach 判断能否替换 ",
   // Prefilled into the Coach composer, so the reader sees it as their own words.
   swapPrompt: "我想把当前动作替换为 {name}，请根据我的计划、器械和动作限制判断是否适合。",
 } as const;

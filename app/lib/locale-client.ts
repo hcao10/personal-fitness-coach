@@ -26,4 +26,8 @@ export async function persistLocale(locale: Locale): Promise<void> {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ locale }),
   }).catch(() => undefined);
+  // Server-produced briefs, saved-plan prose and metadata are locale-bound.
+  // Reload only after persistence finishes so the new render and every
+  // background API request observe the same language.
+  window.location.reload();
 }

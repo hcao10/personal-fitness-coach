@@ -70,8 +70,8 @@ test("site metadata exposes consent document versions for re-confirmation", asyn
   const response = await worker.fetch(new Request("https://local.test/api/v1/site"), {}, {});
   const body = await response.json();
   assert.equal(response.status, 200);
-  assert.equal(body.disclaimerVersion, "health-v2");
-  assert.equal(body.privacyVersion, "privacy-v1");
+  assert.equal(body.disclaimerVersion, "health-v3");
+  assert.equal(body.privacyVersion, "privacy-v2");
 });
 
 test("consent records require a configured database instead of silently succeeding", async () => {

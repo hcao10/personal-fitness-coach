@@ -128,4 +128,33 @@ export const onboardingZh = {
   saving: "正在保存…",
   confirmAndGenerate: "确认并生成完整计划",
   saveAndContinue: "保存并继续",
+  // Added with the single four-step intake. The seven-step rail above is kept
+  // for the progressive-profiling screens that ask about food after the first
+  // plan exists — those questions changed nothing about a training plan, which
+  // is why they are no longer part of intake.
+  metaTitle: "建立训练档案 — Cmine Fit",
+  metaDescription: "回答四组问题，得到一份可以今天就执行的训练计划。",
+  progress: "第 {step} / {total} 步",
+  requiredIssue: "请填写这一项。",
+  rangeIssue: "请填写 {min}–{max} 之间的数值。",
+  targetWeightOptional: "可选。留空表示保持当前体重。",
+  trainingLocationLabel: "训练地点",
+  locationHome: "居家",
+  locationGym: "健身房",
+  locationOutdoors: "户外",
+  locationMixed: "混合",
+  scheduleTitle: "你的时间和器械",
+  scheduleNote: "先按真实可执行的条件安排，比理想化计划更容易坚持。",
+  dietLaterNote: "饮食偏好不影响训练安排，所以放到计划生成之后再问。",
+  impactTitle: "这一步改变了什么",
+  impactGoal: "训练剂量已按你的经验设为每个主要肌群每周 {min}–{max} 组，目标 RIR {rir}。",
+  impactBody: "基础代谢约 {bmr} kcal，每日热量目标 {calories} kcal，蛋白质 {protein} g，建议周期 {weeks} 周。",
+  impactSchedule: "本周安排 {days} 个训练日，每次约 {minutes} 分钟、{exercises} 个动作。",
+  impactSafety: "已按你的器械与限制替换 {count} 个动作；数据完整度：{confidence}。",
+  impactSafetyNone: "已记录你的限制。生成计划时会避开相关动作，并且不提高强度。",
+  confidenceHigh: "完整",
+  confidenceMedium: "有缺口",
+  finish: "生成我的计划",
+  resume: "上次填到这里，可以直接继续。",
+  guestNote: "现在填写的内容保存在这台设备上。登录后会原样带过去，不需要重填。",
 } as const;

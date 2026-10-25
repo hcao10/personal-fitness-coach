@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    ".wrangler/**",
+    ".playwright-cli/**",
+    "output/playwright/**",
   ]),
   {
     // Expo reads app.config.js as CommonJS, so require() is the contract here.
