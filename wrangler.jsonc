@@ -1,0 +1,41 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "cmine-fit",
+  "account_id": "eec4d223ffc55199e88ae515a67323fe",
+  "main": "./worker/index.ts",
+  "compatibility_date": "2026-05-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "routes": [
+    {
+      "pattern": "fit.chwjh.com",
+      "custom_domain": true
+    }
+  ],
+  "vars": {
+    "PUBLIC_ORIGIN": "https://fit.chwjh.com",
+    "MODEL_HUB_COACH_MODEL": "openai-fast"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "cmine-fit-db",
+      "database_id": "eb042b40-024b-42c1-9224-6b067d77dfd5",
+      "migrations_dir": "drizzle"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "R2",
+      "bucket_name": "cmine-fit-media"
+    }
+  ],
+  "images": {
+    "binding": "IMAGES"
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 0.1
+  }
+}

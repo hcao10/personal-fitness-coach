@@ -1,0 +1,15 @@
+{
+  "name": "@cmine-fit/coach-core",
+  "version": "0.1.0",
+  "description": "Stateless fitness calculations and weekly plan safety rules for Cmine Fit.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ]
+}

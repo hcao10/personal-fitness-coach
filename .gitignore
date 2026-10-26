@@ -6,3 +6,21 @@ __pycache__/
 
 # Claude Code local settings (do not publish)
 .claude/
+
+# Web application build/runtime
+node_modules/
+dist/
+.next/
+.wrangler/
+.env
+.env.local
+.dev.vars
+.dev.vars.*
+.playwright-cli/
+output/playwright/
+
+tsconfig.tsbuildinfo
+
+# Upstream dataset demo pages (removed; see data/README.md)
+index.html
+setup.html

@@ -1,0 +1,13 @@
+-- The language each coach message is written in.
+--
+-- Needed because model-written text is single-locale by design and is never
+-- machine-translated on a language switch: regenerating medical-adjacent prose
+-- with no schema and no safety re-run is not an acceptable way to change a
+-- label. So a transcript can legitimately contain messages in more than one
+-- language, and both the client and the model need to know which is which
+-- rather than inferring it.
+--
+-- NULL for every message written before this column existed. That is honest:
+-- their language was never recorded, and guessing it retroactively would put
+-- fabricated provenance in the same column as measured provenance.
+ALTER TABLE coach_messages ADD COLUMN content_locale TEXT;

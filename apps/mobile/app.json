@@ -1,0 +1,65 @@
+{
+  "expo": {
+    "name": "Cmine Fit",
+    "slug": "cmine-fit",
+    "scheme": "cminefit",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "plugins": [
+      "expo-router",
+      ["expo-secure-store", { "configureAndroidBackup": true }],
+      ["expo-notifications", { "defaultChannel": "training" }],
+      ["expo-sqlite", { "enableFTS": true }],
+      ["expo-camera", {
+        "cameraPermission": "Cmine Fit 使用相机拍摄饭菜照片和扫描包装条码。照片只有在你点击上传后才会离开设备，识别结果需要你确认份量后才会记录。",
+        "recordAudioAndroid": false
+      }],
+      ["expo-image-picker", {
+        "photosPermission": "Cmine Fit 读取你主动选择的饭菜照片用于识别候选食物，不会访问你未选择的照片。",
+        "cameraPermission": "Cmine Fit 使用相机拍摄饭菜照片和扫描包装条码。"
+      }],
+      ["react-native-health", {
+        "healthSharePermission": "Cmine Fit 读取你授权的训练、活动、心率摘要和身体数据，用于训练进度和周度复盘。",
+        "healthUpdatePermission": "只有在你主动选择时，Cmine Fit 才会写回已完成训练。",
+        "isClinicalDataEnabled": false
+      }],
+      "react-native-health-connect"
+    ],
+    "ios": {
+      "bundleIdentifier": "com.chwjh.cminefit",
+      "associatedDomains": ["applinks:fit.chwjh.com"],
+      "infoPlist": {
+        "NSHealthShareUsageDescription": "Cmine Fit 读取你授权的训练、活动、心率摘要和身体数据，用于训练进度和周度复盘。",
+        "NSHealthUpdateUsageDescription": "只有在你主动选择时，Cmine Fit 才会写回已完成训练。",
+        "NSCameraUsageDescription": "Cmine Fit 使用相机拍摄饭菜照片和扫描包装条码。照片只有在你点击上传后才会离开设备。",
+        "NSPhotoLibraryUsageDescription": "Cmine Fit 读取你主动选择的饭菜照片用于识别候选食物，不会访问你未选择的照片。"
+      }
+    },
+    "android": {
+      "package": "com.chwjh.cminefit",
+      "permissions": [
+        "android.permission.health.READ_STEPS",
+        "android.permission.health.READ_ACTIVE_CALORIES_BURNED",
+        "android.permission.health.READ_EXERCISE",
+        "android.permission.health.READ_HEART_RATE",
+        "android.permission.health.READ_RESTING_HEART_RATE",
+        "android.permission.health.READ_WEIGHT",
+        "android.permission.health.READ_BODY_FAT"
+      ],
+      "intentFilters": [{
+        "action": "VIEW",
+        "autoVerify": true,
+        "data": [{ "scheme": "https", "host": "fit.chwjh.com", "pathPrefix": "/auth/mobile/callback" }],
+        "category": ["BROWSABLE", "DEFAULT"]
+      }]
+    },
+    "extra": {
+      "apiOrigin": "https://fit.chwjh.com",
+      "cmineIssuer": "https://identity.chwjh.com",
+      "cmineClientId": "",
+      "revenueCatAppleKey": "",
+      "revenueCatGoogleKey": ""
+    }
+  }
+}

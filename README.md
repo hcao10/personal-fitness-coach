@@ -1,434 +1,164 @@
-<div align="center">
+# Cmine Fit
 
-# 💪 Exercises Dataset
+Cmine Fit 是一套包含自主轻量版与专业增强版的 AI 健身教练产品。当前仓库包含 Cloudflare Worker API、D1/R2 数据、服务端身份会话、可切换 AI 路由、训练与营养记录、权益、账单和管理控制台，不是纯前端演示。
 
-<p>
-  <img src="videos/0025-EIeI8Vf.gif" width="120" alt="barbell bench press" />
-  <img src="videos/0043-qXTaZnJ.gif" width="120" alt="barbell full squat" />
-  <img src="videos/0032-ila4NZS.gif" width="120" alt="barbell deadlift" />
-  <img src="videos/0652-lBDjFxJ.gif" width="120" alt="pull-up" />
-  <img src="videos/0294-NbVPDMW.gif" width="120" alt="dumbbell biceps curl" />
-  <img src="videos/0334-DsgkuIt.gif" width="120" alt="dumbbell lateral raise" />
-</p>
+## 已实现
 
-**A comprehensive, ready-to-use fitness exercise dataset with 1,324 exercises — each with an animation GIF, 180×180 thumbnail image, category, body-part, equipment, target and muscle-group data, and step-by-step instructions in 9 languages (English, Spanish, Italian, Turkish, Russian, Chinese, Hindi, Polish, Korean).**
+- Cloudflare D1/R2：用户、会话、训练档案、AI 计划、测量、训练反馈、餐食、图片、权益、用量、账单事件、积分、生成记录与管理审计
+- Cmine ID：Confidential Client、Authorization Code + PKCE S256、JWKS 签名验证、令牌撤销联动、哈希会话标识与 HttpOnly Cookie
+- 可切换 AI：Cloudflare Workers AI 为默认低成本路由；同时支持 OpenAI Responses API 与任意 OpenAI-compatible/Qwen/Ollama/vLLM 服务
+- 成本控制：按能力计量、30 天额度、24 小时同输入复用、日/月预算硬限制、失败重试和一次供应商升级
+- 安全规则：BMR、TDEE、热量、宏量营养与周期由确定性代码计算；模型只能从允许的动作库选择，服务端复核器械、训练日、组次、次数和休息范围
+- 饮食记录：拍照候选识别、条码扫描、Open Food Facts/USDA 搜索、份量确认和确定性营养计算；不把照片估计伪装成精确热量
+- Stripe：Checkout、Customer Portal、签名 Webhook、事件幂等、订阅乱序保护与能力权益；未配置时购买入口隐藏
+- 用户中心：今日训练、RPE/疼痛反馈、计划历史、身体趋势、营养汇总、会员与额度、积分流水、数据导出与账号删除
+- 管理后台：用户与留存、订阅与退款、AI 成本/延迟/失败切换、饭菜识别质量、模型路由、预算额度、公告和审计
+- PWA：移动端导航、Web App Manifest 与可安装能力
+- 原生 App：`apps/mobile` 已提供 Expo Router 五模块、Cmine PKCE、SecureStore、SQLite 离线队列、RevenueCat、训练提醒（本地提醒 + 服务端推送：按用户承诺的 cue 时间发送训练提醒与周日晚教练信，尊重安静时段；需配置 Expo 推送与每小时 cron）、HealthKit 与 Health Connect 开发构建；商店能力按供应商配置启用
+- 长期 Coach：连续会话、SSE、用户确认操作卡、周度复盘、停滞判断、不可变计划版本、差异确认和回退数据链路
+- 闭环记录：Coach 的体重/围度与餐食建议先进入草稿，用户可在进度或饮食页补全、确认或拒绝；确认后才写入正式记录
+- 上下文与知识：长对话使用 AI 语义摘要（供应商故障时退回确定性摘要），知识库使用向量语义与中英文关键词混合检索，并保留来源
+- 契约测试：覆盖无密钥状态、跨站写入、管理员权限、AI 路由、结构化响应、支付签名与营养确认边界
 
-[![Exercises](https://img.shields.io/badge/Exercises-1324-blue?style=flat-square)](data/exercises.json)
-[![Animation GIFs](https://img.shields.io/badge/Animation%20GIFs-1324-brightgreen?style=flat-square)](videos/)
-[![Thumbnails](https://img.shields.io/badge/Thumbnails-1324-orange?style=flat-square)](images/)
-[![Languages](https://img.shields.io/badge/Languages-9-green?style=flat-square)](#-overview)
-[![Mobile App](https://img.shields.io/badge/App-LogPress-111111?style=flat-square&logo=react)](https://github.com/hasaneyldrm/logpress-public)
-[![License](https://img.shields.io/badge/License-MIT%20%2B%20media%20terms-blue?style=flat-square)](LICENSE)
+未配置外部凭据时，产品不会伪装成已经调用 AI 或已经登录。
 
-</div>
+## 两种能力模式
 
-> **📱 Powers the [LogPress](https://github.com/hasaneyldrm/logpress-public) app** — an AI-assisted workout tracker; this dataset is its exercise data layer. Building your own fitness app? Drop it straight into your backend.
+产品显式支持两种模式，它们共用同一套领域结构，只是持久化不同：
 
----
+- **本地模式（Guest / Open）**：不需要账号。资料与计划保存在浏览器本地，由
+  `packages/coach-core` 的确定性规划器在安全规则内生成完整计划；可以看完整周安排、
+  动作大图与动画、完成一次训练并提交反馈，得到确定性的下一步建议。
+  规则计划标注为「安全规则计划」，任何界面都不会把它称作 AI 生成。
+- **账号模式（Account / Pro）**：配置 Cmine ID 后可登录并跨设备持久化；再配置 LLM
+  后可生成结构化 AI 计划并使用连续 Coach。AI 计划仍须通过服务端安全校验。
 
-## 📦 Data Source
+未配置账号或模型时，界面显示明确状态和可继续的下一步，不会出现无限加载、空壳页面
+或点了没有反应的按钮。核心训练路径不依赖登录，也不依赖模型。
 
-**This repository provides:**
-
-- 1,324 exercises with category, body-part, equipment, target and muscle-group data
-- an animation GIF + 180×180 thumbnail for every exercise (media © [Gym visual](https://gymvisual.com/) — see [License](#-license--use))
-- step-by-step instructions in 9 languages (🇬🇧 English, 🇪🇸 Spanish, 🇮🇹 Italian, 🇹🇷 Turkish, 🇷🇺 Russian, 🇨🇳 Chinese, 🇮🇳 Hindi, 🇵🇱 Polish, 🇰🇷 Korean)
-- the interactive browser (`index.html`) and developer setup guide (`setup.html`)
-
----
-
-## 📋 Table of Contents
-
-- [Data Source](#-data-source)
-- [Overview](#-overview)
-- [Interactive Browser & Developer Setup](#-interactive-browser--developer-setup)
-- [File Structure](#-file-structure)
-- [Statistics](#-statistics)
-- [Data Schema](#-data-schema)
-- [Sample Exercises](#-sample-exercises)
-- [Usage Examples](#-usage-examples)
-- [License & Use](#-license--use)
-
----
-
-## 🔍 Overview
-
-This dataset is a curated collection of **1,324 fitness exercises** for educational and research purposes. It covers a wide range of muscle groups, equipment types, and exercise categories — making it ideal for:
-
-- Building fitness or workout planning applications
-- Machine learning projects involving exercise recognition or recommendation
-- Health and wellness research
-- Educational demonstrations and prototypes
-
-Each exercise entry contains:
-
-| Field | Description |
-|---|---|
-| Unique ID | Numeric identifier (e.g. `"0001"`) |
-| Name | Full descriptive exercise name |
-| Category | Primary muscle group targeted |
-| Target | Specific target muscle |
-| Muscle Group | Supporting / synergist muscles |
-| Equipment | Equipment required (or `body weight` for bodyweight) |
-| Instructions | Step-by-step instructions for each exercise |
-| Available Languages | 🇬🇧 English · 🇪🇸 Spanish · 🇮🇹 Italian · 🇹🇷 Turkish · 🇷🇺 Russian · 🇨🇳 Chinese · 🇮🇳 Hindi · 🇵🇱 Polish · 🇰🇷 Korean |
-| Media | 180×180 thumbnail (`image`) + animation GIF (`gif_url`) per exercise — media © Gym visual, see [License](#-license--use) |
-
----
-
-## 🖥️ Interactive Browser & Developer Setup
-
-This repository includes two ready-to-use HTML tools — no server required, just open in a browser.
-
-> **Note:** the browser displays each exercise's 180×180 thumbnail and animation GIF alongside its metadata and instructions.
-
-### `index.html` — Exercise Browser
-
-A fully client-side exercise explorer with:
-- Live search across all 1,324 exercises
-- Filter by category, equipment, and target muscle
-- Infinite scroll grid
-- Click any card to see full details and instructions in English, Spanish, Italian, Turkish, Russian, Chinese, Hindi, Polish, or Korean
-
-### `setup.html` — Developer Setup Guide
-
-A step-by-step guide for integrating the dataset into your own application:
-
-1. **Database Setup** — `CREATE TABLE` SQL for SQL Server, PostgreSQL, MySQL, and SQLite. Generate a ready-to-run `.sql` file with all 1,324 INSERT statements, built entirely in your browser.
-2. **API Integration** — Copy-paste client code in **JavaScript, Python, C#, Java, PHP, Go, and cURL** showing how to call your backend API. Enter your base URL and all examples update live.
-3. **Ask Your LLM** — A structured prompt (choose your framework + database) that you can paste into ChatGPT, Claude, or Gemini to generate a complete, production-ready REST API in one shot. Supports Express.js, FastAPI, ASP.NET Core, Spring Boot, Laravel, and Gin.
-
----
-
-## 📂 File Structure
+## 核心模块边界
 
 ```
-exercises-dataset/
-├── data/
-│   ├── exercises.json        # Full dataset — 1,324 exercise records (JSON array)
-│   └── exercises.schema.json # JSON Schema (2020-12) describing every record
-├── images/                  # 1,324 × 180×180 thumbnails  (© Gym visual)
-├── videos/                  # 1,324 × 180×180 animation GIFs  (© Gym visual)
-├── index.html               # Interactive exercise browser (client-side, no server needed)
-├── setup.html               # Developer setup guide (DB import + API integration)
-├── NOTICE.md                # Media attribution & license terms
-└── README.md
+packages/
+  coach-core/          确定性计划与动作库（纯函数，无网络与数据库）
+  product-state/       Profile / Plan / Workout / Coach / Capability 状态机，可被 node --test 直接加载
+  exercise-catalog/    动作视图契约与按动作模式的已审核指导
+  api-contracts/       请求、响应与事件类型的唯一来源
+  domain/              安全规则、语言检测与周复盘计算
+  i18n/                语言注册表与消息目录
+  integrations/anybite/ 与 anyBite 的版本化契约和默认关闭的适配器（见 docs/adr/0002）
+app/
+  features/{profile,plan,workout,exercise,coach}/  各自的页面、仓储与组件
+  shared/{api,async-state,ui,analytics}/           typed client、能力探测、入口状态与共享 UI
+  styles/                                          按 tokens / 共享 / 特性拆分的样式
+worker/
+  api.ts               组合路由；业务逻辑在 worker/modules/*
 ```
 
-### Key Files
-
-- **`data/exercises.json`** — The primary data file. A JSON array of 1,324 exercise objects with all metadata. `image` / `gif_url` point to the local 180×180 assets, and each record carries an `attribution` field; `media_id` holds the original media reference id.
-- **`data/exercises.schema.json`** — A [JSON Schema](https://json-schema.org/) (Draft 2020-12) that formally describes every field, its type and constraints. Use it to validate the dataset or your own additions with any standard JSON Schema validator.
-- **`images/`, `videos/`** — 180×180 thumbnails and animation GIFs (© [Gym visual](https://gymvisual.com/), used with permission).
-- **`index.html`** — Standalone exercise browser. Open directly in any modern browser.
-- **`setup.html`** — Developer guide for DB setup, API integration, and LLM-assisted backend generation.
-- **`LICENSE`, `NOTICE.md`** — MIT (code/data) + the Gym visual media terms.
-
----
-
-## 📊 Statistics
-
-| Metric | Count |
-|---|---|
-| Total Exercises | **1,324** |
-| Instruction Languages | **9** |
-
-### Exercises by Body Part
-
-| Body Part | Exercise Count |
-|---|---|
-| Upper Arms | 292 |
-| Upper Legs | 227 |
-| Back | 203 |
-| Waist | 169 |
-| Chest | 163 |
-| Shoulders | 143 |
-| Lower Legs | 59 |
-| Lower Arms | 37 |
-| Cardio | 29 |
-| Neck | 2 |
-
-### Exercises by Equipment
-
-| Equipment | Exercise Count |
-|---|---|
-| Body Weight | 325 |
-| Dumbbell | 294 |
-| Cable | 157 |
-| Barbell | 154 |
-| Leverage Machine | 81 |
-| Band | 54 |
-| Smith Machine | 48 |
-| Kettlebell | 41 |
-| Weighted | 36 |
-| Stability Ball | 28 |
-| EZ Barbell | 23 |
-| Other | 83 |
-
-> **Note:** ~25% of exercises require no equipment at all — great for at-home workout applications.
-
----
-
-## 🗂️ Data Schema
-
-Each record in `data/exercises.json` follows this structure. A machine-readable [JSON Schema](data/exercises.schema.json) is also provided for validation.
-
-| Field | Type | Description |
-|---|---|---|
-| `id` | `string` | Unique numeric identifier (e.g. `"0001"`) |
-| `name` | `string` | Full exercise name (e.g. `"3/4 Sit-up"`) |
-| `category` | `string` | Body part category (e.g. `"upper arms"`, `"chest"`, `"back"`) |
-| `body_part` | `string` | Same as `category` — body part targeted |
-| `equipment` | `string` | Required equipment (e.g. `"dumbbell"`, `"body weight"`) |
-| `instructions.en` | `string` | Full step-by-step instructions in English |
-| `instructions.es` | `string` | Full step-by-step instructions in Spanish |
-| `instructions.it` | `string` | Full step-by-step instructions in Italian |
-| `instructions.tr` | `string` | Full step-by-step instructions in Turkish |
-| `instructions.ru` | `string` | Full step-by-step instructions in Russian |
-| `instructions.zh` | `string` | Full step-by-step instructions in Chinese |
-| `instructions.hi` | `string` | Full step-by-step instructions in Hindi |
-| `instructions.pl` | `string` | Full step-by-step instructions in Polish |
-| `instructions.ko` | `string` | Full step-by-step instructions in Korean |
-| `instruction_steps.<lang>` | `array[string]` | Same instructions split into an ordered array of steps, per language (`en`, `es`, `it`, `tr`, `ru`, `zh`, `hi`, `pl`, `ko`) |
-| `muscle_group` | `string` | Primary synergist muscle group |
-| `secondary_muscles` | `array[string]` | Additional muscles involved |
-| `target` | `string` | Primary target muscle (e.g. `"biceps"`, `"pectoralis major"`) |
-| `media_id` | `string` | Original media reference id (e.g. `"2gPfomN"`) |
-| `image` | `string` | Path to the 180×180 thumbnail (e.g. `"images/0001-2gPfomN.jpg"`) |
-| `gif_url` | `string` | Path to the 180×180 animation GIF (e.g. `"videos/0001-2gPfomN.gif"`) |
-| `attribution` | `string` | Media copyright notice — `"© Gym visual — https://gymvisual.com/"` |
-| `created_at` | `string` | ISO 8601 timestamp of record creation |
+设计决策记录在 `docs/adr/`。
+
+## 本地运行
+
+需要 Node.js 22.13 或更高版本。
+
+    npm install
+    npm run dev
 
-### Sample Record
+验证：
 
-```json
-{
-  "id": "0001",
-  "name": "3/4 sit-up",
-  "category": "waist",
-  "body_part": "waist",
-  "equipment": "body weight",
-  "instructions": {
-    "en": "Lie flat on your back with your knees bent and feet flat on the ground. Place your hands behind your head with your elbows pointing outwards. Engaging your abs, slowly lift your upper body off the ground, curling forward until your torso is at a 45-degree angle. Pause for a moment at the top, then slowly lower your upper body back down to the starting position. Repeat for the desired number of repetitions.",
-    "es": "Túmbate sobre tu espalda con las rodillas flexionadas y los pies apoyados en el suelo. ...",
-    "it": "Sdraiati sulla schiena con le ginocchia piegate e i piedi appoggiati a terra. ...",
-    "tr": "Sırt üstü yatın, dizlerinizi bükün ve ayaklarınızı yere düz koyun. ...",
-    "ru": "Лягте на спину, согните колени и поставьте ступни на землю. ...",
-    "zh": "平躺，膝盖弯曲，双脚平放在地上。...",
-    "hi": "अपने घुटनों को मोड़कर और पैरों को ज़मीन पर सपाट रखते हुए अपनी पीठ के बल लेट जाएँ।...",
-    "pl": "Połóż się płasko na plecach, ugnij kolana i oprzyj stopy płasko na pod ...",
-    "ko": "등을 바닥에 누워 무릎을 구부리고 발을 바닥에 붙입니다. ..."
-  },
-  "muscle_group": "hip flexors",
-  "secondary_muscles": ["hip flexors", "lower back"],
-  "target": "abs",
-  "media_id": "2gPfomN",
-  "image": "images/0001-2gPfomN.jpg",
-  "gif_url": "videos/0001-2gPfomN.gif",
-  "attribution": "© Gym visual — https://gymvisual.com/",
-  "created_at": "2026-03-18T12:31:32.854798+00:00"
-}
-```
+    npm run lint
+    npm run typecheck
+    npm test
 
----
+`npm run dev` 之后 `GET /api/health` 会分别报告 `database`（D1 是否绑定）与
+`schemaReady`（产品所需数据表是否存在）。首次本地运行时 `schemaReady` 为 false，
+本地模式仍可完整使用；需要账号能力时执行：
 
-## 🎬 Sample Exercises
+    npx wrangler d1 migrations apply DB --local
 
-> Each example ships a 180×180 thumbnail (`image`) and animation GIF (`gif_url`), © [Gym visual](https://gymvisual.com/).
+核心闭环的验收步骤见 `docs/E2E_GUEST_FUNNEL.zh-CN.md`。
 
-### 1 — Barbell Bench Press · Chest
+## 独立部署到 Cloudflare
 
-<img src="videos/0025-EIeI8Vf.gif" width="150" align="right" alt="Barbell Bench Press" />
+主站使用仓库根目录的 `wrangler.jsonc` 直接部署到 Cloudflare Workers，D1、R2、
+Cloudflare Images 和静态资源均由该 Cloudflare 项目管理，不依赖 ChatGPT/Sites
+托管。首次部署或数据库结构更新时执行：
 
-> **Equipment:** Barbell · **Target:** Pectorals · **Secondary:** Triceps, Shoulders · **Media ID:** `EIeI8Vf`
+    npm run build
+    npm run db:migrate:remote
+    npm run deploy
 
-The Barbell Bench Press is the cornerstone of chest training and one of the "Big Three" powerlifting movements. Lying flat on a bench, you lower a loaded barbell to your chest and press it back up explosively. It simultaneously recruits the pectorals, triceps, and anterior deltoids, making it the single most effective exercise for upper body pushing strength and chest mass development.
+生产密钥使用 `wrangler secret put <NAME>` 设置，不要提交到仓库。OpenAI 路由是
+可选能力；不设置 `OPENAI_API_KEY` 和 `OPENAI_MODEL` 时不会连接 OpenAI 服务。
 
-**Key cues:** Retract and depress your scapulae before unracking. Keep your feet flat on the floor, arch your lower back naturally, and maintain a shoulder-width grip. Lower the bar under control to mid-chest and drive up through the heels.
+## 生产环境变量
 
-### 2 — Barbell Deadlift · Upper Legs / Back
+通过部署平台的 secret/env 管理设置，不要写入仓库：
 
-<img src="videos/0032-ila4NZS.gif" width="150" align="right" alt="Barbell Deadlift" />
+- `SESSION_SECRET`：随机会话签名密钥
+- `OPENAI_API_KEY`：OpenAI API 密钥
+- `OPENAI_MODEL`：无默认值，必须显式填写 OpenAI 当前目录中的真实模型 ID；留空则 OpenAI 路由不参与
+- `OPENAI_EMBEDDING_MODEL`：知识库向量检索模型，默认 `text-embedding-3-small`；不可用时自动退回已审核知识的关键词检索
+- `OPENAI_REASONING_EFFORT`：默认 `medium`
+- `CLOUDFLARE_AI_GATEWAY_URL` / `CLOUDFLARE_AI_GATEWAY_TOKEN`：内部 Workers AI binding 网关；生产默认路由
+- `AI_COMPAT_BASE_URL` / `AI_COMPAT_API_KEY`：可选 OpenAI-compatible 或自托管 Qwen/Ollama/vLLM
+- `AI_COMPAT_TEXT_MODEL` / `AI_COMPAT_VISION_MODEL`：兼容服务的文本与视觉模型名
+- `USDA_API_KEY`：可选；未配置时仍使用 Open Food Facts
+- `STRIPE_SECRET_KEY`、`STRIPE_WEBHOOK_SECRET`、`STRIPE_PRICE_MONTHLY`、`STRIPE_PRICE_YEARLY`：启用真实 Web 订阅
+- `STRIPE_TAX_ENABLED`：是否让 Stripe Checkout 自动计税
+- `ADMOB_SSV_KEY_URL`：激励广告服务器签名验证密钥来源
+- `CMINE_ISSUER`：默认 `https://identity.chwjh.com`
+- `CMINE_CLIENT_ID`：Cmine ID 应用 client_id
+- `CMINE_CLIENT_SECRET`：Confidential Client 密钥
+- `PUBLIC_ORIGIN`：生产环境固定为 `https://fit.chwjh.com`
+- `ADMIN_EMAILS`：逗号分隔的 Cmine Fit 管理员引导名单；仅在 Cmine ID 已验证登录后授予产品管理员角色
+- `REWARD_AD_PROVIDER`：未接激励广告时留空，前端不会显示假入口
+- `REVENUECAT_WEBHOOK_SECRET` / `REVENUECAT_PROJECT_ID`：移动订阅回调与项目标识
+- `REVENUECAT_API_KEY`：**授予权益前必须配置**——RevenueCat webhook 不带签名，服务端会用 REST API 回查订阅状态；未配置时 webhook 只记录事件、不发放任何权益
+- `CMINE_MOBILE_CLIENT_IDS`：允许访问 Fit API 的 Cmine ID Public Client ID 列表
+- `MAINTENANCE_SECRET`：主站 Worker 与每日清理 Worker 共用的 HMAC Secret；`cmine-fit-automation` Worker 用它调用每日维护与每小时通知任务
+- `EXPO_ACCESS_TOKEN`：服务端推送（训练提醒、周教练信、试用到期提醒）所需；未配置时不发送任何服务端推送，`/api/health` 的 `push` 报 `false`，每小时任务会记录 `notifications_skipped` 并照常维护里程碑数据
 
-> **Equipment:** Barbell · **Target:** Glutes · **Secondary:** Hamstrings, Lower Back · **Media ID:** `ila4NZS`
+移动端标识由构建环境注入（`apps/mobile/app.config.js`），不写入仓库：
+`EXPO_PUBLIC_CMINE_CLIENT_ID`、`EXPO_PUBLIC_API_ORIGIN`、`EXPO_PUBLIC_CMINE_ISSUER`、
+`EXPO_PUBLIC_REVENUECAT_APPLE_KEY`、`EXPO_PUBLIC_REVENUECAT_GOOGLE_KEY`。
+未配置 client_id 时 App 会显示未配置，而不是指向生产环境。
 
-The Barbell Deadlift is widely regarded as the ultimate full-body strength exercise. It engages virtually every major muscle in the posterior chain — glutes, hamstrings, and lower back — while also demanding significant contribution from the upper back, traps, and grip. Proper spinal alignment and bracing technique are critical for both performance and safety.
+Cmine ID 需精确登记每个生产域名的回调：
 
-**Key cues:** Set up with the bar over your mid-foot. Hinge at the hips, grip just outside your legs, brace your core hard, and keep the bar in contact with your shins throughout the lift. Drive the floor away, lock out at the top by squeezing glutes and extending hips fully.
+    https://fit.chwjh.com/api/auth/cmine/callback
 
-### 3 — Barbell Full Squat · Upper Legs
+生产健康检查为 `/api/health`，返回下列布尔能力位（供应商、模型名与推理档位
+不对未登录者暴露，完整信息在管理后台）：
 
-<img src="videos/0043-qXTaZnJ.gif" width="150" align="right" alt="Barbell Full Squat" />
+`database`、`storage`、`imageTransform`、`planner`、`vision`、`llm`、`cmine`、
+`foodData`、`billing`、`mobileBilling`、`mobileAuth`、`mobileLinks`、`push`、
+`rewardAds`、`maintenance`。
 
-> **Equipment:** Barbell · **Target:** Glutes · **Secondary:** Quadriceps, Hamstrings, Calves, Core · **Media ID:** `qXTaZnJ`
+其中 `vision`（饭菜识别）要求视觉路由、`R2` 与 `IMAGES` 三者同时具备才报 `true`；
+`push` 仅在配置了 `EXPO_ACCESS_TOKEN` 时为 `true`。未接入的能力保持 `false`，
+用户端也不会显示对应入口。
 
-Often called "the king of all exercises," the Barbell Full Squat demands coordinated strength across the entire lower body and core. Breaking parallel maximizes glute and hamstring activation compared to partial squats. It is the foundation of nearly every strength and hypertrophy program.
+## 两种产品路径
 
-**Key cues:** Bar on upper traps (high bar) or rear deltoids (low bar). Brace your core before descent, push knees out in line with toes, sit into your hips, and descend until your thighs pass parallel to the floor. Drive through the whole foot to stand.
+| 能力 | Cmine Fit 自主版 | Cmine Fit 专业版 |
+|---|---:|---:|
+| 自托管 | ✓ | — |
+| 基础指标与安全规则 | ✓ | ✓ |
+| LLM 训练计划 | 可接本地或兼容模型 | 可切换路由与结构化生成 |
+| Cmine ID 与服务端会话 | 可选 | ✓ |
+| 档案与计划历史 | 可选 | D1 持久化 |
+| 饭菜识别与营养记录 | 可自行接模型 | 视觉候选 + 数据库计算 |
+| 用量、权益与账单 | — | ✓ |
+| 管理与服务状态 | — | ✓ |
 
-### 4 — Dumbbell Biceps Curl · Upper Arms
+无状态规则已抽离到 [`packages/coach-core`](packages/coach-core)，该包按
+Apache-2.0 授权，不依赖账号、数据库或网络。仓库其余部分继续遵循仓库根
+许可证，专业版的账号、历史、进度、运营、权益与长期 Coach 能力不属于
+`coach-core`。
 
-<img src="videos/0294-NbVPDMW.gif" width="150" align="right" alt="Dumbbell Biceps Curl" />
+完整架构见 [产品架构](docs/PRODUCT_ARCHITECTURE.zh-CN.md)，当前模块和发布闸门见 [长期产品模块](docs/LONG_TERM_PRODUCT_MODULES.zh-CN.md)，健康与使用边界见 [健康免责声明](docs/LEGAL_DISCLAIMER.zh-CN.md)。
 
-> **Equipment:** Dumbbell · **Target:** Biceps · **Secondary:** Forearms · **Media ID:** `NbVPDMW`
+## 安全边界
 
-The Dumbbell Biceps Curl is the most recognized isolation exercise for the arms. Training each side independently helps identify and correct strength imbalances between limbs. The supinated (palms-up) grip maximizes biceps contraction at the top of the movement.
-
-**Key cues:** Stand tall with elbows pinned to your sides. Supinate your wrists as you curl up, squeeze at the top, and lower under control without swinging. Avoid using momentum from the shoulders or lower back.
-
-### 5 — Pull-up · Back
-
-<img src="videos/0652-lBDjFxJ.gif" width="150" align="right" alt="Pull-up" />
-
-> **Equipment:** Body Weight · **Target:** Lats · **Secondary:** Biceps, Forearms · **Media ID:** `lBDjFxJ`
-
-The Pull-up is the gold standard bodyweight exercise for upper body pulling strength. It primarily develops the latissimus dorsi — creating the coveted V-taper — while heavily involving the biceps, rear deltoids, and core stabilizers. It scales from beginner (band-assisted) to advanced (weighted).
-
-**Key cues:** Dead hang from an overhand grip, shoulder-width or slightly wider. Initiate with your lats by depressing your shoulder blades, then pull your chest toward the bar. Lower fully between reps to maintain range of motion.
-
-### 6 — Dumbbell Lateral Raise · Shoulders
-
-<img src="videos/0334-DsgkuIt.gif" width="150" align="right" alt="Dumbbell Lateral Raise" />
-
-> **Equipment:** Dumbbell · **Target:** Delts · **Secondary:** Traps · **Media ID:** `DsgkuIt`
-
-The Dumbbell Lateral Raise is the go-to isolation exercise for building shoulder width. It directly targets the lateral (middle) head of the deltoid, which is responsible for the broad-shouldered look. Controlled tempo and strict form matter far more than load.
-
-**Key cues:** Stand with a slight bend in your elbows throughout. Raise the dumbbells out to the sides until your arms are parallel to the floor — no higher. Lead with your elbows, not your wrists. Lower slowly under control to maximize time under tension.
-
----
-
-## 🚀 Usage Examples
-
-### Python — Load and Filter
-
-```python
-import json
-
-with open("data/exercises.json", "r", encoding="utf-8") as f:
-    exercises = json.load(f)
-
-print(f"Total exercises loaded: {len(exercises)}")
-
-# Filter by category
-chest_exercises = [ex for ex in exercises if ex["category"] == "chest"]
-print(f"Chest exercises: {len(chest_exercises)}")
-# -> Chest exercises: 163
-
-# Filter by equipment
-bodyweight = [ex for ex in exercises if ex["equipment"] == "body weight"]
-print(f"Bodyweight exercises: {len(bodyweight)}")
-# -> Bodyweight exercises: 325
-
-# Get all unique categories
-categories = sorted({ex["category"] for ex in exercises})
-print("Categories:", categories)
-
-# Access multilingual instructions
-ex = exercises[0]
-print(ex["instructions"]["en"])  # English
-print(ex["instructions"]["es"])  # Spanish
-print(ex["instructions"]["it"])  # Italian
-print(ex["instructions"]["tr"])  # Turkish
-print(ex["instructions"]["ru"])  # Russian
-print(ex["instructions"]["zh"])  # Chinese
-print(ex["instructions"]["hi"])  # Hindi
-```
-
-### Python — Load with Pandas
-
-```python
-import json
-import pandas as pd
-
-with open("data/exercises.json", "r", encoding="utf-8") as f:
-    data = json.load(f)
-
-df = pd.DataFrame(data)
-
-# Top categories by exercise count
-print(df["category"].value_counts().head(10))
-
-# All barbell exercises targeting upper legs
-barbell_quads = df[(df["equipment"] == "barbell") & (df["category"] == "upper legs")]
-print(barbell_quads[["name", "target", "equipment"]])
-```
-
-### JavaScript / Node.js
-
-```js
-const exercises = require("./data/exercises.json");
-
-console.log(`Total exercises: ${exercises.length}`);
-
-// Bodyweight exercises only
-const bodyweight = exercises.filter(ex => ex.equipment === "body weight");
-console.log(`Bodyweight exercises: ${bodyweight.length}`);
-// -> Bodyweight exercises: 325
-
-// Group exercises by category
-const byCategory = exercises.reduce((acc, ex) => {
-  acc[ex.category] = (acc[ex.category] || []);
-  acc[ex.category].push(ex);
-  return acc;
-}, {});
-
-// Access multilingual instructions
-const ex = exercises[0];
-console.log(ex.instructions.en); // English
-console.log(ex.instructions.es); // Spanish
-console.log(ex.instructions.it); // Italian
-console.log(ex.instructions.tr); // Turkish
-console.log(ex.instructions.ru); // Russian
-console.log(ex.instructions.zh); // Chinese
-console.log(ex.instructions.hi); // Hindi
-console.log(ex.instructions.pl); // Polish
-console.log(ex.instructions.ko); // Korean
-```
-
-### TypeScript — Type-safe Usage
-
-```typescript
-interface Exercise {
-  id: string;
-  name: string;
-  category: string;
-  body_part: string;
-  equipment: string;
-  instructions: {
-    en: string;
-    es: string;
-    it: string;
-    tr: string;
-    ru: string;
-    zh: string;
-    hi: string;
-    pl: string;
-    ko: string;
-  };
-  muscle_group: string;
-  secondary_muscles: string[];
-  target: string;
-  media_id: string | null;
-  image: string | null;
-  gif_url: string | null;
-  attribution: string;
-  created_at: string;
-}
-
-import exercises from "./data/exercises.json";
-const data = exercises as Exercise[];
-
-const randomWorkout: Exercise[] = data.slice(0, 6);
-console.log("First 6 exercises:", randomWorkout.map(e => e.name));
-```
-
----
-
-## 📄 License & Use
-
-This repository is a **developer setup wizard and structured exercise dataset** — exercise metadata, multilingual instruction translations, and 180×180 exercise media.
-
-- **Code, tooling, dataset structure, and instruction text** are released under the [MIT License](LICENSE).
-- **Exercise media (images & GIFs) is © [Gym visual](https://gymvisual.com/)** and redistributed here **with permission**, at 180×180 resolution — see [`NOTICE.md`](NOTICE.md) and the media exception in [`LICENSE`](LICENSE). Keep the `© Gym visual — https://gymvisual.com/` attribution intact. Reuse is governed by [Gym visual's Terms & Conditions](https://gymvisual.com/content/3-terms-and-conditions-of-use); obtain your own license there before reusing the media.
-- This repository does **not** claim ownership of the underlying exercise content or media.
+本项目输出一般性健身和营养信息，不构成医疗诊断、治疗、康复或个体化医疗建议。正式运营前仍需目标市场的法律、运动医学和营养专业人士复核。

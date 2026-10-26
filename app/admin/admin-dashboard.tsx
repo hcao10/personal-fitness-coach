@@ -1,0 +1,399 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { beginCmineLogin } from "../lib/auth";
+import { useLocale } from "../lib/i18n-provider";
+
+type AdminUser = { id: string; email: string | null; name: string | null; status: string; createdAt?: string; created_at?: string };
+type AiRoute = { id: string; task: string; tier: string; priority: number; provider: "cloudflare" | "openai" | "compatible"; model: string; enabled: boolean };
+type CatalogProvider = { id: string; name: string; npm: string; doc: string; modelCount: number; configured: boolean; runtime: string };
+type CatalogModel = {
+  id: string; name: string; description: string; reasoning: boolean; reasoningEfforts: string[]; structuredOutput: boolean;
+  status: string; releaseDate: string | null; lastUpdated: string | null; modalities: { input?: string[]; output?: string[] };
+  cost: { input?: number; output?: number } | null; limits: { context?: number; output?: number } | null; available: boolean; selectable: boolean;
+};
+type ModelCatalog = {
+  source: string; sourceUrl: string; error: string; selectedProvider: string; providers: CatalogProvider[]; models: CatalogModel[];
+  connection: { ok: boolean; configured: boolean; latencyMs: number; modelIds: string[]; message: string };
+};
+type AdminOverview = {
+  admin: { email: string | null; name: string | null; role: string };
+  metrics: Record<string, number> & {
+    users: number; activeUsers: number; plans: number; activeSessions: number; generations: number;
+    generationSuccessRate: number; subscriptions: number; revenueUsd: number; meals: number;
+    mealAnalyses: number; mealAnalysisSuccessRate: number; lowConfidenceMeals: number; aiCostUsd: number;
+  };
+  services: {
+    database: boolean; storage: boolean; planner: boolean; vision: boolean; llm: boolean; cmine: boolean;
+    foodData: boolean; billing: boolean; mobileBilling: boolean; rewardAds: boolean; mobileAuth: boolean; maintenance: boolean; push: boolean; imageTransform: boolean; model: string; reasoningEffort: string;
+    providers: Record<string, boolean>;
+  };
+  recentUsers: AdminUser[];
+  recentRuns: { id: string; status: string; model: string; latencyMs: number; requestId: string | null; errorCode: string | null; createdAt: string }[];
+  recentBilling: Record<string, any>[];
+  recentAudits: Record<string, any>[];
+  aiRoutes: AiRoute[];
+  foodSources: Array<{ source: string; title: string; license_name: string; license_url: string; status: string; commercial_use: number; redistribution: number; last_verified_at: string | null }>;
+  localeDrift: Array<{ task: string; locale: string; prompt_version: string | null; total: number; undetected: number; drifted: number }>;
+  settings: Record<string, { value: unknown; updatedBy: string | null; updatedAt: string }>;
+};
+
+function dateTime(value: string) {
+  return new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+}
+
+export default function AdminDashboard() {
+  // This console is deliberately Chinese-only — it has one operator and
+  // translating it buys nothing. The locale is still read rather than assumed,
+  // because the sign-in helper it feeds is shared with pages that are not.
+  const { locale } = useLocale();
+  const [overview, setOverview] = useState<AdminOverview | null>(null);
+  const [error, setError] = useState("");
+  const [errorCode, setErrorCode] = useState("");
+  const [notice, setNotice] = useState("");
+  const [announcement, setAnnouncement] = useState("");
+  const [userQuery, setUserQuery] = useState("");
+  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [routes, setRoutes] = useState<AiRoute[]>([]);
+  const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
+  const [openAiModels, setOpenAiModels] = useState<CatalogModel[]>([]);
+  const [openAiConnection, setOpenAiConnection] = useState<ModelCatalog["connection"] | null>(null);
+  const [catalogProvider, setCatalogProvider] = useState("openai");
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [modelSearch, setModelSearch] = useState("");
+  const [defaultOpenAiModel, setDefaultOpenAiModel] = useState("");
+  const [reasoningEffort, setReasoningEffort] = useState("medium");
+
+  const loadCatalog = useCallback(async (provider: string) => {
+    setCatalogLoading(true);
+    const response = await fetch(`/api/v1/admin/llm/catalog?provider=${encodeURIComponent(provider)}`, { cache: "no-store" }).catch(() => null);
+    const body = await response?.json().catch(() => null) as ModelCatalog | { message?: string } | null;
+    if (!response?.ok || !body || !("providers" in body)) {
+      setNotice((body as { message?: string } | null)?.message || "模型目录读取失败。");
+      setCatalogLoading(false);
+      return;
+    }
+    setCatalog(body);
+    if (provider === "openai") {
+      setOpenAiModels(body.models.filter((model) => model.selectable));
+      setOpenAiConnection(body.connection);
+      const firstSelectable = body.models.find((model) => model.selectable)?.id || "";
+      setDefaultOpenAiModel((current) => current || firstSelectable);
+    }
+    setCatalogProvider(provider);
+    setCatalogLoading(false);
+  }, []);
+
+  const load = async () => {
+    const response = await fetch("/api/v1/admin/overview", { cache: "no-store" }).catch(() => null);
+    if (!response?.ok) {
+      const body = await response?.json().catch(() => null) as { error?: string; message?: string } | null;
+      setErrorCode(body?.error || "");
+      setError(body?.message || `管理服务暂时不可用${response ? `（${response.status}）` : ""}`);
+      return;
+    }
+    const next = await response.json() as AdminOverview;
+    setOverview(next);
+    setAnnouncement(String(next.settings.announcement?.value || ""));
+    setRoutes(next.aiRoutes || []);
+    setUsers(next.recentUsers || []);
+    setDefaultOpenAiModel(String(next.settings.openai_model?.value || ""));
+    setReasoningEffort(String(next.settings.openai_reasoning_effort?.value || next.services.reasoningEffort || "medium"));
+    setError("");
+    setErrorCode("");
+  };
+
+  useEffect(() => {
+    const task = window.setTimeout(() => { void load(); void loadCatalog("openai"); }, 0);
+    return () => window.clearTimeout(task);
+  }, [loadCatalog]);
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(""), 3600);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+
+  const setUserStatus = async (userId: string, status: "active" | "suspended") => {
+    const response = await fetch(`/api/v1/admin/users/${encodeURIComponent(userId)}`, {
+      method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ status }),
+    });
+    if (!response.ok) return setNotice((await response.json().catch(() => null))?.message || "用户状态更新失败。");
+    setNotice(status === "active" ? "用户已经恢复。" : "用户已停用，现有会话已经撤销。");
+    await searchUsers();
+    await load();
+  };
+
+  const searchUsers = async () => {
+    const response = await fetch(`/api/v1/admin/users?q=${encodeURIComponent(userQuery)}&limit=50`, { cache: "no-store" });
+    const body = await response.json().catch(() => null);
+    if (!response.ok) return setNotice(body?.message || "用户搜索失败。");
+    setUsers(body.users || []);
+  };
+
+  const updateSetting = async (key: string, value: string | boolean | number) => {
+    const response = await fetch("/api/v1/admin/settings", {
+      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ key, value }),
+    });
+    if (!response.ok) return setNotice((await response.json().catch(() => null))?.message || "设置保存失败。");
+    setNotice("设置已经保存并写入审计记录。");
+    await load();
+  };
+
+  const updateRoute = async (route: AiRoute) => {
+    const response = await fetch(`/api/v1/admin/ai-routes/${encodeURIComponent(route.id)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ provider: route.provider, model: route.model, enabled: route.enabled }),
+    });
+    if (!response.ok) return setNotice((await response.json().catch(() => null))?.message || "模型路由保存失败。");
+    setNotice("模型路由已经更新。密钥仍只保存在安全环境中。");
+    await load();
+  };
+
+  const testOpenAiKey = async () => {
+    const response = await fetch("/api/v1/admin/llm/test", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ provider: "openai", model: defaultOpenAiModel || undefined }),
+    });
+    const body = await response.json().catch(() => null) as { message?: string } | null;
+    setNotice(body?.message || "API Key 测试失败。");
+    await loadCatalog("openai");
+  };
+
+  const saveOpenAiDefaults = async () => {
+    if (!defaultOpenAiModel) return setNotice("请先选择一个当前账号可用的 OpenAI 模型。");
+    const requests = [
+      ["openai_model", defaultOpenAiModel],
+      ["openai_reasoning_effort", reasoningEffort],
+    ].map(([key, value]) => fetch("/api/v1/admin/settings", {
+      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ key, value }),
+    }));
+    const responses = await Promise.all(requests);
+    if (responses.some((response) => !response.ok)) return setNotice("OpenAI 默认设置保存失败。");
+    setNotice("OpenAI 默认模型和推理强度已经保存。");
+    await load();
+  };
+
+  const applyModelToOpenAiRoutes = () => {
+    if (!defaultOpenAiModel) return setNotice("请先选择 OpenAI 模型。");
+    setRoutes((current) => current.map((route) => route.provider === "openai" ? { ...route, model: defaultOpenAiModel } : route));
+    setNotice("已填入所有 OpenAI 路由；确认后逐项保存即可生效。");
+  };
+
+  if (error) {
+    return <section className="admin-denied">
+      <span>CMINE ID · ACCESS CONTROL</span>
+      <h1>{errorCode === "AUTH_REQUIRED" ? "先确认你的 Cmine 身份。" : "当前账号不能进入管理后台。"}</h1>
+      <p>{error}</p>
+      {errorCode === "AUTH_REQUIRED"
+        ? <button className="admin-login-button" onClick={() => void beginCmineLogin("/admin", locale)}>使用 Cmine ID 登录 </button>
+        : <Link href="/account">查看当前登录账号</Link>}
+    </section>;
+  }
+
+  const metrics = overview?.metrics;
+  const services = overview?.services;
+  const modules = [
+    { name: "D1 产品数据", detail: "用户、训练、营养、支付、权益与审计", live: Boolean(services?.database) },
+    { name: "R2 饭菜图片", detail: "压缩、清除 EXIF、私有存储与保留策略", live: Boolean(services?.storage) },
+    { name: "Images 转换", detail: "上传前降采样与重编码；缺失时拍照上传会被拒绝", live: Boolean(services?.imageTransform) },
+    { name: "训练计划 AI", detail: services?.model || "可切换模型路由", live: Boolean(services?.planner) },
+    { name: "饭菜视觉 AI", detail: "低成本初识别与低置信度升级", live: Boolean(services?.vision) },
+    { name: "食品数据库", detail: "USDA FoodData Central + Open Food Facts", live: Boolean(services?.foodData) },
+    { name: "Cmine ID", detail: "PKCE、JWKS、会话续期与 Connected Apps 撤销", live: Boolean(services?.cmine) },
+    { name: "Stripe", detail: "Checkout、Portal、Webhook 与权益同步", live: Boolean(services?.billing) },
+    { name: "RevenueCat", detail: "Apple / Google 内购事件与统一 Pro 权益", live: Boolean(services?.mobileBilling) },
+    { name: "移动端身份", detail: "Cmine PKCE、Bearer Token 与离线同步", live: Boolean(services?.mobileAuth) },
+    { name: "定时维护", detail: "图片、缓存、会话清理与周度任务", live: Boolean(services?.maintenance) },
+    { name: "服务端推送", detail: "训练提醒、周教练信与试用到期提醒", live: Boolean(services?.push) },
+    { name: "激励广告", detail: "只有签名回调成功才发积分", live: Boolean(services?.rewardAds) },
+  ];
+  const selectableOpenAiModels = openAiModels;
+  const selectedDefaultModel = selectableOpenAiModels.find((model) => model.id === defaultOpenAiModel);
+  const reasoningEffortOptions = selectedDefaultModel?.reasoningEfforts.length
+    ? selectedDefaultModel.reasoningEfforts : ["none", "low", "medium", "high", "xhigh", "max"];
+  const normalizedModelSearch = modelSearch.trim().toLowerCase();
+  const visibleCatalogModels = (catalog?.models || []).filter((model) => !normalizedModelSearch ||
+    model.id.toLowerCase().includes(normalizedModelSearch) || model.name.toLowerCase().includes(normalizedModelSearch)).slice(0, 40);
+
+  return <>
+    <div className="admin-intro">
+      <div><p>懂训练，更懂每一次变化</p><h1>产品状态，<br /><em>一眼看清。</em></h1></div>
+      <aside><span>当前管理员</span><b>{overview?.admin.name || overview?.admin.email || "CMINE ADMIN"}</b><p>身份与管理权限统一由 Cmine ID 和产品角色验证。</p></aside>
+    </div>
+
+    <div className="admin-metrics admin-metrics-wide" aria-label="产品数据">
+      <article><span>全部用户</span><b>{metrics?.users ?? "—"}</b><small>{metrics?.activeUsers ?? "—"} 个有效账户</small></article>
+      <article><span>AI 成功率</span><b>{metrics ? `${metrics.generationSuccessRate}%` : "—"}</b><small>{metrics?.generations ?? "—"} 次生成</small></article>
+      <article><span>AI 估算成本</span><b>${metrics?.aiCostUsd ?? "—"}</b><small>按已知模型单价累计</small></article>
+      <article><span>专业订阅</span><b>{metrics?.subscriptions ?? "—"}</b><small>收入 ${metrics?.revenueUsd ?? 0} · 付费 {metrics?.payingUsers ?? 0} 人 · 试用中 {metrics?.usersInTrial ?? 0} 人</small></article>
+      <article><span>训练活跃</span><b>{metrics?.trainingActive7d ?? "—"}</b><small>近 7 天 · 近 30 天 {metrics?.trainingActive30d ?? 0} 人</small></article>
+      <article><span>推送触达</span><b>{metrics?.remindersSent7d ?? "—"}</b><small>近 7 天训练提醒 · 教练信 {metrics?.coachLettersSent7d ?? 0} 封</small></article>
+      <article><span>确认餐食</span><b>{metrics?.meals ?? "—"}</b><small>识别成功率 {metrics?.mealAnalysisSuccessRate ?? 0}%</small></article>
+      <article><span>完成建档</span><b>{metrics?.onboardingCompleted ?? "—"}</b><small>新用户产品漏斗</small></article>
+      <article><span>Coach 消息</span><b>{metrics?.coachMessages ?? "—"}</b><small>{metrics?.coachConversations ?? 0} 段对话</small></article>
+      <article><span>周度复盘</span><b>{metrics?.weeklyReviews ?? "—"}</b><small>{metrics?.acceptedReviews ?? 0} 次接受调整</small></article>
+      <article><span>移动设备</span><b>{metrics?.devices ?? "—"}</b><small>已注册同步设备</small></article>
+      <article><span>新手减脂档案</span><b>{metrics?.beginnerProfiles ?? "—"}</b><small>核心路径</small></article>
+      <article><span>中级增肌档案</span><b>{metrics?.hypertrophyProfiles ?? "—"}</b><small>专业路径</small></article>
+      <article><span>完成训练组</span><b>{metrics?.workoutSets ?? "—"}</b><small>真实逐组记录</small></article>
+    </div>
+
+    <section className="admin-panel" id="coach-operations">
+      <div className="admin-section-title"><div><span>01B / COACH QUALITY</span><h2>Coach 产品闭环</h2></div><p>简报、状态检查、建议确认和安全拦截均来自真实事件，不以聊天条数代替产品效果。</p></div>
+      <div className="nutrition-admin-metrics"><article><span>每日简报</span><b>{metrics?.coachBriefs ?? 0}</b></article><article><span>训练前检查</span><b>{metrics?.coachCheckins ?? 0}</b></article><article><span>建议待处理</span><b>{metrics?.pendingCoachActions ?? 0}</b></article><article><span>建议接受率</span><b>{metrics?.coachActionAcceptanceRate ?? 0}%</b></article><article><span>执行失败</span><b>{metrics?.failedCoachActions ?? 0}</b></article><article><span>有帮助反馈</span><b>{metrics?.positiveCoachFeedback ?? 0}</b></article><article><span>需改进反馈</span><b>{metrics?.negativeCoachFeedback ?? 0}</b></article><article><span>安全拦截</span><b>{metrics?.coachSafetyBlocks ?? 0}</b></article></div>
+    </section>
+
+    <section className="admin-panel" id="modules">
+      <div className="admin-section-title"><div><span>02 / SYSTEM</span><h2>服务端模块</h2></div><p>状态来自当前生产环境，配置完成后才显示运行中。</p></div>
+      <div className="module-table">{modules.map((module) => <article key={module.name}>
+        <span className={`module-dot ${module.live ? "live" : "ready"}`} />
+        <div><h3>{module.name}</h3><p>{module.detail}</p></div>
+        <b className={module.live ? "live" : "ready"}>{module.live ? "运行中" : "未配置"}</b>
+      </article>)}</div>
+    </section>
+
+    <section className="admin-panel" id="models">
+      <div className="admin-section-title"><div><span>03 / AI ROUTING</span><h2>模型与提供商</h2></div><p>密钥只保存在 Cloudflare。后台从提供商读取当前账号可用模型，并用开源目录补充价格和能力信息。</p></div>
+      <div className="llm-control-grid">
+        <article>
+          <div><span>OpenAI 连接</span><h3>{openAiConnection?.ok ? "API Key 有效" : openAiConnection?.configured ? "连接异常" : "尚未配置"}</h3><p>{openAiConnection?.message || "正在读取提供商状态…"}</p></div>
+          <button disabled={catalogLoading} onClick={() => void testOpenAiKey()}>{catalogLoading ? "正在检查…" : "测试 API Key"}</button>
+        </article>
+        <article>
+          <label><span>默认 OpenAI 模型</span><select value={defaultOpenAiModel} onChange={(event) => {
+            const model = selectableOpenAiModels.find((item) => item.id === event.target.value);
+            setDefaultOpenAiModel(event.target.value);
+            if (model?.reasoningEfforts.length && !model.reasoningEfforts.includes(reasoningEffort)) {
+              setReasoningEffort(model.reasoningEfforts.includes("medium") ? "medium" : model.reasoningEfforts[0]);
+            }
+          }}>
+            {!defaultOpenAiModel && <option value="">请选择模型</option>}
+            {defaultOpenAiModel && !selectableOpenAiModels.some((model) => model.id === defaultOpenAiModel) && <option value={defaultOpenAiModel}>{defaultOpenAiModel}（当前设置）</option>}
+            {selectableOpenAiModels.map((model) => <option key={model.id} value={model.id}>{model.name} · {model.id}</option>)}
+          </select></label>
+          <label><span>推理强度</span><select value={reasoningEffort} onChange={(event) => setReasoningEffort(event.target.value)}>
+            {!reasoningEffortOptions.includes(reasoningEffort) && <option value={reasoningEffort}>{reasoningEffort}（当前设置）</option>}
+            {reasoningEffortOptions.map((effort) => <option key={effort} value={effort}>{effort}</option>)}
+          </select></label>
+          <div className="llm-actions"><button onClick={() => void saveOpenAiDefaults()}>保存默认设置</button><button className="secondary" onClick={applyModelToOpenAiRoutes}>填入 OpenAI 路由</button></div>
+        </article>
+      </div>
+      <div className="model-library-toolbar">
+        <label><span>提供商目录</span><select value={catalogProvider} disabled={catalogLoading} onChange={(event) => void loadCatalog(event.target.value)}>
+          {(catalog?.providers || []).map((provider) => <option key={provider.id} value={provider.id}>{provider.name} · {provider.modelCount} 个模型{provider.configured ? " · 已配置" : ""}</option>)}
+        </select></label>
+        <label><span>搜索模型</span><input value={modelSearch} onChange={(event) => setModelSearch(event.target.value)} placeholder="名称或模型 ID" /></label>
+        <p>目录来自 <a href="https://models.dev" target="_blank" rel="noreferrer">models.dev </a>；“可用”以提供商 API 返回结果为准。</p>
+      </div>
+      {catalog?.error && <div className="admin-empty">{catalog.error}</div>}
+      <div className="model-library-list">{visibleCatalogModels.map((model) => <article key={model.id}>
+        <div><b>{model.name}</b><code>{model.id}</code></div>
+        <p>{model.description || `${model.modalities.input?.join(" + ") || "text"}  ${model.modalities.output?.join(" + ") || "text"}`}</p>
+        <span>{model.reasoning ? `推理 ${model.reasoningEfforts.join("/") || "支持"}` : "非推理"}</span>
+        <span>{model.limits?.context ? `${Math.round(model.limits.context / 1000)}K 上下文` : "上下文未标注"}</span>
+        <span>{model.cost ? `$${model.cost.input ?? "—"} / $${model.cost.output ?? "—"}` : "价格未标注"}</span>
+        <em className={model.available ? "status-good" : "status-warn"}>{model.available ? "当前 Key 可用" : model.status === "deprecated" ? "已弃用" : "目录参考"}</em>
+      </article>)}</div>
+      {!catalogLoading && !visibleCatalogModels.length && <div className="admin-empty">没有符合条件的模型。</div>}
+      <h3 className="admin-subhead">任务路由</h3>
+      <div className="ai-route-list">{routes.map((route, index) => <article key={route.id}>
+        <div><b>{route.task}</b><span>{route.tier} · 优先级 {route.priority}</span></div>
+        <select value={route.provider} onChange={(event) => setRoutes((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, provider: event.target.value as AiRoute["provider"] } : item))}>
+          <option value="cloudflare">Cloudflare</option><option value="openai">OpenAI</option><option value="compatible">OpenAI-compatible</option>
+        </select>
+        {route.provider === "openai" && selectableOpenAiModels.length
+          ? <select value={route.model} onChange={(event) => setRoutes((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, model: event.target.value } : item))}>
+              {!selectableOpenAiModels.some((model) => model.id === route.model) && <option value={route.model}>{route.model}（当前）</option>}
+              {selectableOpenAiModels.map((model) => <option key={model.id} value={model.id}>{model.name} · {model.id}</option>)}
+            </select>
+          : <input value={route.model} onChange={(event) => setRoutes((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, model: event.target.value } : item))} />}
+        <label><input type="checkbox" checked={route.enabled} onChange={(event) => setRoutes((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, enabled: event.target.checked } : item))} />启用</label>
+        <button onClick={() => void updateRoute(route)}>保存</button>
+      </article>)}</div>
+    </section>
+
+    <section className="admin-panel" id="generations">
+      <div className="admin-section-title"><div><span>04 / AI OPERATIONS</span><h2>最近的 AI 生成</h2></div><p>只记录运行状态、延迟和用量，不保存模型原始思维链。</p></div>
+      <div className="admin-table">
+        <div className="admin-table-head"><span>状态</span><span>模型</span><span>延迟</span><span>请求 / 错误</span><span>时间</span></div>
+        {overview?.recentRuns.length ? overview.recentRuns.map((run) => <article key={run.id}>
+          <b className={run.status === "succeeded" ? "status-good" : "status-bad"}>{run.status === "succeeded" ? "成功" : "失败"}</b>
+          <span>{run.model}</span><span>{(run.latencyMs / 1000).toFixed(1)}s</span>
+          <code>{run.errorCode || run.requestId || "—"}</code><time>{dateTime(run.createdAt)}</time>
+        </article>) : <div className="admin-empty">还没有生成记录。</div>}
+      </div>
+      <h3 className="admin-subhead">输出语言核对（近 30 天）</h3>
+      <p className="admin-note">
+        按脚本比例检测模型实际写出的语言，与请求语言比对。<b>未检出</b>不等于出错——文本太短或语言无法区分时不做判断，
+        这一列只统计“无法判断”，不计入偏差。当前仅观测，不重试、不拦截。
+      </p>
+      <div className="admin-table">
+        <div className="admin-table-head"><span>任务</span><span>请求语言</span><span>提示词版本</span><span>总数</span><span>偏差 / 未检出</span></div>
+        {overview?.localeDrift?.length ? overview.localeDrift.map((row) => <article key={`${row.task}-${row.locale}-${row.prompt_version}`}>
+          <b className={Number(row.drifted) > 0 ? "status-warn" : "status-good"}>{row.task}</b>
+          <span>{row.locale}</span><span>{row.prompt_version || "—"}</span><span>{row.total}</span>
+          <code>{row.drifted} / {row.undetected}</code>
+        </article>) : <div className="admin-empty">还没有带语言标记的生成记录。迁移 0012 应用后才会开始累积。</div>}
+      </div>
+    </section>
+
+    <section className="admin-panel" id="billing">
+      <div className="admin-section-title"><div><span>05 / BILLING</span><h2>订阅与支付事件</h2></div><p>Web 以 Stripe、App 以 RevenueCat Webhook 为各自事实来源，统一归并为能力权益。</p></div>
+      <div className="billing-event-list">{overview?.recentBilling?.length ? overview.recentBilling.map((event) => <article key={String(event.event_id)}>
+        <b className={event.status === "processed" ? "status-good" : "status-bad"}>{String(event.status)}</b>
+        <div><strong>{String(event.event_type)}</strong><span>{String(event.object_id || "—")}</span></div>
+        <em>{event.amount_total ? `${String(event.currency || "USD")} ${(Number(event.amount_total) / 100).toFixed(2)}` : "—"}</em>
+        <time>{dateTime(String(event.received_at))}</time>
+      </article>) : <div className="admin-empty">尚无支付事件；Stripe 未配置时用户端不会显示购买入口。</div>}</div>
+    </section>
+
+    <section className="admin-panel" id="nutrition-admin">
+      <div className="admin-section-title"><div><span>06 / NUTRITION</span><h2>营养识别质量</h2></div><p>低置信度结果必须由用户确认，不以图片估算冒充精确热量。</p></div>
+      <div className="nutrition-admin-metrics"><article><span>识别请求</span><b>{metrics?.mealAnalyses ?? 0}</b></article><article><span>成功率</span><b>{metrics?.mealAnalysisSuccessRate ?? 0}%</b></article><article><span>低置信度</span><b>{metrics?.lowConfidenceMeals ?? 0}</b></article><article><span>确认餐食</span><b>{metrics?.meals ?? 0}</b></article><article><span>食品搜索</span><b>{metrics?.foodSearches ?? 0}</b></article><article><span>零结果率</span><b>{metrics?.foodZeroResultRate ?? 0}%</b></article><article><span>待审纠错</span><b>{metrics?.pendingFoodCorrections ?? 0}</b></article><article><span>用户食品</span><b>{metrics?.customFoods ?? 0}</b></article></div>
+      <div className="food-source-admin">{overview?.foodSources?.map((source) => <article key={source.source}><div><b>{source.title}</b><span>{source.source} · {source.license_name}</span></div><a href={source.license_url} target="_blank" rel="noreferrer">许可证 </a><em className={source.status === "verified" ? "status-good" : "status-warn"}>{source.status === "verified" ? "已核验" : "待核验"}</em></article>)}</div>
+    </section>
+
+    <section className="admin-panel" id="users">
+      <div className="admin-section-title"><div><span>07 / USERS</span><h2>用户管理</h2></div><p>停用用户会立即撤销本站会话，不会删除其 Cmine ID。</p></div>
+      <div className="admin-user-search"><input value={userQuery} onChange={(event) => setUserQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void searchUsers(); }} placeholder="邮箱、姓名或 Cmine sub" /><button onClick={() => void searchUsers()}>搜索</button></div>
+      <div className="admin-user-list">{users.length ? users.map((user) => <article key={user.id}>
+        <span className="admin-user-avatar">{(user.name || user.email || "C").slice(0, 1).toUpperCase()}</span>
+        <div><h3>{user.name || "未设置姓名"}</h3><p>{user.email || "未返回邮箱"}</p></div>
+        <time>{dateTime(user.createdAt || user.created_at || new Date().toISOString())}</time>
+        <b className={user.status === "active" ? "status-good" : "status-bad"}>{user.status === "active" ? "正常" : "已停用"}</b>
+        <button onClick={() => void setUserStatus(user.id, user.status === "active" ? "suspended" : "active")}>{user.status === "active" ? "停用" : "恢复"}</button>
+      </article>) : <div className="admin-empty">没有符合条件的用户。</div>}</div>
+    </section>
+
+    <section className="admin-panel" id="settings">
+      <div className="admin-section-title"><div><span>08 / SETTINGS</span><h2>额度与站点设置</h2></div><p>预算触发后停止新的 AI 请求，但历史、训练和营养记录仍然可用。</p></div>
+      <div className="admin-settings">
+        <label><span>站内公告</span><input value={announcement} maxLength={300} onChange={(event) => setAnnouncement(event.target.value)} placeholder="留空则不展示公告" /><button onClick={() => void updateSetting("announcement", announcement)}>保存</button></label>
+        {/* No client-side defaults here: an unset value stays blank and cannot
+            be saved, so this form can never write frontend literals back into
+            production quotas. Server fallbacks live in worker/product.ts. */}
+        {[
+          ["ai_daily_hard_usd", "每日硬成本上限（USD）"],
+          ["ai_monthly_hard_usd", "每月硬成本上限（USD）"],
+          ["trial_days", "新账号试用天数"],
+          ["free_plan_limit", "免费版计划额度"],
+          ["free_meal_scan_limit", "免费版饭菜识别额度"],
+          ["free_coach_message_limit", "免费版 Coach 体验消息"],
+          ["pro_plan_limit", "Pro 计划额度"],
+          ["pro_meal_scan_limit", "Pro 饭菜识别额度"],
+          ["pro_coach_message_limit", "Pro Coach 消息额度"],
+        ].map(([key, label]) => { const stored = overview?.settings[String(key)]?.value; return <label key={String(key)}><span>{String(label)}{stored === undefined ? "（未设置，使用服务端默认）" : ""}</span><input type="number" min="0" value={stored === undefined ? "" : Number(stored)} placeholder="服务端默认" onChange={(event) => setOverview((current) => current ? { ...current, settings: { ...current.settings, [String(key)]: { value: Number(event.target.value), updatedBy: current.admin.email, updatedAt: new Date().toISOString() } } } : current)} /><button disabled={stored === undefined} onClick={() => { const value = overview?.settings[String(key)]?.value; if (value !== undefined) void updateSetting(String(key), Number(value)); }}>保存</button></label>; })}
+        <article><div><h3>维护模式</h3><p>临时阻止新的 AI 计划生成；账户和历史仍可访问。</p></div><button className={overview?.settings.maintenance_mode?.value === true ? "danger" : ""} onClick={() => void updateSetting("maintenance_mode", overview?.settings.maintenance_mode?.value !== true)}>{overview?.settings.maintenance_mode?.value === true ? "关闭维护模式" : "开启维护模式"}</button></article>
+      </div>
+    </section>
+
+    <section className="admin-panel" id="audit">
+      <div className="admin-section-title"><div><span>09 / AUDIT</span><h2>管理操作审计</h2></div><p>用户状态、模型路由和站点设置的修改都会留痕。</p></div>
+      <div className="audit-list">{overview?.recentAudits?.length ? overview.recentAudits.map((event) => <article key={String(event.id)}><time>{dateTime(String(event.created_at))}</time><b>{String(event.action)}</b><span>{String(event.admin_email)}</span><code>{String(event.target_id || event.target_type || "—")}</code></article>) : <div className="admin-empty">尚无管理操作。</div>}</div>
+    </section>
+    {notice && <div className="toast admin-toast">{notice}</div>}
+  </>;
+}

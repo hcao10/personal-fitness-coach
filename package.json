@@ -1,0 +1,66 @@
+{
+  "name": "cmine-fit",
+  "version": "0.2.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "dev": "vinext dev",
+    "build": "vinext build",
+    "deploy": "vinext deploy",
+    "start": "vinext start",
+    "test": "node scripts/verify-exercise-assets.mjs && npm run build && node --experimental-strip-types --test tests/*.test.mjs",
+    "test:coach": "node --experimental-strip-types --test tests/coach-runtime.integration.test.mjs tests/model-hub.integration.test.mjs tests/coach-rules.test.mjs tests/llm-contract.test.mjs tests/adaptive-engine.test.mjs",
+    "verify:coach:live": "node --experimental-strip-types scripts/verify-live-coach.mjs",
+    "verify:coach:remote": "node scripts/verify-remote-coach.mjs",
+    "hub:provision": "node --experimental-strip-types scripts/provision-model-hub.mjs",
+    "hub:acceptance": "node --experimental-strip-types scripts/accept-model-hub-coach.mjs",
+    "hub:verify-policy": "node --experimental-strip-types scripts/verify-model-hub-policy.mjs",
+    "qa:coach:browser": "npm run build && node --experimental-strip-types scripts/coach-browser-fixture.mjs",
+    "pool:generate": "node scripts/build-exercise-pool.mjs && node scripts/verify-exercise-assets.mjs",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate:remote": "wrangler d1 migrations apply DB --remote"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "4.0.101",
+    "@ai-sdk/openai-compatible": "3.0.77",
+    "@ai-sdk/provider": "4.0.33",
+    "@zxing/browser": "^0.1.5",
+    "ai": "7.0.150",
+    "drizzle-orm": "0.45.2",
+    "lucide-react": "1.61.0",
+    "next": "16.2.12",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "simple-statistics": "^7.8.8",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "1.37.1",
+    "@tailwindcss/postcss": "4.2.1",
+    "@types/node": "22.19.19",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.2",
+    "@vitejs/plugin-rsc": "0.5.26",
+    "drizzle-kit": "0.31.10",
+    "esbuild": "0.28.0",
+    "eslint": "9.39.4",
+    "eslint-config-next": "16.2.12",
+    "react-server-dom-webpack": "19.2.6",
+    "tailwindcss": "4.2.1",
+    "typescript": "5.9.3",
+    "vinext": "0.0.50",
+    "vite": "8.0.13",
+    "wrangler": "4.92.0"
+  },
+  "overrides": {
+    "postcss": "8.5.25",
+    "sharp": "0.35.3"
+  },
+  "type": "module",
+  "description": "A multilingual AI fitness coach for self-directed plans and long-term professional guidance."
+}

@@ -1,0 +1,21 @@
+/* One 122 KB file used to hold every rule in the product, which made "where do
+   I put a style for the new plan page" unanswerable and "did I break the admin
+   console" unverifiable. The split below is by ownership, and the order is the
+   cascade: tokens first, shared chrome next, features after, and the core loop
+   last so it can override the marketing rules it sits beside.
+
+   The remote font import has to be the first at-rule in the emitted sheet, so
+   it stays here rather than inside a partial that gets inlined mid-file. */
+
+@import "./styles/tokens.css";
+@import "./styles/marketing.css";
+@import "./styles/brand-admin.css";
+@import "./styles/conversion.css";
+@import "./styles/onboarding.css";
+@import "./styles/today.css";
+@import "./styles/coach-chat.css";
+@import "./styles/coach-center.css";
+@import "./styles/progress.css";
+@import "./styles/core-loop.css";
+@import "./styles/product-shell.css";
+@import "./styles/calm-product.css";
