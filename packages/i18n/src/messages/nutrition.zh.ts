@@ -11,7 +11,7 @@ export const nutritionZh = {
   // Signed-out screen.
   signedOutTitleLine1: "先识别，",
   signedOutTitleLine2: "再由你确认。",
-  signedOutBody: "登录后可以拍照、扫码或手动记录餐食。我们只在你确认份量后计算营养，不把照片估算包装成精确答案。",
+  signedOutBody: "AI 饭菜照片识别需要登录 Cmine ID，访客不能调用 AI。登录后也可扫码、手动记餐并保存到账户；所有营养记录都需你核对份量后确认。",
   signedOutAction: "使用 Cmine ID 登录 ",
 
   navMyTraining: "我的训练",

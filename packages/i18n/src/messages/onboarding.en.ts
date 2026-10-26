@@ -161,5 +161,5 @@ export const onboardingEn = {
   confidenceMedium: "some gaps",
   finish: "Generate my plan",
   resume: "You left off here — pick up where you were.",
-  guestNote: "What you enter now stays on this device. It carries over unchanged when you sign in, with nothing to fill in twice.",
+  guestNote: "Your answers stay in this browser and do not sync automatically across devices. Sign in on this device to continue your profile without filling it in again.",
 } as const satisfies Widen<typeof onboardingZh>;

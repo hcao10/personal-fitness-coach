@@ -1,12 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import ProductShell from "../components/product-shell";
 import { Icon } from "../shared/ui/icon";
-import { BrandMark } from "../shared/ui/brand-mark";
+import { CmineSignInButton } from "../shared/async-state/account-mode-notice";
 import { useEffect, useRef, useState } from "react";
 import { localizeApiError } from "../lib/api-error";
-import { beginCmineLogin } from "../lib/auth";
 import { useCapabilities } from "../shared/api/capability-provider";
 import { useLocale, useT } from "../lib/i18n-provider";
 import { dateFormatter, plural } from "../../packages/i18n/src";
@@ -299,12 +297,13 @@ export default function NutritionDashboard() {
   };
 
   if (signedIn === null) return <main className="nutrition-page"><div className="nutrition-loading">{t("nutrition.loading")}</div></main>;
-  if (!signedIn) return <main className="nutrition-page">
-    <header className="nutrition-header"><Link className="brand" href="/"><BrandMark /><span>CMINE <b>FIT</b></span></Link></header>
-    <section className="nutrition-signin"><span>NUTRITION, CONFIRMED BY YOU</span><h1>{t("nutrition.signedOutTitleLine1")}<br />{t("nutrition.signedOutTitleLine2")}</h1><p>{t("nutrition.signedOutBody")}</p>{accountsConfigured
-      ? <button onClick={() => void beginCmineLogin("/nutrition", locale)}>{t("nutrition.signedOutAction")}</button>
-      : <p className="account-signin-unavailable">{t("product.entry.accountOnlyUnavailable")}</p>}</section>
-  </main>;
+  if (!signedIn) return <ProductShell active="/nutrition" title={t("nav.nutrition")} eyebrow={t("product.design.nutritionSubtitle")}>
+    <section className="nutrition-signin nutrition-access"><span>{t("product.access.photoAi")}</span><h2>{t("nutrition.signedOutTitleLine1")}<br />{t("nutrition.signedOutTitleLine2")}</h2><p>{t("nutrition.signedOutBody")}</p>{accountsConfigured
+      ? <CmineSignInButton returnTo="/nutrition">{t("product.access.signInAi")}</CmineSignInButton>
+      : <p className="account-signin-unavailable">{t("product.entry.accountOnlyUnavailable")}</p>}
+      <p className="nutrition-barcode-note">{t("product.access.barcodeNote")}</p>
+    </section>
+  </ProductShell>;
 
   return <ProductShell active="/nutrition" title={t("nav.nutrition")} eyebrow={t("product.design.nutritionSubtitle")}><div className="nutrition-content">
       <section className="fit-surface-intro"><Icon name="nutrition" /><div><h2>{t("refresh.nutrition.title")}</h2><p>{t("refresh.nutrition.body")}</p></div></section>
@@ -325,7 +324,7 @@ export default function NutritionDashboard() {
 
     <section className="nutrition-workflow-grid">
       <article className="nutrition-card meal-photo-card">
-        <header><h2>{t("nutrition.photoCardTitle")}</h2></header>
+        <header><h2>{t("nutrition.photoCardTitle")}</h2><p className="nutrition-service-note">{t("product.access.photoAi")}</p></header>
         <label className="photo-drop"><input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setFile(event.target.files?.[0] || null)} /><b>{file ? file.name : t("nutrition.photoPickLabel")}</b><small>{t("nutrition.photoHint")}</small></label>
         <select aria-label={t("refresh.nutrition.mealType")} value={mealType} onChange={(event) => setMealType(event.target.value)}><option value="breakfast">{t("nutrition.mealTypeBreakfast")}</option><option value="lunch">{t("nutrition.mealTypeLunch")}</option><option value="dinner">{t("nutrition.mealTypeDinner")}</option><option value="snack">{t("nutrition.mealTypeSnack")}</option></select>
         <button onClick={() => void uploadAndAnalyze()} disabled={working}>{working ? t("nutrition.analyzing") : t("nutrition.uploadAndAnalyze")}</button>
@@ -333,6 +332,7 @@ export default function NutritionDashboard() {
 
       <article className="nutrition-card barcode-card">
         <header><h2>{t("nutrition.barcodeCardTitle")}</h2></header>
+        <p className="nutrition-service-note">{t("product.access.barcodeNote")}</p>
         <div className="barcode-input"><input aria-label={t("nutrition.barcodePlaceholder")} value={barcode} onChange={(event) => setBarcode(event.target.value)} placeholder={t("nutrition.barcodePlaceholder")} /><button onClick={() => void findBarcode()}>{t("nutrition.barcodeLookup")}</button></div>
         <button className="camera-button" onClick={() => scanning ? scannerControls.current?.stop() : void startScanner()}>{scanning ? t("nutrition.scannerStop") : t("nutrition.scannerStart")}</button>
         <video ref={videoRef} className={scanning ? "scanner-video active" : "scanner-video"} muted playsInline />

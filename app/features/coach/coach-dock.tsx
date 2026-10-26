@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useId, useMemo, useState } from "react";
 import { useLocale } from "../../lib/i18n-provider";
 import { emitProductEvent } from "../../shared/analytics/product-events";
+import { CmineSignInButton } from "../../shared/async-state/account-mode-notice";
 
 import {
   coachRulesAnswer, encodeCoachContext,
@@ -183,7 +184,11 @@ export function CoachDock({ plan, dayIndex, aiAvailable, signedIn, accountsConfi
             </button>
           </div>
           {handoff
-            ? <p className="coach-dock-note" role="status">{handoff}</p>
+            ? <div className="coach-dock-access"><p className="coach-dock-note" role="status">{handoff}</p>
+                {!signedIn && accountsConfigured && <CmineSignInButton returnTo={coachHref} beforeSignIn={() => {
+                  try { window.sessionStorage.setItem("cmine_fit_coach_draft", text.trim()); } catch { /* private window */ }
+                }}>{t("product.access.signInAi")}</CmineSignInButton>}
+              </div>
             : <Link className="coach-dock-note" href={coachHref}>{t("product.coach.openFull")} </Link>}
         </section>
       )}

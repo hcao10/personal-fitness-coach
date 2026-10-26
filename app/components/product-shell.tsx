@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useLocale } from "../lib/i18n-provider";
 import { Icon } from "../shared/ui/icon";
 import { BrandMark } from "../shared/ui/brand-mark";
+import { AccountModeNotice } from "../shared/async-state/account-mode-notice";
 
 // The second line under each nav label used to be a hardcoded English gloss
 // shown to everyone. In English it read as a duplicate of the label above it;
@@ -37,6 +38,7 @@ export default function ProductShell({ active, title, eyebrow, children, action,
     </div>
     <main className="product-main" id="main-content">
       <header className="product-header"><div><p>{eyebrow}</p><h1>{title}</h1></div>{action}</header>
+      <AccountModeNotice />
       {children}
     </main>
     <nav className="product-bottom-nav" aria-label={t("product.design.navigation")}>{links}</nav>
