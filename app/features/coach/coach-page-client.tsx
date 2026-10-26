@@ -5,7 +5,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ProductShell from "../../components/product-shell";
 import { localizeApiError, type ApiErrorBody } from "../../lib/api-error";
 import { useLocale } from "../../lib/i18n-provider";
-import { beginCmineLogin } from "../../lib/auth";
 import { useEntry } from "../../shared/api/capability-provider";
 import { apiFetch, apiPost } from "../../shared/api/client";
 import { emitProductEvent } from "../../shared/analytics/product-events";
@@ -19,6 +18,7 @@ import { pick, type Localized, type MessageKey } from "../../../packages/i18n/sr
 import { CoachMessage } from "./coach-message";
 import { BrandMark } from "../../shared/ui/brand-mark";
 import { Dialog } from "../../shared/ui/dialog";
+import { CmineSignInButton } from "../../shared/async-state/account-mode-notice";
 import type { Action, Message, Evidence, Source, Conversation } from "./types";
 
 /**
@@ -299,10 +299,10 @@ export default function CoachPageClient() {
             <p className="conversation-composer-note" role="status">{composerHint || t("product.design.confirmationNote")}</p>
           </div>
         </section>
-      </div> : <section className="coach-guidance"><BrandMark size={44} /><h2>{t("product.design.guidanceTitle")}</h2><p>{t("product.design.guidanceBody")}</p>
+      </div> : <section className="coach-guidance"><BrandMark size={44} /><h2>{t("product.access.rulesTitle")}</h2><p>{signedIn ? t("product.coach.cannotSendNotConfigured") : t("product.access.rulesBody")}</p>
         <div className="coach-suggestions">{RULES_PROMPTS.map(prompt => <button key={prompt.intent} type="button" onClick={() => setContext({ intent: prompt.intent, planId: record?.id, dayIndex: context?.dayIndex ?? 0, exerciseId: context?.exerciseId })}>{t(prompt.key)}</button>)}</div>
         {rulesAnswer?.source === "rules" && <article><h3>{rulesAnswer.title}</h3>{rulesAnswer.paragraphs.map(paragraph => <p key={paragraph}>{paragraph}</p>)}<ul>{rulesAnswer.bullets.map(item => <li key={item}>{item}</li>)}</ul></article>}
-        {accountsConfigured && !signedIn && <button className="adjustment-primary" type="button" onClick={() => void beginCmineLogin("/coach", locale)}>{t("product.entry.signIn")}</button>}
+        {accountsConfigured && !signedIn && <CmineSignInButton><span>{t("product.access.signInAi")}</span></CmineSignInButton>}
       </section>}
     </>}
     {historyOpen && <Dialog open onClose={() => setHistoryOpen(false)} labelledBy="coach-history-title" className="coach-history-dialog"><header><h2 id="coach-history-title">{t("product.design.history")}</h2><button type="button" onClick={() => setHistoryOpen(false)}>{t("product.viewer.close")}</button></header>{history}</Dialog>}

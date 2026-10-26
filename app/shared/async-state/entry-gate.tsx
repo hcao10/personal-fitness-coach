@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { useT } from "../../lib/i18n-provider";
 import type { EntryState } from "../../../packages/product-state/src";
+import { useCapabilities } from "../api/capability-provider";
 
 /**
  * Renders whatever the entry decision turned out to be.
@@ -24,6 +25,7 @@ export function EntryGate({ entry, missingTables = [], onRetry, onContinueLocal,
   children: (mode: "account" | "guest") => ReactNode;
 }) {
   const t = useT();
+  const { probeFailed } = useCapabilities();
 
   if (entry.status === "loading") {
     return <div className="entry-state entry-loading" role="status" aria-live="polite">{t("product.entry.loading")}</div>;
@@ -61,12 +63,9 @@ export function EntryGate({ entry, missingTables = [], onRetry, onContinueLocal,
 
   return (
     <>
-      {entry.status === "guest" && (
-        <p className="entry-mode-note" role="status">
-          <b>{t("product.entry.guestBadge")}</b>
-          {entry.reason === "accounts_not_configured" ? t("product.entry.guestAccountsOff") : t("product.entry.guestNotSignedIn")}
-        </p>
-      )}
+      {entry.status === "guest" && probeFailed && <p className="entry-mode-note" role="status">
+        <b>{t("product.access.guestTitle")}</b>{t("product.access.guestBody")}
+      </p>}
       {entry.status === "account" && missingTables.length > 0 && (
         <p className="entry-schema-warning" role="alert">
           <b>{t("product.entry.schemaWarningTitle")}</b>

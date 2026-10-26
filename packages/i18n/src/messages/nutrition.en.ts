@@ -10,7 +10,7 @@ export const nutritionEn = {
 
   signedOutTitleLine1: "First we recognize,",
   signedOutTitleLine2: "then you confirm.",
-  signedOutBody: "Sign in to log meals by photo, barcode or by hand. Nutrition is only calculated after you confirm the portion — a photo estimate is never dressed up as an exact answer.",
+  signedOutBody: "AI meal photo recognition requires Cmine ID sign-in. Guests cannot call AI. Sign in to scan barcodes, log meals manually and save to your account. Check portions before confirming any nutrition entry.",
   signedOutAction: "Sign in with Cmine ID ",
 
   navMyTraining: "My training",

@@ -156,5 +156,5 @@ export const onboardingZh = {
   confidenceMedium: "有缺口",
   finish: "生成我的计划",
   resume: "上次填到这里，可以直接继续。",
-  guestNote: "现在填写的内容保存在这台设备上。登录后会原样带过去，不需要重填。",
+  guestNote: "当前资料只保存在此浏览器，不会自动跨设备同步。你可以在本设备登录后继续建档，无需重复填写。",
 } as const;
